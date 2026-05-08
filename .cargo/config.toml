@@ -1,0 +1,4 @@
+# Static CRT linking — the release binary carries the C runtime inside itself,
+# so it runs on any Windows 10/11 machine without a separate VC++ redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -1,0 +1,82 @@
+/// Annual statistical accumulators for the simulation.
+/// Reset to zero at the start of each calendar year.
+/// Mirrors Python's `self.stats` dict in `SimulationController`.
+#[derive(Debug, Clone, Default)]
+pub struct AnnualStats {
+    /// Accumulated ordinary income (FERS + RSU vest value) for marginal tax estimation.
+    pub acc_ord_inc: f64,
+    /// Accumulated dividend income (used as capital gains floor for tax estimation).
+    pub acc_div_inc: f64,
+    /// Gross dividends received from the Taxable account.
+    pub year_div_gross: f64,
+    /// Capital gains realized from sells (both ST and LT).
+    pub year_cap_gains: f64,
+    /// Dividend tax withheld / paid.
+    pub year_div_tax: f64,
+    /// Gross FERS pension received.
+    pub year_fers_gross: f64,
+    /// FERS tax estimated and withheld.
+    pub year_fers_tax: f64,
+    /// Net VA disability income (tax-free).
+    pub year_va_net: f64,
+    /// Total tax routed from income streams (for year-end true-up).
+    pub year_tax_routed: f64,
+    /// War chest balance drawn down this year (in war_chest_currency).
+    pub year_wc_used: f64,
+    /// Total expenses paid this year (JPY).
+    pub year_total_exp_jpy: f64,
+    /// Base living expenses paid this year (JPY).
+    pub year_exp_base: f64,
+    /// NHI (National Health Insurance) obligations this year (JPY).
+    pub year_exp_nhi: f64,
+    /// Nenkin (pension contributions) paid this year (JPY).
+    pub year_exp_nenkin: f64,
+    /// Resident tax installments paid this year (JPY).
+    pub year_exp_restax: f64,
+    /// Tax paid from external sources (e.g., from salary during accumulation phase).
+    pub tax_paid_external: f64,
+    /// Total RSU vesting income this year (USD market value at time of vest).
+    pub year_rsu_vest_usd: f64,
+    /// Monthly VTI/SCHD contributions made this year (USD).
+    pub year_monthly_contribution: f64,
+    /// Short-term capital gains realized at the retirement transition event.
+    pub year_st_cap_gains: f64,
+    /// Long-term capital gains realized at the retirement transition event.
+    pub year_lt_cap_gains: f64,
+    /// Total US federal + state tax charged this year (USD). Used for dual-field reporting.
+    pub year_us_fed_tax_usd: f64,
+    /// Japan resident tax charged this year (JPY). Mirrors year_exp_restax for dual-field reporting.
+    pub year_japan_res_tax_jpy: f64,
+    /// US Social Security income received this year (USD).
+    pub year_ss_payout_usd: f64,
+    /// SSDI (Social Security Disability Insurance) gross income this year (USD).
+    /// Taxable portion determined at year-end via the Combined Income rule.
+    pub year_ssdi_gross_usd: f64,
+    /// Japanese Nenkin pension income received this year (JPY).
+    pub year_nenkin_income_jpy: f64,
+    /// Whether FEIE was applied in this year's US tax calculation.
+    pub year_feie_applied: bool,
+    /// True if cash_buffer_usd went negative at any point this year.
+    pub year_bridge_exhausted: bool,
+    /// Value of taxable portfolio sold to cover deficits this year (USD).
+    pub year_forced_liquidations_usd: f64,
+    /// V7.0 — Japan capital-gains tax (¥) realised at sale during liquidation.
+    /// Settled at the moment of sale (源泉徴収-style); flows into year-end FTC pool.
+    pub year_japan_cap_gains_tax_jpy: f64,
+    /// V7.0 — US state capital-gains tax ($) reserved at sale during liquidation.
+    /// Pre-paid into the federal-true-up pipeline so the year-end calculation does
+    /// not double-charge state on the same gain.
+    pub year_state_cap_gains_tax_usd: f64,
+    /// V7.1 — Cumulative FX spread penalty paid (¥) across all USD→JPY conversions.
+    /// Sum of the 0.5% spread cost for Tiers 4, 5, 6, and 8 conversions.
+    pub year_fx_penalty_jpy: f64,
+    /// V7.1 — Number of months this year where the spending target was dropped to
+    /// the Minimum floor (Tier 7 belt-tightening fired). High values = stress signal.
+    pub year_months_target_dropped: u32,
+}
+
+impl AnnualStats {
+    pub fn reset(&mut self) {
+        *self = AnnualStats::default();
+    }
+}

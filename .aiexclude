@@ -1,0 +1,18 @@
+# Ignore Rust build artifacts (Crucial for token savings)
+target/
+Cargo.lock
+
+# Ignore AI/Tool metadata
+.claude/
+.vscode/
+.git/
+
+# Ignore outputs and assets (AI doesn't need to 'see' images or previous audits)
+output/
+assets/
+*.csv
+*.log
+*.exe
+
+# Standard ignore patterns
+node_modules/

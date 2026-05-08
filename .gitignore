@@ -1,0 +1,38 @@
+# --- Rust/Build ---
+/target
+Cargo.lock
+# (Note: Some keep Cargo.lock for apps, but for a "clean" engine release, 
+# it's often omitted to allow fresh builds on the user's end.)
+
+# --- AI & Tooling Fingerprints ---
+*.rs.bk
+.claude/           # Claude Code's memory and history
+.google/           # Gemini-specific metadata
+.anthropic/        # Anthropic-specific metadata
+.codex/
+.copilot/
+.chat/
+.ai_context/
+node_modules/      # If the extension installs local JS helpers
+
+# --- IDE & Editor Specifics ---
+.vscode/           # VS Code settings (can store AI prompt history)
+.cursor/           # If you ever use Cursor AI
+.idea/
+*.swp
+*.swo
+
+# --- OS Specific Debris ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- App-Specific Data ---
+/output/
+*.log
+.env
+*.secret
+
+# --- Scenario Data ---
+# If you want to keep templates but ignore your actual private data:
+# input/my_private_scenario.json
