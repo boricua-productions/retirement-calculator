@@ -5,7 +5,7 @@ It is designed for non-SOFA residents under standard Japanese immigration status
 spouse, long-term resident, or permanent resident visas.
 
 > **Dividend Focus.** The engine is heavily focused on **living off portfolio income before
-> selling stock**. In the current default V7.1 waterfall, native JPY income and the JPY war chest
+> selling stock**. In the current default V7.2 waterfall, native JPY income and the JPY war chest
 > are used first, USD income and bridge cash are converted with an FX spread penalty, spending may
 > drop from base to minimum, and equity liquidation is the last resort. Every snapshot reports a
 > Dividend Coverage Ratio so you can tell, year by year, whether your portfolio is self-funding.
@@ -28,7 +28,7 @@ double-counting the same income.
 If you are new to the project, start with the app and template before reading the full technical
 manual.
 
-1. Install Rust stable, then run `cargo run --release`.
+1. Install Rust stable, then run `cargo run --release`.  Rust Stable (rustup) download URL: https://rust-lang.org/tools/install/
 2. Open `input/TEMPLATE_scenario.json` from the toolbar.
 3. Edit only the basics first: dates, expenses, USD/JPY, portfolio holdings, pension income, and
    VA/FERS/SS/Nenkin fields that apply to you.
@@ -184,10 +184,10 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | Field | What it is for |
 |-------|----------------|
 | **War Chest Target (JPY)** | Target JPY emergency reserve. The defensive waterfall taps this before USD bridge cash. |
-| **War Chest Target (USD)** | Legacy USD target retained for compatibility. V7.1 treats the active war chest as JPY. |
+| **War Chest Target (USD)** | Legacy USD target retained for compatibility. V7.2 treats the active war chest as JPY. |
 | **Bridge Fund Months** | Target months of expenses to keep in USD bridge cash. |
 | **Pre-Funded War Chest (JPY)** | Starting JPY reserve balance. |
-| **Pre-Funded Bridge (USD/JPY)** | Starting bridge cash balance. USD bridge is the active V7.1 operating reserve. |
+| **Pre-Funded Bridge (USD/JPY)** | Starting bridge cash balance. USD bridge is the active V7.2 operating reserve. |
 | **Pre-Funded Japan Tax / US Tax** | Cash reserved at the start for known tax bills. |
 
 #### Market Simulation
@@ -212,9 +212,9 @@ says otherwise. For optional income streams, use `0` when that income does not a
 
 ---
 
-## V7.0/V7.1 At A Glance — Cost Basis, Liquidation, and Cashflow
+## V7.2 Technical Hardening — Cost Basis, Liquidation, and Cashflow
 
-The current code combines the V7.0 liquidation engine with V7.1 cashflow controls.
+The current code combines the V7.0 liquidation engine with V7.2 cashflow controls.
 
 V7.0 reframes the post-retirement liquidation engine around the **JPY value
 paid at purchase**, not the USD basis. Two consequences:
@@ -249,7 +249,7 @@ the existing FTC pool, but state tax does not. The liquidation engine
 therefore grosses up each share sale by the state rate and records it in
 `StateCapGainsTax_USD`.
 
-V7.1 adds the default **Defensive** spending waterfall:
+V7.2 adds the default **Defensive** spending waterfall:
 
 - Tier 0 — JPY Floor: Nenkin and DC payouts.
 - Tier 1 — JPY Dividends.
@@ -1071,7 +1071,7 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 | `simulated_recessions` | Dynamic Recession Events | Array | `[]` | Additional market shocks, e.g. `[{"year": 2028, "severity": 0.15, "duration_months": 6, "recovery_months": 18}]` |
 | `rsu_tax_handling` | — | string | `SALARY` | `SALARY` or `SELL_TO_COVER` |
 | `withdrawal_strategy` | Withdrawal Strategy | enum | `total_return` | `dividend_only`, `total_return`, or `hybrid`; `dividend_only` prevents forced stock sales |
-| `withdrawal_waterfall` | Spending Waterfall | enum | `defensive` | `defensive` = V7.1 JPY-first waterfall; `cautious` = legacy V7.0-compatible cashflow behaviour |
+| `withdrawal_waterfall` | Spending Waterfall | enum | `defensive` | `defensive` = V7.2 JPY-first waterfall; `cautious` = legacy V7.0-compatible cashflow behaviour |
 | `fx_spread_penalty` | FX Spread Penalty | `f64` | `0.005` | Flat spread cost applied to USD-to-JPY conversions in the defensive waterfall |
 
 Scheduled recession events can be instant shocks or multi-month drawdowns. If `duration_months`
