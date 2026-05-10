@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.0 Technical Manual with V7.1 Waterfall Updates
+# Retirement Calculator — V7.2 Technical Manual (Hardened Edition)
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -20,12 +20,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package `7.0.0`; README documents the V7.0 engine plus V7.1 waterfall fields
-> **Build:** ~8.5 MB release binary (LTO fat, `opt-level = 3`, symbols stripped)  
-> **Tests:** 66/66 passing — adds the V7.0 integration suite
-> `tests/v7_tax_and_liquidation_test.rs` covering state-tax gross-up,
-> highest-JPY-basis-first ordering, and DividendOnly short-circuit behaviour.
-
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.2 Hardened Edition)
 ---
 
 ## Beginner Quick Start
@@ -256,14 +251,15 @@ therefore grosses up each share sale by the state rate and records it in
 
 V7.1 adds the default **Defensive** spending waterfall:
 
-1. JPY floor income: Nenkin and DC payout.
-2. JPY dividends in the current dividend month.
-3. JPY war chest.
-4. USD floor income: FERS, VA, Social Security, SSDI, and military retired pay, converted to JPY.
-5. USD dividends in the current dividend month, converted to JPY.
-6. USD bridge fund, converted to JPY.
-7. Belt-tightening from base monthly spending to the configured minimum.
-8. Stock liquidation using the V7.0 highest-JPY-basis-first rule.
+- Tier 0 — JPY Floor: Nenkin and DC payouts.
+- Tier 1 — JPY Dividends.
+- Tier 2 — Reserved.
+- Tier 3 — JPY War Chest.
+- Tier 4 — USD Floor Income (+0.5% FX Penalty).
+- Tier 5 — USD Dividends (+0.5% FX Penalty).
+- Tier 6 — USD Bridge Fund (+0.5% FX Penalty).
+- Tier 7 — Belt-tightening.
+- Tier 8 — Stock Liquidation (+0.5% FX Penalty).
 
 USD-to-JPY conversions in tiers 4, 5, 6, and 8 apply `fx_spread_penalty`
 (`0.005` by default). The legacy V7.0-style `Cautious` waterfall is still
@@ -274,27 +270,12 @@ available with `withdrawal_waterfall: "cautious"`.
 ## What's New
 
 | Version | Highlights |
-|---------|------------|
-| **V7.1** | **Defensive JPY-first spending waterfall** added via `withdrawal_waterfall` (`defensive` default, `cautious` for V7.0-compatible behaviour). USD-to-JPY conversions in the waterfall apply `fx_spread_penalty` (default `0.005`). Dividends are now lumpy by `dividend_months` instead of smoothed every month, and each asset can declare `dividend_currency` (`usd` or `jpy`) so income lands in the correct cash bucket. CSV output adds `FXPenalty_JPY` and `MonthsAtMin`. |
-| **V7.0** | 🇯🇵 **Japan-Resident Cost Basis model** — `Position.avg_purchase_price_jpy` carries the JPY paid at purchase; `Asset.avg_jpy_basis_per_share` exposes the same value at runtime with `avg_cost × usd_jpy_at_load` as fallback. ⛏ **Highest-JPY-Basis-First liquidation** replaces the alphabetical sweep in `cashflow_manager::v7_liquidate_for_deficit` — taxable holdings are sorted DESC by JPY basis so the lowest-realised-gain shares leave the portfolio first. 🧾 **Japan capital-gains tax (20.315%)** is settled at sale and folded into the FTC pool via `stats.year_japan_cap_gains_tax_jpy`; the controller's `finalize_year_taxes` now combines resident tax + cap-gains tax into the Japan-side credit. 🇺🇸 **`us_state_tax_rate` dial** added to `Config` (mirrored to `tax_rules.us_state_rate` by the loader); state tax is grossed up at sale and surfaced in `stats.year_state_cap_gains_tax_usd`. 🎚 **`WithdrawalStrategy` enum** (`DividendOnly` / `TotalReturn` / `Hybrid`) — `DividendOnly` disables the waterfall entirely, leaving deficits as solvency warnings. 💬 **Jurisdictional tooltips** on Global Tax Jurisdiction, Source Tax Jurisdiction, and US State Tax explain treaty mechanics directly in the UI. 📊 Two new CSV columns: `JapanCapGainsTax_JPY`, `StateCapGainsTax_USD`. 🧪 New integration suite `tests/v7_tax_and_liquidation_test.rs` (3 tests). |
-| **V6.6** | 💴 **Dividend-Focus header** prominently surfaced in the Input Configuration panel; 🇯🇵 **Noto Sans JP font** installed via `FontDefinitions` so Japanese tooltips ("NHI Spike", 公的年金等控除) render natively; ⏱ **Timing defaults** auto-populate to Start = today and End = today + 50 years; tooltips added to every Timing / Economics / Expense / Buffer field; **FX Drift moved under USD/JPY** in the Economics section and now supports `fx_drift_cadence_months` + `fx_drift_increase_amount_jpy` (every N months, FX jumps by a signed JPY amount); 👥 **Marriage toggle** + Spouse Birthday in Family Demographics; **Spouse SS** and **Spouse Nenkin** rendered inside their parent income sections with independent estimate / start age / jurisdiction; **Dependents now use full birth dates** (NaiveDate) for exact 18th/23rd birthday cutoffs; 📊 Position grid Ticker / Units / Price column widths **doubled** (108 / 140 / 164 px); 💴 **DC Plans now support per-fund position rows with JPY-denominated Units & Price** via a `dc_jpy_units` toggle; **per-position rebalance dates** (`Position.rebalance_date: Option<NaiveDate>`) supersede the global rebalance event when set; new `Position.recession_override: Option<f64>` reserved for per-position drawdown sensitivity; 4 new V6.6 inline tests + 3 integration stress tests verifying FX cadence math, spouse SS age gating, and per-position rebalance precedence |
-| **V6.5** | 🔒 Mathematical hardening & compliance fixes: recovery boost rate guarded against `severity = 1.0` div-by-zero; `calculate_liability_with_feie_ftc` split into `gross_earned` (FEIE-eligible: salary / RSU vests) and `gross_unearned` (pension, Social Security, SSDI — not FEIE-eligible) per IRC §911; FTC apportionment denominator corrected to total Japan-taxable income (earned + unearned + gains) per IRC §904; 59/59 tests passing |
-| **V6.4** | 👨‍👩‍👧 `Dependent` + `FamilyUnit` structs in Config; `ssdi_monthly_usd` field; VA child rider college-student extension to age 23; SSDI Combined Income tax rule (IRS Pub 915: 50%/85% tiers, MFJ thresholds $32K/$44K); IRS senior standard deduction add-on at age 65+ per qualifying person (MFJ: +$1,550, Single/HoH: +$1,950); Japan SSDI routed through 公的年金等控除 pension deduction; new "Family Demographics" and "SSDI" UI sections; 65/65 tests passing |
-| **V6.3** | 🏛 Official 2026 VA compensation rates hardcoded (100% Vet Only: $3,938.58; 100% With Spouse: $4,158.17; 100% With Spouse+Child: $4,267.28); all 12 SMC variants updated to 2026 rates (K: $139.87 through R.2: $11,271.67); UI "(Using Official 2026 VA Rates)" label added; all VA/SMC unit tests updated |
-| **V6.2** | 🗂 Input Panel refactored to a single unified `egui::Grid` (8 columns: Ticker, Units, ✨ Auto-Fetch, Price USD, Cost Basis, Growth %, ⚙ Management, ☐ Select/Delete); centered headers with `ui.with_layout`; `(opt.)` tags in muted style; per-cell `id_salt(("col", acct_idx, pos_idx))` on every `TextEdit` for strict ID uniqueness; management sub-panels relocated after the unified grid |
-| **V6.1** | 🐞 Resolved egui widget ID clashes causing red "Second use of widget ID" artifacts when switching tabs; all `ScrollArea` widgets now carry explicit `id_salt` values; baseline tabs wrapped in `push_id("baseline_view")` namespace; comparison tab wrapped in `push_id("comparison_view")` namespace |
-| **V6.0** | ⚙ Per-ticker Management sub-panel (expandable ⚙▾ button): Accumulation rules (monthly buy amount, frequency, stop-at-retirement), DRIP toggle + redirect ticker, Target Allocation %; ⚖ Target-State Rebalancing engine (quarterly/semi-annual/annual, sell overweight → buy underweight, 15% LTCG on taxable sells); 📊 Dividend Coverage Ratio metric (div gross JPY ÷ total expenses, shown per-year in Results Table + Overview aggregate, originally column 32 in the V6.0 CSV); new `accumulation_rules` and `target_allocations` JSON keys |
-| **V5.9** | 🎲 Marco Polo (Monte Carlo) engine — 1,000 GBM iterations → P10/P50/P90 trajectories; per-position Volatility % field (replaces Growth % when active); 🔀 Dual-Scenario Comparison — load two JSON scenarios, run both, view side-by-side (Ending Wealth, NHI paid, solvency warnings); UI spacing between account cards; "Growth Rate Data" legacy section removed |
-| **V5.8** | ✨ Auto-Calc button on every position ticker (live price + 10y CAGR from Yahoo Finance); "(opt.)" labels on optional position columns; DC Plan dual-currency stability note + configurable growth rate / "Use Market Average (10%)" toggle; `dc_growth_rate` wired through Config → contributions handler; RSU Grant Price field removed (engine computes vest value from current price × CAGR) |
-| **V5.7** | Universal Japan NHI engine (`NhiModel` enum); `Calculated` mode with per-component rates + caps; `ManualOverride` mode; UI NHI Settings section; "Load Sagamihara 2026 Defaults" button; US investment income flag; dynamic NHI scheduling in controller (replaces static spike rule) |
-| **V5.6** | `calculate_nhi_premiums` 1-year lookback utility; dynamic multi-account/position UI; DC Plan inline fields; multi-tranche RSU grant table |
-| **V5.5** | `Vec<Position>` data model; Equity & Vesting UI section (stock table + RSU grant); Account Type selector; VA/SMC override toggles; Python debt purged |
-| **V5.4** | `TaxProtocol` enum (`TaxFree` variant); `MilitaryRetiredConfig`; SMC 2026 rate table; FEIE/FTC true pipeline fix; ordinary income brackets before LTCG stacking |
-| **V5.3** | Currency Shock Engine; purchasing-power audit; multi-month drawdown; historical 10-year CAGR table; FTC carry-over |
-| **V5.2** | Multi-month drawdown engine; reinvestment suppression; FTC carry-over logic |
-| **V5.1** | Nationwide Juminzei rates (all 47 prefectures); FEIE/FTC strategy support; VA, Social Security, and Nenkin income streams |
-| **V5.0** | Nationwide Japan support; initial Technical Manual |
-
+| :--- | :--- |
+| **V7.2** | 🏛 **Treaty Articles 17 & 18** — US Social Security routed as public pension; FERS national exemption + local tax toggle. 💴 **Japanese Fund Convention** — DC/iDeCo price model uses ¥/万口 (per 10k units). 📈 **RSU Cliff Logic** — "Delayed Initial Vest" handles cliff-accumulation math. 🛡 **Stability Hardening** — Clamped 0.5% FX penalties and safe `Option` handling. |
+| **V7.1** | **Defensive JPY-first spending waterfall** added via `withdrawal_waterfall` (`defensive` default). USD-to-JPY conversions apply `fx_spread_penalty` (0.5% default). Lumpy dividends by month and `dividend_currency` support. |
+| **V7.0** | 🇯🇵 **Japan-Resident Cost Basis model** — `Position.avg_purchase_price_jpy` carries the JPY paid at purchase. ⛏ **Highest-JPY-Basis-First liquidation** sorts taxable holdings DESC by JPY basis to minimize realized gains. |
+| **V6.4 – V6.6** | 👨‍👩‍👧 **Family Demographics** — SSDI support, VA child rider extensions, and Spouse age-gating. 👥 **Marriage toggle** + Spouse SS/Nenkin estimates. ⏱ **FX Drift** step-based cadence logic. |
+| **V5.5 – V6.3** | ⚖ **Target-State Rebalancing** and **Marco Polo (Monte Carlo)** engines. ✨ **Auto-Fetch** ticker pricing. ⚙ **Per-ticker Management** (Accumulation/DRIP). 🛡 **Mathematical Hardening** — FEIE/FTC pipeline split and §904/§911 compliance. |
 ---
 
 ## Table of Contents
@@ -606,6 +587,7 @@ taxed differently. The engine lets you turn each one on or off so the scenario m
 | COLA | Diet-COLA | ≤2% → full CPI; ≤3% → capped 2%; >3% → CPI−1% |
 | US taxable | Yes | Included in `total_ord` (bracket floor) |
 | Japan taxable | Yes | Converted to JPY; included in `gross_pension` for resident tax |
+| Local-tax exempt | Optional (Art. 18) | Set fers_japan_local_tax_exempt: true to sequester from resident tax base. |
 
 Diet-COLA does not compound until the January after age 62 is reached, matching OPM rules.
 
@@ -616,7 +598,7 @@ Diet-COLA does not compound until the January after age 62 is reached, matching 
 | `ss_monthly_usd` | 0 | Monthly Social Security Retirement estimate; set to 0 to disable |
 | `ss_start_age` | 67 | Full retirement age |
 | US taxable | Yes | Savings Clause — included in `total_ord` alongside FERS |
-| Japan taxable | No | Not included in Japan `gross_pension` |
+| Japan taxable | Yes (Art. 17) | Routed as Public Pension (公的年金) into gross_pension. |
 | COLA inflation | Yes | Inflated by `inflation_cola` each year after `ss_start_age` |
 
 ### Japanese National Pension (Nenkin)
@@ -644,7 +626,7 @@ starting at `nenkin_income_start_age` and represents the pension drawdown phase.
 
 **SSDI Combined Income rule** (MFJ thresholds):
 
-| Provisional Income (PI = AGI_before_SSDI + 0.5 × SSDI) | Taxable SSDI |
+| Provisional Income (PI = FERS + SS + 0.5 × SSDI in current implementation; excludes investment income). | Taxable SSDI |
 |----------------------------------------------------------|-------------|
 | ≤ $32,000 | $0 |
 | $32,001 – $44,000 | `min(0.50 × (PI − $32,000), 0.50 × SSDI)` |
@@ -805,9 +787,9 @@ across an arbitrary number of award tranches.
 
 - **Multi-award support** — unlimited entries in `rsu_awards`.
 - **Vesting cadences** — `quarterly` (default months 2/5/8/11), `monthly` (12×/year),
-  `annually` (1×/year). Overridden by explicit `vesting_months` list.
+  `annually` (1×/year). Overridden by explicit `vesting_months` list. 
 - **`vesting_start_date`** — optional; shifts the vesting clock origin away from `grant_date`
-  (used for cliff-then-vest grants where the anniversary year starts later than the grant).
+  (used for cliff-then-vest grants where the anniversary year starts later than the grant). **cliff_vest_months** — when > 0, vesting events during the cliff period accumulate and burst on the first available vest date.
 - **Retirement cutoff** — all unvested shares on or after `retirement_date` are forfeited.
 - **RSU tax handling**:
   - `SALARY` — tax is paid from external paycheck; vest value flows to portfolio
@@ -921,6 +903,8 @@ Load two distinct JSON scenario files and run them side-by-side:
    - Marco Polo P10/P50/P90 table (when Marco Polo was enabled for baseline run)
    - Side-by-side grid: Simulation Years, Final Year, Ending Taxable Portfolio, Roth IRA, DC Plan, FX Rate, Ending Wealth (USD), Total NHI Paid, Solvency Warnings
 
+   ⚠ Note: Deficit years and Gap Warnings indicate months when native JPY income and cash buffers were insufficient to cover base expenses, triggering automated spending cuts or stock sales. This can occur even in highly successful scenarios if growth is concentrated in low-yield assets.
+
 The Comparison scenario is executed from a separate JSON file (no shared state with baseline). To compare two scenarios that differ only in one parameter, save a copy of the baseline JSON, modify that parameter, and load the copy as the Comparison.
 
 ### V5.5 Input Config additions
@@ -1032,7 +1016,7 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 |----------|----------|------|-------------|
 | `holdings.taxable` | JSON | Object | Taxable brokerage. Keys are ticker symbols; each entry has `qty`, `avg_cost`, and optional `avg_purchase_price_jpy`, `drip_enabled`, `dividend_reinvest_target`, `custom_growth_rate`, `category`, `dividend_months`, `dividend_currency` |
 | `holdings.roth_ira` | JSON | Object | Roth IRA. Same per-asset schema as `taxable` |
-| `holdings.japan_dc` | JSON | Object | Japan DC / iDeCo. Fields: `qty` (units), `nav_jpy_per_10k`, `growth_rate` |
+| `holdings.japan_dc` | JSON | Object | Japan DC / iDeCo. Fields: qty (units), nav_jpy_per_10k (NAV in ¥ per 10,000 units / 万口), growth_rate. Currently restricted to a single fund. |
 | `market_prices_usd` | JSON | Object | Manual price override per ticker. Set to `0` to use fallback price |
 | `growth_rates_annual` | JSON | Object | Per-ticker annual CAGR. Ignored for any ticker when `fetch_live_growth_rates: true` |
 | `fetch_live_growth_rates` | Input Config | `bool` | `false` | When `true`, fetches 10-year CAGR from Yahoo Finance; falls back to 7% on failure |
