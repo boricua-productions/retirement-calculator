@@ -16,6 +16,13 @@ pub const JAPAN_CAPITAL_GAINS_RATE: f64 = 0.20315;
 /// Applied at Tiers 4, 5, 6, and 8. Rate: 0.5% (overridable via cfg.fx_spread_penalty).
 pub const DEFAULT_FX_SPREAD_PENALTY: f64 = 0.005;
 
+/// V7.4 — Dynamic-mode preemptive trigger.
+/// If the projected minimum of either buffer over the next
+/// `MODE_B_LOOKAHEAD_MONTHS` falls below `MODE_B_PREEMPT_FLOOR × target`, Mode B
+/// fires a Tier-8 sale to restore both buffers to full target.
+pub const MODE_B_LOOKAHEAD_MONTHS: u32 = 4;
+pub const MODE_B_PREEMPT_FLOOR:    f64 = 0.50;
+
 /// Convert USD to JPY applying the configured spread penalty.
 /// Returns (jpy_after_penalty, penalty_jpy_lost).
 #[inline]
@@ -204,17 +211,24 @@ fn manage_monthly_cashflow_defensive(
         }
     }
 
-    // ── V7.3 — Regime-aware Tier 7/8 dispatch ────────────────────────────────
+    // ── V7.3/V7.4 — Regime-aware Tier 7/8 dispatch ───────────────────────────
     //
-    // Shielded (Mode A): Force the target down to Minimum before any sale.
-    // When all cash buffers (war chest, bridge) are zero, the entire month
-    // runs at minimum — equity is sold only enough to cover the floor.
+    // Shielded (Mode A): EXPLICITLY Tier 7 BEFORE Tier 8.
+    //   1. Tier 7 (Belt-tightening): if any gap remains after T0–T6, OR if
+    //      both cash buffers are at zero, drop the month's spend target from
+    //      Base to Minimum. `gap` is reduced by (target_base − target_min).
+    //   2. Tier 8 (Stock Liquidation): fires ONLY when a residual gap remains
+    //      after T7. The sale is sized against the *minimum* gap (post-T7),
+    //      NOT the base gap — so even a partially-funded month sells just
+    //      enough equity to cover the floor, never the desired base spend.
+    //   Outcome: equity is preserved unless the minimum floor itself cannot
+    //   be funded by all earlier tiers (T0–T7) combined.
     //
-    // Dynamic (Mode B): Treat target buffer levels as set-points. Compute the
-    // monthly deficit + a "buffer restock" amount (12-month bridge target,
-    // war-chest target), subtract the next month's expected dividends as a
-    // look-ahead, and liquidate Tier 8 for that aggregate. Base spending is
-    // preserved unless the recovered proceeds fall short.
+    // Dynamic (Mode B) — V7.4 PREEMPTIVE: project the next 4 months. If
+    // either buffer is on track to dip below 50% of target, sell to restore
+    // both buffers to FULL target (less next-month dividend look-ahead).
+    // Otherwise just cover the current monthly gap. Falls back to a T7-style
+    // Minimum drop only if the sale itself underperforms.
     let mut target_dropped = false;
     match cfg.withdrawal_regime {
         WithdrawalRegime::Shielded => {
@@ -239,16 +253,46 @@ fn manage_monthly_cashflow_defensive(
             }
         }
         WithdrawalRegime::Dynamic => {
-            // Restock amount: bring buffers back to their set-points.
+            // V7.4 — Preemptive restocking.
+            //
+            // The V7.3 Dynamic branch always sold to top buffers back to target,
+            // but `liquidate_for_jpy_target` silently no-op'd when the bridge
+            // already had headroom — so the war chest could drain to ¥0 mid-year
+            // before any actual sale happened.
+            //
+            // V7.4 separates the *trigger* from the *sizing*:
+            //   - TRIGGER (preemptive): project WC and Bridge balances forward
+            //     `MODE_B_LOOKAHEAD_MONTHS` (default 4). If either is on track
+            //     to dip below 50% of its target, fire a sale.
+            //   - SIZING: restore both buffers to FULL target, minus the
+            //     next-month dividend look-ahead so we don't over-sell against
+            //     an imminent inflow.
+            //   - The accompanying fix to `liquidate_for_jpy_target` guarantees
+            //     the sale actually executes regardless of current bridge state.
             let wc_gap_jpy     = (cfg.war_chest_target_jpy - state.war_chest_jpy).max(0.0);
             let bridge_target_usd = target_base_jpy * cfg.bridge_months_target as f64 / fx;
             let bridge_gap_usd = (bridge_target_usd - state.bridge_fund_usd).max(0.0);
             let bridge_gap_jpy = bridge_gap_usd * fx;
-            let restock_jpy    = wc_gap_jpy + bridge_gap_jpy;
+
+            let wc_floor_jpy     = cfg.war_chest_target_jpy * MODE_B_PREEMPT_FLOOR;
+            let bridge_floor_usd = bridge_target_usd        * MODE_B_PREEMPT_FLOOR;
+
+            let (proj_min_wc, proj_min_bridge_usd) =
+                project_buffer_minimums(state, target_base_jpy, fx, penalty, MODE_B_LOOKAHEAD_MONTHS);
+
+            let preemptive_trigger =
+                proj_min_wc < wc_floor_jpy || proj_min_bridge_usd < bridge_floor_usd;
 
             // Look-ahead: expected next-month dividend net (JPY-equivalent).
             let lookahead_jpy = project_next_month_dividends_jpy(state, fx, penalty);
 
+            // If neither buffer is at risk in the lookahead window, do NOT
+            // proactively sell — only cover an actual current gap.
+            let restock_jpy = if preemptive_trigger {
+                wc_gap_jpy + bridge_gap_jpy
+            } else {
+                0.0
+            };
             let sale_target_jpy = (gap + restock_jpy - lookahead_jpy).max(0.0);
             if sale_target_jpy > 0.0 {
                 let recovered_jpy = liquidate_for_jpy_target(state, cfg, sale_target_jpy, fx, penalty);
@@ -257,10 +301,11 @@ fn manage_monthly_cashflow_defensive(
                 gap -= to_gap;
                 let remainder_jpy = recovered_jpy - to_gap;
                 if remainder_jpy > 0.0 {
-                    // Refill JPY war chest first, then USD bridge.
+                    // Refill JPY war chest first, then USD bridge — both capped
+                    // at their respective gaps so neither buffer can over-fill.
                     let wc_fill = remainder_jpy.min(wc_gap_jpy);
                     state.war_chest_jpy += wc_fill;
-                    let bridge_fill_jpy = remainder_jpy - wc_fill;
+                    let bridge_fill_jpy = (remainder_jpy - wc_fill).min(bridge_gap_jpy);
                     if bridge_fill_jpy > 0.0 {
                         // Convert with the same FX penalty already debited at sale time.
                         state.bridge_fund_usd += bridge_fill_jpy / fx;
@@ -787,12 +832,16 @@ fn check_quarterly_solvency(state: &mut SimState) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Tier 0.5 — Jido Teate (児童手当) child allowance, paid bi-monthly in even
-/// calendar months. The per-month rate depends on the child's age:
+/// calendar months. The per-month rate depends on the child's age in that
+/// specific month:
 ///   age 0 – under 3  → ¥15,000 / month
 ///   age 3 – under 18 → ¥10,000 / month
-/// Even months get two months' worth (the legal cadence is bundled payments).
-/// Returns 0 when disabled, in an odd month, or when the child is outside the
-/// eligibility window.
+///
+/// V7.4 — Accrual is computed PER COVERED MONTH (not at payment date). The
+/// even-month payment X bundles the rate that applied in month (X-1) plus the
+/// rate that applied in month X. This eliminates the ¥2,500–¥10,000 transition-
+/// year drift that V7.3 produced when the age-3 or age-18 boundary fell
+/// between the two months a single bundled payment covered.
 fn compute_jido_teate_jpy(cfg: &Config, current_date: NaiveDate) -> f64 {
     jido_teate_for(cfg.jido_teate_enabled, cfg.child_birth_date, current_date)
 }
@@ -803,14 +852,33 @@ fn jido_teate_for(enabled: bool, child_birth: NaiveDate, on: NaiveDate) -> f64 {
     if !enabled { return 0.0; }
     if on.month() % 2 != 0 { return 0.0; }
 
-    let mut age = on.year() - child_birth.year();
-    if (on.month(), on.day()) < (child_birth.month(), child_birth.day()) {
+    // The even-month payment covers the previous calendar month and the
+    // current calendar month. Each is assessed at the rate applicable to the
+    // child's age on the first day of that month.
+    let prev_month_start = first_of_prev_month(on);
+    let cur_month_start  = NaiveDate::from_ymd_opt(on.year(), on.month(), 1).unwrap_or(on);
+    monthly_jido_rate(child_birth, prev_month_start) + monthly_jido_rate(child_birth, cur_month_start)
+}
+
+/// V7.4 — Per-month rate applied to a single month of Jido Teate accrual.
+/// Returns 0 outside the [0, 18) age window.
+fn monthly_jido_rate(child_birth: NaiveDate, month_start: NaiveDate) -> f64 {
+    let mut age = month_start.year() - child_birth.year();
+    if (month_start.month(), month_start.day()) < (child_birth.month(), child_birth.day()) {
         age -= 1;
     }
     if age < 0 || age >= 18 { return 0.0; }
+    if age < 3 { 15_000.0 } else { 10_000.0 }
+}
 
-    let monthly_rate = if age < 3 { 15_000.0 } else { 10_000.0 };
-    monthly_rate * 2.0
+/// First-of-the-previous-month relative to `on`. Wraps from January → previous
+/// year's December.
+fn first_of_prev_month(on: NaiveDate) -> NaiveDate {
+    if on.month() == 1 {
+        NaiveDate::from_ymd_opt(on.year() - 1, 12, 1).unwrap()
+    } else {
+        NaiveDate::from_ymd_opt(on.year(), on.month() - 1, 1).unwrap()
+    }
 }
 
 /// Tier 2.5 — Education Fund drawdown. Education-tagged expenses pull from
@@ -889,6 +957,16 @@ fn liquidate_for_jpy_gap(
 /// amount (deficit + restock or education shortfall) and returns the actual
 /// JPY recovered. The proceeds are passed back rather than deposited so the
 /// caller can route them (gap-closure vs buffer-refill vs education-cover).
+///
+/// V7.4 — Pre-V7.4 this function decremented `state.bridge_fund_usd` by
+/// `needed_usd` and then called `v7_liquidate_for_deficit`. Because v7 only
+/// sells when the bridge is *negative*, the call silently no-op'd whenever the
+/// bridge happened to have headroom — and Mode B's preemptive restock was
+/// effectively dead code. V7.4 forces a real deficit by *overwriting* the
+/// bridge with `-needed_usd` for the duration of the sale, then restores the
+/// pre-call balance afterwards. Net effect: every JPY-target sale request now
+/// actually transacts equity until either `needed_usd` is covered or the
+/// taxable account is empty.
 fn liquidate_for_jpy_target(
     state: &mut SimState,
     cfg: &Config,
@@ -899,23 +977,99 @@ fn liquidate_for_jpy_target(
     if target_jpy <= 0.0 { return 0.0; }
     let bridge_before = state.bridge_fund_usd;
     let needed_usd = target_jpy / (fx * (1.0 - penalty).max(f64::EPSILON));
-    state.bridge_fund_usd -= needed_usd;
+
+    // Force a real deficit so v7_liquidate_for_deficit actually sells.
+    state.bridge_fund_usd = -needed_usd;
     v7_liquidate_for_deficit(state, cfg);
 
-    // Whatever appeared above the pre-sale bridge level is the recovery.
-    let bridge_after_pre_penalty = state.bridge_fund_usd;
-    let raw_recovered_usd = (bridge_after_pre_penalty - (bridge_before - needed_usd)).max(0.0);
-    let recovered_usd_net = raw_recovered_usd;
-    if recovered_usd_net > 0.0 {
-        let pen_jpy = recovered_usd_net * fx * penalty;
+    // After v7, bridge_fund_usd sits in [-needed_usd, ~0]. The delta from
+    // -needed_usd is the gross USD value of stock sold (already net of Japan
+    // capital-gains + state tax that v7 itself debits).
+    let raw_recovered_usd = (state.bridge_fund_usd + needed_usd).max(0.0);
+    if raw_recovered_usd > 0.0 {
+        let pen_jpy = raw_recovered_usd * fx * penalty;
         state.stats.year_fx_penalty_jpy += pen_jpy;
         state.bridge_fund_usd -= pen_jpy / fx;
     }
+    let net_recovered_usd = (state.bridge_fund_usd + needed_usd).max(0.0);
     // Restore the bridge to its pre-call balance — proceeds are handed back as JPY.
-    let net_recovered_usd = (state.bridge_fund_usd - bridge_before).max(0.0);
     state.bridge_fund_usd = bridge_before;
 
     net_recovered_usd * fx
+}
+
+/// V7.4 — Project gross dividend net JPY for an arbitrary forward month.
+/// Generalisation of `project_next_month_dividends_jpy`. Tax-advantaged
+/// accounts are skipped just like the next-month variant.
+fn project_dividends_for_month_jpy(
+    state: &SimState,
+    target_month: u32,
+    fx: f64,
+    penalty: f64,
+) -> f64 {
+    let taxable = match state.accounts.get("Taxable") {
+        Some(a) => a,
+        None => return 0.0,
+    };
+    let mut total_jpy = 0.0_f64;
+    for asset in taxable.assets.values() {
+        if asset.yield_rate <= 0.0 || asset.qty() <= 0.0 || asset.price <= 0.0 { continue; }
+        if !asset.dividend_months.contains(&target_month) { continue; }
+        let n = asset.dividend_months.len().max(1) as f64;
+        let gross = asset.qty() * asset.price * (asset.yield_rate / n);
+        match asset.dividend_currency {
+            crate::models::assets::DividendCurrency::Jpy => {
+                total_jpy += gross * (1.0 - JAPAN_CAPITAL_GAINS_RATE);
+            }
+            crate::models::assets::DividendCurrency::Usd => {
+                total_jpy += gross * fx * (1.0 - penalty);
+            }
+        }
+    }
+    total_jpy
+}
+
+/// V7.4 — Forward-project the minimum WC (JPY) and Bridge (USD) balances over
+/// the next `lookahead_months` assuming NO sales. Income side: lumpy dividend
+/// payouts only; outflow side: a flat `target_base_jpy` per month. Net deficit
+/// drains the war chest first, then the bridge.
+///
+/// This is the trigger oracle for Dynamic-mode preemptive restocking. It does
+/// not mutate state — pure projection.
+fn project_buffer_minimums(
+    state: &SimState,
+    target_base_jpy: f64,
+    fx: f64,
+    penalty: f64,
+    lookahead_months: u32,
+) -> (f64, f64) {
+    let mut proj_wc_jpy     = state.war_chest_jpy;
+    let mut proj_bridge_usd = state.bridge_fund_usd;
+    let mut min_wc          = proj_wc_jpy;
+    let mut min_bridge_usd  = proj_bridge_usd;
+
+    for ahead in 1..=lookahead_months {
+        let cur_mo: i32 = state.date.month() as i32;
+        let target_mo = (((cur_mo - 1 + ahead as i32) % 12) + 1) as u32;
+        let div_jpy = project_dividends_for_month_jpy(state, target_mo, fx, penalty);
+        let net_jpy = div_jpy - target_base_jpy;
+
+        if net_jpy >= 0.0 {
+            proj_wc_jpy += net_jpy;
+        } else {
+            let deficit = -net_jpy;
+            if proj_wc_jpy >= deficit {
+                proj_wc_jpy -= deficit;
+            } else {
+                let remainder = deficit - proj_wc_jpy.max(0.0);
+                proj_wc_jpy = 0.0;
+                proj_bridge_usd -= remainder / fx;
+            }
+        }
+        if proj_wc_jpy < min_wc        { min_wc = proj_wc_jpy; }
+        if proj_bridge_usd < min_bridge_usd { min_bridge_usd = proj_bridge_usd; }
+    }
+    (min_wc, min_bridge_usd)
 }
 
 /// Look-ahead — project the JPY-equivalent net dividend income for the next

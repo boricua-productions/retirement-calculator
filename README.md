@@ -281,24 +281,40 @@ account participate in T1/T5 dividends and T8 liquidation.
 
 ### Withdrawal Regimes — Mode A vs Mode B
 
-The new `withdrawal_regime` setting selects how the Defensive waterfall manages
+The `withdrawal_regime` setting selects how the Defensive waterfall manages
 its cash buffers once Tier 0 through Tier 6 have been consumed:
 
-- **`shielded` — Mode A (default).** "Preserve equity at all costs." Exhaust
-  monthly inflows, drain the JPY war chest to zero, drain the USD bridge to
-  zero, then sell stock as a last resort sized only to the **Minimum Monthly**
-  floor (not the Base target). Whenever both cash buffers hit zero, the entire
-  month automatically runs at minimum spending.
-- **`dynamic` — Mode B.** "Treat buffer levels as set-points." Computes the
-  monthly deficit *plus* a "buffer restock" amount that returns the bridge to
-  `bridge_months_target × base_spend` months and the war chest to
-  `war_chest_target_jpy`. The look-ahead step subtracts the next month's
-  expected dividend net so the portfolio isn't over-sold against imminent
-  inflows. Liquidates Tier 8 for the aggregate.
+- **`shielded` — Mode A (default).** "Preserve equity at all costs."
+  Exhaust monthly inflows, drain the JPY war chest, drain the USD bridge.
+  Then, in this strict order:
+  1. **Tier 7 — Belt-tightening fires FIRST.** If a gap survives Tier 6, *or*
+     if both cash buffers are at zero, the engine drops the month's spend
+     target from **Base** to **Minimum Monthly**. The gap is reduced by the
+     Base − Minimum savings before any sale is considered.
+  2. **Tier 8 — Stock liquidation fires SECOND, sized against the minimum
+     gap.** A sale only happens when even the *Minimum* floor cannot be funded
+     by Tiers 0–7 combined; the sale is sized to cover that residual minimum
+     gap, never the original Base gap. The result: in lean months the engine
+     sells only enough equity to keep the household at the floor.
+- **`dynamic` — Mode B (V7.4 preemptive).** "Treat buffer levels as
+  set-points and act *before* they break."
+  1. **Projection trigger.** Each month, the engine projects WC and Bridge
+     balances forward 4 months using lumpy dividend cadences and a flat
+     base-spend outflow. If either buffer is on track to dip below **50% of
+     its target**, the preemptive sale fires.
+  2. **Restore-to-target sizing.** When triggered, the sale targets full
+     restoration of both buffers (war chest → `war_chest_target_jpy`, bridge →
+     `bridge_months_target × base_spend / FX`), minus the next month's
+     expected dividend net so the portfolio isn't over-sold against an
+     imminent inflow. Untriggered months sell only what is needed to close an
+     actual current gap.
+  3. **Minimum-floor fallback.** If the sale itself underperforms (insufficient
+     taxable inventory), Mode B drops to Minimum just as Mode A would, so
+     observability and `year_months_target_dropped` remain consistent.
 
 Mode A favours portfolio longevity; Mode B favours steady living standards
-backed by active rebalancing. Both honour the Tier 0.5 / Tier 2.5 family
-tiers identically.
+with active rebalancing. Both honour the Tier 0.5 / Tier 2.5 family tiers
+identically.
 
 ---
 
