@@ -4,7 +4,7 @@ use log::{info, warn};
 use crate::engine::cashflow_engine::CashFlowEngine;
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::japan_tax::JapanTaxEngine;
-use crate::models::config::{Config, TaxProtocol, WaterfallStrategy, WithdrawalStrategy};
+use crate::models::config::{Config, TaxProtocol, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy};
 use crate::models::constants::SimConstants;
 use crate::models::snapshot::SolvencyWarning;
 use crate::simulation::state::SimState;
@@ -106,7 +106,7 @@ fn manage_monthly_cashflow_defensive(
     let exp = cf_engine.get_expenses_breakdown(current_date);
     let nhi_delta = compute_nhi_delta(state, cfg, yr, mo, &exp);
 
-    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax;
+    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.education;
     state.stats.year_exp_base      += exp.base_desired;
     state.stats.year_exp_nhi       += exp.nhi + nhi_delta;
     state.stats.year_exp_nenkin    += exp.nenkin;
@@ -115,12 +115,26 @@ fn manage_monthly_cashflow_defensive(
     let target_base_jpy = exp.base_desired + nhi_delta + exp.nenkin + exp.restax;
     let target_min_jpy  = exp.base_floor   + nhi_delta + exp.nenkin + exp.restax;
 
+    // ── V7.3 — Tier 2.5: Education Fund draw (BYPASS main waterfall) ─────────
+    // Education-tagged expenses pull from the dedicated Education bucket first.
+    // If the bucket is empty, the residual falls through to a Tier-8 sale
+    // sized exactly to the shortfall (no other tier touches it).
+    if exp.education > 0.0 {
+        process_education_expense(state, cfg, exp.education, fx, penalty);
+    }
+
     // ── DC Payout (JPY-native, Tier 0) ───────────────────────────────────────
     let dc_payout_jpy = compute_dc_payout_jpy(state, cfg, current_date);
 
-    // ── Tier 0: JPY Floor Income (Nenkin + DC Payout) ────────────────────────
+    // ── V7.3 — Tier 0.5: Jido Teate (児童手当) child allowance ────────────────
+    // Bi-monthly: paid in even calendar months at 2× the per-month rate (¥15k
+    // for ages 0-3, ¥10k for 3-18). No income cap modeled. Pure JPY inflow.
+    let t0_5_jpy = compute_jido_teate_jpy(cfg, current_date);
+    state.stats.year_jido_teate_jpy += t0_5_jpy;
+
+    // ── Tier 0: JPY Floor Income (Nenkin + DC Payout + Jido Teate) ───────────
     // Pure JPY sources: no FX conversion, no spread penalty.
-    let t0_jpy  = nenkin_jpy + dc_payout_jpy;
+    let t0_jpy  = nenkin_jpy + dc_payout_jpy + t0_5_jpy;
     let mut gap = target_base_jpy;
     let t0_used = t0_jpy.min(gap);
     gap -= t0_used;
@@ -190,41 +204,80 @@ fn manage_monthly_cashflow_defensive(
         }
     }
 
-    // ── Tier 7: Belt-tightening — drop target to Minimum ─────────────────────
+    // ── V7.3 — Regime-aware Tier 7/8 dispatch ────────────────────────────────
+    //
+    // Shielded (Mode A): Force the target down to Minimum before any sale.
+    // When all cash buffers (war chest, bridge) are zero, the entire month
+    // runs at minimum — equity is sold only enough to cover the floor.
+    //
+    // Dynamic (Mode B): Treat target buffer levels as set-points. Compute the
+    // monthly deficit + a "buffer restock" amount (12-month bridge target,
+    // war-chest target), subtract the next month's expected dividends as a
+    // look-ahead, and liquidate Tier 8 for that aggregate. Base spending is
+    // preserved unless the recovered proceeds fall short.
     let mut target_dropped = false;
-    if gap > 0.0 {
-        let savings = target_base_jpy - target_min_jpy;
-        let gap_reduction = savings.min(gap);
-        gap -= gap_reduction;
-        target_dropped = true;
-        state.stats.year_months_target_dropped += 1;
-        warn!("   [T7] Target dropped to Minimum (¥{:.0}) — ¥{:.0} gap remaining.",
-            target_min_jpy, gap);
-    }
-
-    // ── Tier 8: Liquidate Stocks (Highest-Basis-JPY first) → JPY with penalty ─
-    if gap > 0.0 {
-        let needed_usd = gap / (fx * (1.0 - penalty));
-        // Signal the deficit into bridge (negative) so v7_liquidate can fill it.
-        state.bridge_fund_usd -= needed_usd;
-        v7_liquidate_for_deficit(state, cfg);
-        // Convert whatever was recovered (net into bridge) back to JPY for gap closure.
-        if state.bridge_fund_usd >= 0.0 {
-            // Full recovery.
-            gap = 0.0;
-        } else {
-            // Partial: residual deficit — solvency warning fires below.
-            let residual_jpy = state.bridge_fund_usd.abs() * fx;
-            gap = residual_jpy;
-            state.bridge_fund_usd = 0.0;
+    match cfg.withdrawal_regime {
+        WithdrawalRegime::Shielded => {
+            let cash_zero = state.war_chest_jpy <= 0.01 && state.bridge_fund_usd <= 0.01;
+            let belt_tighten = gap > 0.0 || cash_zero;
+            if belt_tighten {
+                let savings = target_base_jpy - target_min_jpy;
+                let gap_reduction = savings.min(gap.max(0.0));
+                gap = (gap - gap_reduction).max(0.0);
+                target_dropped = true;
+                state.stats.year_months_target_dropped += 1;
+                if gap_reduction > 0.0 {
+                    warn!("   [T7-A] Shielded: target dropped to Minimum (¥{:.0}) — gap reduced by ¥{:.0}, ¥{:.0} remaining.",
+                        target_min_jpy, gap_reduction, gap);
+                } else if cash_zero {
+                    warn!("   [T7-A] Shielded: cash buffers at zero — month runs at Minimum (¥{:.0}).",
+                        target_min_jpy);
+                }
+            }
+            if gap > 0.0 {
+                gap = liquidate_for_jpy_gap(state, cfg, gap, fx, penalty);
+            }
         }
-        // Debit FX spread cost on the recovered proceeds — consistent with Tiers 4-6.
-        let recovered_usd = needed_usd - gap / (fx * (1.0 - penalty)).max(f64::EPSILON);
-        if recovered_usd > 0.0 {
-            let pen_jpy = recovered_usd * fx * penalty;
-            state.stats.year_fx_penalty_jpy += pen_jpy;
-            // Actual cost extracted from the bridge to match Tier 4-6 debit semantics.
-            state.bridge_fund_usd -= pen_jpy / fx;
+        WithdrawalRegime::Dynamic => {
+            // Restock amount: bring buffers back to their set-points.
+            let wc_gap_jpy     = (cfg.war_chest_target_jpy - state.war_chest_jpy).max(0.0);
+            let bridge_target_usd = target_base_jpy * cfg.bridge_months_target as f64 / fx;
+            let bridge_gap_usd = (bridge_target_usd - state.bridge_fund_usd).max(0.0);
+            let bridge_gap_jpy = bridge_gap_usd * fx;
+            let restock_jpy    = wc_gap_jpy + bridge_gap_jpy;
+
+            // Look-ahead: expected next-month dividend net (JPY-equivalent).
+            let lookahead_jpy = project_next_month_dividends_jpy(state, fx, penalty);
+
+            let sale_target_jpy = (gap + restock_jpy - lookahead_jpy).max(0.0);
+            if sale_target_jpy > 0.0 {
+                let recovered_jpy = liquidate_for_jpy_target(state, cfg, sale_target_jpy, fx, penalty);
+                // First close the monthly gap, then route remainder into buffers.
+                let to_gap = recovered_jpy.min(gap);
+                gap -= to_gap;
+                let remainder_jpy = recovered_jpy - to_gap;
+                if remainder_jpy > 0.0 {
+                    // Refill JPY war chest first, then USD bridge.
+                    let wc_fill = remainder_jpy.min(wc_gap_jpy);
+                    state.war_chest_jpy += wc_fill;
+                    let bridge_fill_jpy = remainder_jpy - wc_fill;
+                    if bridge_fill_jpy > 0.0 {
+                        // Convert with the same FX penalty already debited at sale time.
+                        state.bridge_fund_usd += bridge_fill_jpy / fx;
+                    }
+                }
+            }
+            // If a gap still remains (Dynamic ran short), drop to minimum for
+            // observability — without this fallback Mode B can silently underspend.
+            if gap > 0.0 {
+                let savings = target_base_jpy - target_min_jpy;
+                let gap_reduction = savings.min(gap);
+                gap -= gap_reduction;
+                target_dropped = true;
+                state.stats.year_months_target_dropped += 1;
+                warn!("   [T7-B] Dynamic: short on restock — target dropped to Minimum (¥{:.0}), ¥{:.0} residual.",
+                    target_min_jpy, gap);
+            }
         }
     }
 
@@ -232,10 +285,11 @@ fn manage_monthly_cashflow_defensive(
     let actual_spend_jpy = (actual_target - gap).max(0.0);
 
     // ── Native-currency surplus deposit (no FX cross-contamination) ───────────
-    // JPY surpluses → War Chest; USD surpluses → Bridge Fund.
-    // During recession, park 100% in buffers; no reinvestment.
-    let jpy_surplus = t0_surplus_jpy + t1_surplus_jpy;
-    let usd_surplus = t4_surplus_usd + t5_surplus_usd;
+    // V7.3: JPY surplus is first skimmed into the Tier 2.5 Education Fund up
+    // to `edu_savings_jpy_monthly`. Remainder follows the V7.1 surplus rules.
+    let jpy_surplus_raw = t0_surplus_jpy + t1_surplus_jpy;
+    let jpy_surplus     = skim_education_savings(state, cfg, jpy_surplus_raw);
+    let usd_surplus     = t4_surplus_usd + t5_surplus_usd;
 
     if !state.recession_active {
         deposit_jpy_surplus(state, cfg, jpy_surplus);
@@ -725,5 +779,241 @@ fn check_quarterly_solvency(state: &mut SimState) {
             absorbed_by,
             notes: "Quarterly Cashflow Negative".into(),
         });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  V7.3 — Family & Education helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Tier 0.5 — Jido Teate (児童手当) child allowance, paid bi-monthly in even
+/// calendar months. The per-month rate depends on the child's age:
+///   age 0 – under 3  → ¥15,000 / month
+///   age 3 – under 18 → ¥10,000 / month
+/// Even months get two months' worth (the legal cadence is bundled payments).
+/// Returns 0 when disabled, in an odd month, or when the child is outside the
+/// eligibility window.
+fn compute_jido_teate_jpy(cfg: &Config, current_date: NaiveDate) -> f64 {
+    jido_teate_for(cfg.jido_teate_enabled, cfg.child_birth_date, current_date)
+}
+
+/// Pure helper extracted from `compute_jido_teate_jpy` so unit tests can hit
+/// the production logic without building a full `Config`.
+fn jido_teate_for(enabled: bool, child_birth: NaiveDate, on: NaiveDate) -> f64 {
+    if !enabled { return 0.0; }
+    if on.month() % 2 != 0 { return 0.0; }
+
+    let mut age = on.year() - child_birth.year();
+    if (on.month(), on.day()) < (child_birth.month(), child_birth.day()) {
+        age -= 1;
+    }
+    if age < 0 || age >= 18 { return 0.0; }
+
+    let monthly_rate = if age < 3 { 15_000.0 } else { 10_000.0 };
+    monthly_rate * 2.0
+}
+
+/// Tier 2.5 — Education Fund drawdown. Education-tagged expenses pull from
+/// `state.education_fund_jpy` first; any residual is covered by a Tier-8 sale
+/// sized exactly to the remaining JPY shortfall. Standard waterfall tiers
+/// (0,1,3-7) are NOT touched.
+fn process_education_expense(
+    state: &mut SimState,
+    cfg: &Config,
+    jpy_owed: f64,
+    fx: f64,
+    penalty: f64,
+) {
+    if jpy_owed <= 0.0 { return; }
+
+    let drawn = state.education_fund_jpy.min(jpy_owed);
+    state.education_fund_jpy -= drawn;
+    state.stats.year_edu_fund_out_jpy += drawn;
+    let residual = jpy_owed - drawn;
+    if residual <= 0.0 { return; }
+
+    // Fallback: Tier 8 sale sized to the residual JPY.
+    info!("   [T2.5] Education shortfall ¥{:.0} — falling through to Tier 8 sale.", residual);
+    let recovered = liquidate_for_jpy_target(state, cfg, residual, fx, penalty);
+    state.stats.year_edu_fund_out_jpy += recovered;
+    if recovered < residual {
+        warn!("   [T2.5] Education expense underfunded by ¥{:.0} after T8 fallback.",
+            residual - recovered);
+    }
+}
+
+/// Tier 2.5 accumulation — skim up to `cfg.edu_savings_jpy_monthly` from the
+/// available JPY surplus into the Education Fund. Returns the remaining JPY
+/// surplus to flow through the normal V7.1 surplus deposit rules.
+fn skim_education_savings(state: &mut SimState, cfg: &Config, jpy_surplus: f64) -> f64 {
+    let target = cfg.edu_savings_jpy_monthly;
+    if target <= 0.0 || jpy_surplus <= 0.0 { return jpy_surplus; }
+    let skim = target.min(jpy_surplus);
+    state.education_fund_jpy += skim;
+    state.stats.year_edu_fund_in_jpy += skim;
+    jpy_surplus - skim
+}
+
+/// Shielded-mode Tier 8: liquidate just enough to close `gap_jpy`. Identical
+/// in effect to the old inline T8 block — extracted so both regimes can share
+/// the FX-spread bookkeeping. Returns the residual JPY gap that could not be
+/// covered (0 on full recovery).
+fn liquidate_for_jpy_gap(
+    state: &mut SimState,
+    cfg: &Config,
+    gap_jpy: f64,
+    fx: f64,
+    penalty: f64,
+) -> f64 {
+    let needed_usd = gap_jpy / (fx * (1.0 - penalty).max(f64::EPSILON));
+    state.bridge_fund_usd -= needed_usd;
+    v7_liquidate_for_deficit(state, cfg);
+
+    let mut residual_jpy = 0.0;
+    if state.bridge_fund_usd >= 0.0 {
+        // Fully recovered.
+    } else {
+        residual_jpy = state.bridge_fund_usd.abs() * fx;
+        state.bridge_fund_usd = 0.0;
+    }
+    let recovered_usd = needed_usd - residual_jpy / (fx * (1.0 - penalty)).max(f64::EPSILON);
+    if recovered_usd > 0.0 {
+        let pen_jpy = recovered_usd * fx * penalty;
+        state.stats.year_fx_penalty_jpy += pen_jpy;
+        state.bridge_fund_usd -= pen_jpy / fx;
+    }
+    residual_jpy
+}
+
+/// Dynamic-mode / Tier-2.5-fallback liquidation — sells the requested JPY
+/// amount (deficit + restock or education shortfall) and returns the actual
+/// JPY recovered. The proceeds are passed back rather than deposited so the
+/// caller can route them (gap-closure vs buffer-refill vs education-cover).
+fn liquidate_for_jpy_target(
+    state: &mut SimState,
+    cfg: &Config,
+    target_jpy: f64,
+    fx: f64,
+    penalty: f64,
+) -> f64 {
+    if target_jpy <= 0.0 { return 0.0; }
+    let bridge_before = state.bridge_fund_usd;
+    let needed_usd = target_jpy / (fx * (1.0 - penalty).max(f64::EPSILON));
+    state.bridge_fund_usd -= needed_usd;
+    v7_liquidate_for_deficit(state, cfg);
+
+    // Whatever appeared above the pre-sale bridge level is the recovery.
+    let bridge_after_pre_penalty = state.bridge_fund_usd;
+    let raw_recovered_usd = (bridge_after_pre_penalty - (bridge_before - needed_usd)).max(0.0);
+    let recovered_usd_net = raw_recovered_usd;
+    if recovered_usd_net > 0.0 {
+        let pen_jpy = recovered_usd_net * fx * penalty;
+        state.stats.year_fx_penalty_jpy += pen_jpy;
+        state.bridge_fund_usd -= pen_jpy / fx;
+    }
+    // Restore the bridge to its pre-call balance — proceeds are handed back as JPY.
+    let net_recovered_usd = (state.bridge_fund_usd - bridge_before).max(0.0);
+    state.bridge_fund_usd = bridge_before;
+
+    net_recovered_usd * fx
+}
+
+/// Look-ahead — project the JPY-equivalent net dividend income for the next
+/// calendar month, for Mode B sale-sizing. Conservative: applies the FX spread
+/// penalty to USD-side projections (over-estimating the JPY drag), and skips
+/// tax-free / advantaged accounts (Roth, DC, NISA/iDeCo via jurisdiction None)
+/// which never flow to the cashflow waterfall.
+fn project_next_month_dividends_jpy(state: &SimState, fx: f64, penalty: f64) -> f64 {
+    let next_month = if state.date.month() == 12 { 1 } else { state.date.month() + 1 };
+    let taxable = match state.accounts.get("Taxable") {
+        Some(a) => a,
+        None => return 0.0,
+    };
+
+    let mut total_jpy = 0.0_f64;
+    for asset in taxable.assets.values() {
+        if asset.yield_rate <= 0.0 || asset.qty() <= 0.0 || asset.price <= 0.0 { continue; }
+        if !asset.dividend_months.contains(&next_month) { continue; }
+        let n = asset.dividend_months.len().max(1) as f64;
+        let gross = asset.qty() * asset.price * (asset.yield_rate / n);
+        match asset.dividend_currency {
+            crate::models::assets::DividendCurrency::Jpy => {
+                total_jpy += gross * (1.0 - JAPAN_CAPITAL_GAINS_RATE);
+            }
+            crate::models::assets::DividendCurrency::Usd => {
+                // Approximate net: gross_usd × fx × (1 − penalty), no fed-tax fold-in.
+                total_jpy += gross * fx * (1.0 - penalty);
+            }
+        }
+    }
+    total_jpy
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  V7.3 — Family & Education tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod v73_tests {
+    use super::*;
+    use crate::engine::cashflow_engine::ExpenseBreakdown;
+    use crate::engine::market_data::MarketDataService;
+
+    #[test]
+    fn v73_jido_teate_paid_only_in_even_months() {
+        let child = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let odd  = NaiveDate::from_ymd_opt(2025, 5, 1).unwrap();
+        let even = NaiveDate::from_ymd_opt(2025, 6, 1).unwrap();
+        assert_eq!(jido_teate_for(true, child, odd), 0.0);
+        assert_eq!(jido_teate_for(true, child, even), 30_000.0); // age 1 → 15k × 2
+    }
+
+    #[test]
+    fn v73_jido_teate_rate_drops_at_age_three() {
+        let child = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+        // 2027-06-01: child is age 2 (turns 3 on 2027-06-15) — pays ¥15k × 2.
+        // 2027-08-01: child is age 3 — pays ¥10k × 2.
+        let pre  = NaiveDate::from_ymd_opt(2027, 6, 1).unwrap();
+        let post = NaiveDate::from_ymd_opt(2027, 8, 1).unwrap();
+        assert_eq!(jido_teate_for(true, child, pre), 30_000.0);
+        assert_eq!(jido_teate_for(true, child, post), 20_000.0);
+    }
+
+    #[test]
+    fn v73_jido_teate_ends_at_age_18() {
+        let child = NaiveDate::from_ymd_opt(2008, 4, 1).unwrap();
+        let inside  = NaiveDate::from_ymd_opt(2026, 2, 1).unwrap(); // age 17
+        let outside = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(); // age 18
+        assert_eq!(jido_teate_for(true, child, inside), 20_000.0);
+        assert_eq!(jido_teate_for(true, child, outside), 0.0);
+    }
+
+    #[test]
+    fn v73_jido_teate_disabled_flag_zero() {
+        let child = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let even  = NaiveDate::from_ymd_opt(2025, 6, 1).unwrap();
+        assert_eq!(jido_teate_for(false, child, even), 0.0);
+    }
+
+    #[test]
+    fn v73_education_breakdown_field_present() {
+        // ExpenseBreakdown gained an `education` field — confirm it's wired
+        // into the struct literal so downstream waterfall code can read it.
+        let exp = ExpenseBreakdown {
+            total_desired: 0.0,
+            base_desired: 100_000.0,
+            base_floor:    60_000.0,
+            nhi: 0.0, nenkin: 0.0, restax: 0.0,
+            education: 25_000.0,
+        };
+        assert_eq!(exp.education, 25_000.0);
+    }
+
+    #[test]
+    fn v73_lumpy_default_dividend_months_quarterly() {
+        assert_eq!(MarketDataService::default_dividend_months("VTI"),  vec![3, 6, 9, 12]);
+        assert_eq!(MarketDataService::default_dividend_months("SCHD"), vec![3, 6, 9, 12]);
+        assert_eq!(MarketDataService::default_dividend_months("PANW"), vec![] as Vec<u32>);
+        assert_eq!(MarketDataService::default_dividend_months("BND").len(), 12);
     }
 }

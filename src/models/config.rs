@@ -7,6 +7,7 @@ use super::rsu::RsuAward;
 
 fn default_one() -> u32 { 1 }
 fn default_fx_spread_penalty() -> f64 { 0.005 }
+fn default_true() -> bool { true }
 
 // ─── Japan NHI model ─────────────────────────────────────────────────────────
 
@@ -153,6 +154,37 @@ impl std::fmt::Display for WaterfallStrategy {
         match self {
             WaterfallStrategy::Defensive => write!(f, "Defensive (V7.1)"),
             WaterfallStrategy::Cautious  => write!(f, "Cautious (V7.0)"),
+        }
+    }
+}
+
+/// V7.3 — Selects buffer-management behaviour inside the Defensive waterfall.
+///
+/// `Shielded` (Mode A — default): Exhaust monthly inflows → drain JPY war chest →
+/// drain USD bridge → liquidate equity only as a last resort. When all cash
+/// buffers hit zero the target is forced to the Minimum floor (Tier 8 sizes
+/// against minimum, not base) — protecting the long-term portfolio at the cost
+/// of quality-of-life spending in lean months.
+///
+/// `Dynamic` (Mode B): Treats target buffer levels as set-points. Liquidates
+/// proactively to cover the monthly deficit *plus* a "buffer restock" amount
+/// that returns the bridge fund to 12 months of base spend and the war chest
+/// to its target. Applies look-ahead: the sale amount is reduced by the next
+/// month's expected dividends so the portfolio isn't over-sold against
+/// imminent inflows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WithdrawalRegime {
+    #[default]
+    Shielded,
+    Dynamic,
+}
+
+impl std::fmt::Display for WithdrawalRegime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WithdrawalRegime::Shielded => write!(f, "Shielded (Mode A)"),
+            WithdrawalRegime::Dynamic  => write!(f, "Dynamic (Mode B)"),
         }
     }
 }
@@ -590,6 +622,23 @@ pub struct Config {
     /// waterfall (Tiers 4, 5, 6, 8). Default: 0.005 (0.5%).
     #[serde(default = "default_fx_spread_penalty")]
     pub fx_spread_penalty: f64,
+
+    // ── V7.3 — Education & Family Engine ─────────────────────────────────────
+    /// V7.3 — Buffer-management regime inside the Defensive waterfall.
+    /// Shielded (Mode A): preserve equity; force minimum-spend when cash zeroes.
+    /// Dynamic (Mode B): proactively liquidate to restock buffers to target.
+    #[serde(default)]
+    pub withdrawal_regime: WithdrawalRegime,
+    /// V7.3 — Monthly JPY skim from post-spend surplus into the Tier 2.5
+    /// Education Fund. 0.0 disables the accumulation channel.
+    #[serde(default)]
+    pub edu_savings_jpy_monthly: f64,
+    /// V7.3 — Tier 0.5 Jido Teate (児童手当) child allowance. When true and a
+    /// dependent child is age 0-18, pay ¥15k/mo (0-3) or ¥10k/mo (3-18) on a
+    /// bi-monthly cadence (even calendar months get 2 months' worth). No income
+    /// cap is modeled.
+    #[serde(default = "default_true")]
+    pub jido_teate_enabled: bool,
 
     // ── VA Disability Profile ──────────────────────────────────────────────────────
     /// 0 = use legacy va_disability_rates map; 10–100 = use 2026 lookup table.

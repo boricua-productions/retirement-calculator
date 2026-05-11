@@ -73,6 +73,14 @@ pub struct AnnualStats {
     /// V7.1 — Number of months this year where the spending target was dropped to
     /// the Minimum floor (Tier 7 belt-tightening fired). High values = stress signal.
     pub year_months_target_dropped: u32,
+    /// V7.3 — Jido Teate (児童手当) child allowance received this year (JPY).
+    /// Counted as JPY inflow into the Defensive waterfall at Tier 0.5.
+    pub year_jido_teate_jpy: f64,
+    /// V7.3 — JPY contributed into the Tier 2.5 Education Fund this year.
+    pub year_edu_fund_in_jpy: f64,
+    /// V7.3 — JPY drawn from the Tier 2.5 Education Fund this year for
+    /// Education-tagged expenses (or routed to T8 fallback when exhausted).
+    pub year_edu_fund_out_jpy: f64,
 }
 
 impl AnnualStats {

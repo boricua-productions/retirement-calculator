@@ -29,6 +29,11 @@ pub struct SimState {
     pub war_chest_jpy: f64,
     /// V7.1 — Bridge fund / operating cash reserve. Always USD-denominated.
     pub bridge_fund_usd: f64,
+    /// V7.3 — Tier 2.5 Education Fund (JPY-denominated). Accumulated from
+    /// post-spend surplus at rate `cfg.edu_savings_jpy_monthly`; drained only by
+    /// expense rules whose name contains "Education", which bypass the standard
+    /// waterfall (T2.5 → T8 fallback).
+    pub education_fund_jpy: f64,
 
     // ── DC Payout ────────────────────────────────────────────────────────────────
     pub dc_payout_active: bool,
@@ -106,6 +111,7 @@ impl SimState {
             ira_limit,
             war_chest_jpy: 0.0,
             bridge_fund_usd: 0.0,
+            education_fund_jpy: 0.0,
             dc_payout_active: false,
             dc_months_remaining: 240,
             roth_rebalance_executed: false,

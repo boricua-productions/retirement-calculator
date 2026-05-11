@@ -1,14 +1,13 @@
-# Retirement Calculator — V7.3 Preview (Education & Family Engine)
+# Retirement Calculator — V7.2 Technical Manual (Hardened Edition)
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
 spouse, long-term resident, or permanent resident visas.
 
 > **Dividend Focus.** The engine is heavily focused on **living off portfolio income before
-> selling stock**. In the V7.3 waterfall, native JPY income (now including the Jido Teate child
-> allowance) and the JPY war chest are used first, USD income and bridge cash are converted with
-> an FX spread penalty, an Education-tagged stream bypasses the main waterfall through a dedicated
-> Tier 2.5 bucket, and equity liquidation is the last resort. Every snapshot still reports a
+> selling stock**. In the current default V7.2 waterfall, native JPY income and the JPY war chest
+> are used first, USD income and bridge cash are converted with an FX spread penalty, spending may
+> drop from base to minimum, and equity liquidation is the last resort. Every snapshot reports a
 > Dividend Coverage Ratio so you can tell, year by year, whether your portfolio is self-funding.
 
 The engine assumes ordinary Japan resident tax and National Health Insurance exposure unless a
@@ -21,7 +20,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.3 Preview — Education & Family Engine)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.2 Hardened Edition)
 ---
 
 ## Beginner Quick Start
@@ -250,55 +249,21 @@ the existing FTC pool, but state tax does not. The liquidation engine
 therefore grosses up each share sale by the state rate and records it in
 `StateCapGainsTax_USD`.
 
-V7.3 extends the default **Defensive** spending waterfall with two family-aware
-tiers and a dual-regime buffer-management dispatch:
+V7.2 adds the default **Defensive** spending waterfall:
 
-- Tier 0   — JPY Floor: Nenkin and DC payouts.
-- **Tier 0.5 — Jido Teate (児童手当):** bi-monthly child allowance paid in even
-  calendar months at ¥15,000/mo (ages 0–3) or ¥10,000/mo (ages 3–18). No
-  income cap is modeled. Toggled with `jido_teate_enabled`.
-- Tier 1   — JPY Dividends (lumpy: only on the asset's declared payout months).
-- Tier 2   — Reserved.
-- **Tier 2.5 — Education Fund:** dedicated JPY bucket. Surplus skim deposits
-  `edu_savings_jpy_monthly` per month; expense rules whose name contains
-  `Education` are paid from this bucket BEFORE touching the main waterfall and
-  fall through directly to a Tier-8 sale if the bucket is empty.
-- Tier 3   — JPY War Chest.
-- Tier 4   — USD Floor Income (+0.5% FX Penalty).
-- Tier 5   — USD Dividends (+0.5% FX Penalty).
-- Tier 6   — USD Bridge Fund (+0.5% FX Penalty).
-- Tier 7   — Belt-tightening.
-- Tier 8   — Stock Liquidation (+0.5% FX Penalty).
+- Tier 0 — JPY Floor: Nenkin and DC payouts.
+- Tier 1 — JPY Dividends.
+- Tier 2 — Reserved.
+- Tier 3 — JPY War Chest.
+- Tier 4 — USD Floor Income (+0.5% FX Penalty).
+- Tier 5 — USD Dividends (+0.5% FX Penalty).
+- Tier 6 — USD Bridge Fund (+0.5% FX Penalty).
+- Tier 7 — Belt-tightening.
+- Tier 8 — Stock Liquidation (+0.5% FX Penalty).
 
 USD-to-JPY conversions in tiers 4, 5, 6, and 8 apply `fx_spread_penalty`
 (`0.005` by default). The legacy V7.0-style `Cautious` waterfall is still
 available with `withdrawal_waterfall: "cautious"`.
-
-Tax-advantaged accounts (Roth IRA, 401(k), Japan DC / iDeCo, NISA) are
-**excluded from the cashflow waterfall** — their dividends DRIP internally and
-are never visible to the monthly gap calculation. Only assets in the Taxable
-account participate in T1/T5 dividends and T8 liquidation.
-
-### Withdrawal Regimes — Mode A vs Mode B
-
-The new `withdrawal_regime` setting selects how the Defensive waterfall manages
-its cash buffers once Tier 0 through Tier 6 have been consumed:
-
-- **`shielded` — Mode A (default).** "Preserve equity at all costs." Exhaust
-  monthly inflows, drain the JPY war chest to zero, drain the USD bridge to
-  zero, then sell stock as a last resort sized only to the **Minimum Monthly**
-  floor (not the Base target). Whenever both cash buffers hit zero, the entire
-  month automatically runs at minimum spending.
-- **`dynamic` — Mode B.** "Treat buffer levels as set-points." Computes the
-  monthly deficit *plus* a "buffer restock" amount that returns the bridge to
-  `bridge_months_target × base_spend` months and the war chest to
-  `war_chest_target_jpy`. The look-ahead step subtracts the next month's
-  expected dividend net so the portfolio isn't over-sold against imminent
-  inflows. Liquidates Tier 8 for the aggregate.
-
-Mode A favours portfolio longevity; Mode B favours steady living standards
-backed by active rebalancing. Both honour the Tier 0.5 / Tier 2.5 family
-tiers identically.
 
 ---
 
@@ -306,7 +271,6 @@ tiers identically.
 
 | Version | Highlights |
 | :--- | :--- |
-| **V7.3 Preview** | 👶 **Tier 0.5 Jido Teate** — bi-monthly Japanese child allowance (¥15k 0–3, ¥10k 3–18) joins the JPY floor. 🎓 **Tier 2.5 Education Fund** — dedicated JPY bucket accumulated from surplus (`edu_savings_jpy_monthly`); Education-tagged expenses bypass the main waterfall and fall through to T8. 🪖 **Dual Withdrawal Regimes** — `shielded` (Mode A: preserve equity, force minimum at cash-zero) vs `dynamic` (Mode B: proactive buffer restock with next-month dividend look-ahead). 💵 **Lumpy Dividend Defaults** — `MarketDataService::default_dividend_months` codifies quarterly cadences (VTI/SCHD/QQQM = [3,6,9,12]; BND = monthly; PANW = none). Tax-advantaged accounts (Roth/401k/iDeCo/NISA/DC) explicitly bypass the cashflow waterfall. |
 | **V7.2** | 🏛 **Treaty Articles 17 & 18** — US Social Security routed as public pension; FERS national exemption + local tax toggle. 💴 **Japanese Fund Convention** — DC/iDeCo price model uses ¥/万口 (per 10k units). 📈 **RSU Cliff Logic** — "Delayed Initial Vest" handles cliff-accumulation math. 🛡 **Stability Hardening** — Clamped 0.5% FX penalties and safe `Option` handling. |
 | **V7.1** | **Defensive JPY-first spending waterfall** added via `withdrawal_waterfall` (`defensive` default). USD-to-JPY conversions apply `fx_spread_penalty` (0.5% default). Lumpy dividends by month and `dividend_currency` support. |
 | **V7.0** | 🇯🇵 **Japan-Resident Cost Basis model** — `Position.avg_purchase_price_jpy` carries the JPY paid at purchase. ⛏ **Highest-JPY-Basis-First liquidation** sorts taxable holdings DESC by JPY basis to minimize realized gains. |

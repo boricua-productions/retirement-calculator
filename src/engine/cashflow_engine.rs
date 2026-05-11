@@ -11,6 +11,9 @@ pub struct ExpenseBreakdown {
     pub nhi: f64,
     pub nenkin: f64,
     pub restax: f64,
+    /// V7.3 — Sum of active ExpenseRules whose `name` contains "Education".
+    /// These bypass the standard waterfall and route Tier 2.5 → Tier 8.
+    pub education: f64,
 }
 
 /// The monthly income breakdown.
@@ -103,6 +106,7 @@ impl CashFlowEngine {
         let mut nhi_cost = 0.0_f64;
         let mut nenkin_cost = 0.0_f64;
         let mut restax_cost = 0.0_f64;
+        let mut edu_cost = 0.0_f64;
 
         for rule in &self.cfg.expense_rules {
             if rule.is_active_on(current_date) {
@@ -112,6 +116,8 @@ impl CashFlowEngine {
                     nenkin_cost += rule.amount_jpy;
                 } else if rule.name.contains("ResTax") {
                     restax_cost += rule.amount_jpy;
+                } else if rule.name.contains("Education") {
+                    edu_cost += rule.amount_jpy;
                 } else {
                     base_desired += rule.amount_jpy;
                     base_floor += rule.amount_jpy;
@@ -121,12 +127,13 @@ impl CashFlowEngine {
 
         let fixed_costs = nhi_cost + nenkin_cost + restax_cost;
         ExpenseBreakdown {
-            total_desired: base_desired + fixed_costs,
+            total_desired: base_desired + fixed_costs + edu_cost,
             base_desired,
             base_floor,
             nhi: nhi_cost,
             nenkin: nenkin_cost,
             restax: restax_cost,
+            education: edu_cost,
         }
     }
 
@@ -400,6 +407,9 @@ mod tests {
             withdrawal_strategy: crate::models::config::WithdrawalStrategy::TotalReturn,
             withdrawal_waterfall: crate::models::config::WaterfallStrategy::Defensive,
             fx_spread_penalty: 0.005,
+            withdrawal_regime: crate::models::config::WithdrawalRegime::Shielded,
+            edu_savings_jpy_monthly: 0.0,
+            jido_teate_enabled: true,
         }
     }
 

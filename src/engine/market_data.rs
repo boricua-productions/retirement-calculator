@@ -47,6 +47,28 @@ impl MarketDataService {
         }
     }
 
+    /// V7.3 — Default discrete dividend-payout months for well-known tickers.
+    /// US ETFs typically pay on a quarterly cadence aligned with their record
+    /// date; MSFT pays mid-quarter; PANW is non-dividend-paying. Unknown
+    /// tickers default to standard March/June/September/December.
+    /// Returned months are 1-indexed (1 = January). Callers should treat the
+    /// list as the canonical payout calendar when `Asset.dividend_months` is
+    /// not supplied by the scenario JSON.
+    pub fn default_dividend_months(ticker: &str) -> Vec<u32> {
+        match ticker {
+            "VTI"  => vec![3, 6, 9, 12],
+            "QQQM" => vec![3, 6, 9, 12],
+            "SCHD" => vec![3, 6, 9, 12],
+            "MSFT" => vec![3, 6, 9, 12],
+            "VYM"  => vec![3, 6, 9, 12],
+            "VXUS" => vec![3, 6, 9, 12],
+            "VNQ"  => vec![3, 6, 9, 12],
+            "BND"  => (1..=12).collect(),  // monthly distributions
+            "PANW" => vec![],              // no dividend
+            _      => vec![3, 6, 9, 12],
+        }
+    }
+
     /// Fallback USD/JPY exchange rate.
     pub fn fallback_fx_rate() -> f64 {
         145.0

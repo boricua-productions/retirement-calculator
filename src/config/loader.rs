@@ -608,6 +608,14 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             let v = get_f64("fx_spread_penalty", -1.0);
             if v >= 0.0 { v } else { 0.005 }
         },
+
+        // ── V7.3: Education & Family Engine ──────────────────────────────────
+        withdrawal_regime: match sets["withdrawal_regime"].as_str().unwrap_or("shielded") {
+            "dynamic" | "Dynamic" => crate::models::config::WithdrawalRegime::Dynamic,
+            _                       => crate::models::config::WithdrawalRegime::Shielded,
+        },
+        edu_savings_jpy_monthly: get_f64("edu_savings_jpy_monthly", 0.0),
+        jido_teate_enabled: get_bool("jido_teate_enabled", true),
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────
