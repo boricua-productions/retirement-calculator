@@ -277,8 +277,14 @@ fn manage_monthly_cashflow_defensive(
             let wc_floor_jpy     = cfg.war_chest_target_jpy * MODE_B_PREEMPT_FLOOR;
             let bridge_floor_usd = bridge_target_usd        * MODE_B_PREEMPT_FLOOR;
 
+            // V7.5 — Defect 1.4: pass monthly non-spend drains (T9 gift + edu skim).
+            let monthly_non_spend_drain = {
+                let annual_gift = cfg.annual_gift_jpy_per_recipient
+                    * cfg.gift_recipient_count as f64;
+                annual_gift / 12.0 + cfg.edu_savings_jpy_monthly
+            };
             let (proj_min_wc, proj_min_bridge_usd) =
-                project_buffer_minimums(state, target_base_jpy, fx, penalty, MODE_B_LOOKAHEAD_MONTHS);
+                project_buffer_minimums(state, target_base_jpy, monthly_non_spend_drain, fx, penalty, MODE_B_LOOKAHEAD_MONTHS);
 
             let preemptive_trigger =
                 proj_min_wc < wc_floor_jpy || proj_min_bridge_usd < bridge_floor_usd;
@@ -333,6 +339,16 @@ fn manage_monthly_cashflow_defensive(
     // V7.3: JPY surplus is first skimmed into the Tier 2.5 Education Fund up
     // to `edu_savings_jpy_monthly`. Remainder follows the V7.1 surplus rules.
     let jpy_surplus_raw = t0_surplus_jpy + t1_surplus_jpy;
+
+    // ── V7.5 — Tier 9: Estate Planning Gift Sink ─────────────────────────────
+    // Fires once per year (December) to model legal-year donation semantics.
+    let t9_jpy_drawn = if state.date.month() == 12 {
+        process_tier9_gift_sink(state, cfg, jpy_surplus_raw)
+    } else {
+        0.0
+    };
+    let jpy_surplus_raw = jpy_surplus_raw - t9_jpy_drawn;
+
     let jpy_surplus     = skim_education_savings(state, cfg, jpy_surplus_raw);
     let usd_surplus     = t4_surplus_usd + t5_surplus_usd;
 
@@ -723,10 +739,15 @@ pub fn v7_liquidate_for_deficit(state: &mut SimState, cfg: &Config) {
         };
 
         let jpy_proceeds_per_share = price * fx;
-        let jpy_gain_per_share     = (jpy_proceeds_per_share - jpy_basis_per_share).max(0.0);
+        let jpy_gain_per_share     = jpy_proceeds_per_share - jpy_basis_per_share;
         let usd_gain_per_share     = (price - usd_basis_per_share).max(0.0);
 
-        let japan_tax_per_share_jpy = jpy_gain_per_share * JAPAN_CAPITAL_GAINS_RATE;
+        // V7.5 — Defect 1.1: preserve signed JPY gain for loss carry-forward tracking.
+        let japan_tax_per_share_jpy = if jpy_gain_per_share >= 0.0 {
+            jpy_gain_per_share * JAPAN_CAPITAL_GAINS_RATE
+        } else {
+            0.0
+        };
         let state_tax_per_share_usd = usd_gain_per_share * state_rate;
 
         let net_per_share_usd = price
@@ -750,8 +771,14 @@ pub fn v7_liquidate_for_deficit(state: &mut SimState, cfg: &Config) {
         let shares_sold    = gain.proceeds / price;
         let jpy_basis_sold = shares_sold * jpy_basis_per_share;
         let jpy_proceeds   = gain.proceeds * fx;
-        let jpy_gain       = (jpy_proceeds - jpy_basis_sold).max(0.0);
-        let japan_tax_jpy  = jpy_gain * JAPAN_CAPITAL_GAINS_RATE;
+        // V7.5 — Defect 1.1: preserve signed JPY gain; accumulate losses for carry-forward.
+        let jpy_gain_signed = jpy_proceeds - jpy_basis_sold;
+        let japan_tax_jpy  = if jpy_gain_signed >= 0.0 {
+            jpy_gain_signed * JAPAN_CAPITAL_GAINS_RATE
+        } else {
+            state.stats.year_japan_cap_loss_jpy += jpy_gain_signed.abs();
+            0.0
+        };
         let state_tax_usd  = gain.total_gain().max(0.0) * state_rate;
 
         let net_to_buffer = gain.proceeds - (japan_tax_jpy / fx) - state_tax_usd;
@@ -1031,14 +1058,15 @@ fn project_dividends_for_month_jpy(
 
 /// V7.4 — Forward-project the minimum WC (JPY) and Bridge (USD) balances over
 /// the next `lookahead_months` assuming NO sales. Income side: lumpy dividend
-/// payouts only; outflow side: a flat `target_base_jpy` per month. Net deficit
-/// drains the war chest first, then the bridge.
+/// payouts only; outflow side: `target_base_jpy + monthly_non_spend_drain_jpy`
+/// per month (V7.5 — Defect 1.4: adds T9 gift and education draws to projection).
 ///
 /// This is the trigger oracle for Dynamic-mode preemptive restocking. It does
 /// not mutate state — pure projection.
 fn project_buffer_minimums(
     state: &SimState,
     target_base_jpy: f64,
+    monthly_non_spend_drain_jpy: f64,
     fx: f64,
     penalty: f64,
     lookahead_months: u32,
@@ -1052,7 +1080,7 @@ fn project_buffer_minimums(
         let cur_mo: i32 = state.date.month() as i32;
         let target_mo = (((cur_mo - 1 + ahead as i32) % 12) + 1) as u32;
         let div_jpy = project_dividends_for_month_jpy(state, target_mo, fx, penalty);
-        let net_jpy = div_jpy - target_base_jpy;
+        let net_jpy = div_jpy - target_base_jpy - monthly_non_spend_drain_jpy;
 
         if net_jpy >= 0.0 {
             proj_wc_jpy += net_jpy;
@@ -1101,6 +1129,29 @@ fn project_next_month_dividends_jpy(state: &SimState, fx: f64, penalty: f64) -> 
         }
     }
     total_jpy
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  V7.5 — Tier 9: Estate Planning Gift Sink
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Process Tier 9 annual gift disbursement (fires in December only).
+/// Per-recipient evaluation against IRC §2503(b) flags Form 709 obligation.
+fn process_tier9_gift_sink(state: &mut SimState, cfg: &Config, surplus_jpy: f64) -> f64 {
+    if cfg.gift_recipient_count == 0 || cfg.annual_gift_jpy_per_recipient <= 0.0 {
+        return 0.0;
+    }
+    let annual_total = cfg.annual_gift_jpy_per_recipient * cfg.gift_recipient_count as f64;
+    let drawn = annual_total.min(surplus_jpy.max(0.0));
+    state.gift_sink_jpy += drawn;
+    state.stats.year_gift_sink_jpy += drawn;
+
+    // §2503(b) per-recipient check (USD).
+    let per_recipient_usd = cfg.annual_gift_jpy_per_recipient / state.current_fx;
+    if per_recipient_usd > cfg.us_gift_exclusion_usd {
+        state.stats.year_form_709_required = true;
+    }
+    drawn
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

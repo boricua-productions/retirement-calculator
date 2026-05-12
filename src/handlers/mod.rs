@@ -5,3 +5,4 @@ pub mod rebalancing;
 pub mod retirement_transition;
 pub mod roth_rebalancer;
 pub mod rsu_vesting;
+pub mod tax_loss_harvesting;

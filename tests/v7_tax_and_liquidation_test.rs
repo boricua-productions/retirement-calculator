@@ -47,6 +47,8 @@ fn build_two_ticker_taxable(price_usd: f64, qty: f64, high_jpy: f64, low_jpy: f6
         avg_jpy_basis_per_share: high_jpy,
         dividend_months: vec![3, 6, 9, 12],
         dividend_currency: DividendCurrency::Usd,
+        pfic_regime: retirement_calculator::models::assets::PficRegime::NotPfic,
+        pfic_prior_year_fmv_per_share: 0.0,
         lots: Vec::new(),
     };
     high.add_lot(lot_date, qty, qty * (high_jpy / 150.0));
@@ -65,6 +67,8 @@ fn build_two_ticker_taxable(price_usd: f64, qty: f64, high_jpy: f64, low_jpy: f6
         avg_jpy_basis_per_share: low_jpy,
         dividend_months: vec![3, 6, 9, 12],
         dividend_currency: DividendCurrency::Usd,
+        pfic_regime: retirement_calculator::models::assets::PficRegime::NotPfic,
+        pfic_prior_year_fmv_per_share: 0.0,
         lots: Vec::new(),
     };
     low.add_lot(lot_date, qty, qty * (low_jpy / 150.0));
