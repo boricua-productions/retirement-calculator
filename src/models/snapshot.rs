@@ -85,6 +85,18 @@ pub struct AnnualSnapshot {
     pub fx_penalty_jpy: f64,
     /// Number of months this year where the spending target was dropped to the floor.
     pub months_at_min_target: u32,
+
+    // ── V7.5 — Exit Tax Monitor ──────────────────────────────────────────────
+    /// True when the year-end position triggers Japan Exit Tax exposure (Art. 60-2).
+    pub exit_tax_triggered: bool,
+    /// Total Japan-subject financial asset value at year-end (¥).
+    pub exit_tax_asset_value_jpy: f64,
+
+    // ── V7.5 — Estate Planning ───────────────────────────────────────────────
+    /// JPY diverted into the Tier 9 Gift Sink this year.
+    pub year_gift_sink_jpy: f64,
+    /// True if any per-recipient gift exceeded the US §2503(b) annual exclusion.
+    pub year_form_709_required: bool,
 }
 
 /// A quarterly solvency warning recorded when income < expenses for a quarter.

@@ -8,6 +8,9 @@ use super::rsu::RsuAward;
 fn default_one() -> u32 { 1 }
 fn default_fx_spread_penalty() -> f64 { 0.005 }
 fn default_true() -> bool { true }
+fn default_us_gift_exclusion() -> f64 { 19_000.0 }
+fn default_tlh_months() -> Vec<u32> { vec![11, 12] }
+fn default_tlh_threshold() -> f64 { 500.0 }
 
 // ─── Japan NHI model ─────────────────────────────────────────────────────────
 
@@ -63,6 +66,14 @@ pub enum NhiModel {
     ManualOverride {
         spike_year_total_jpy:     f64,
         ongoing_annual_total_jpy: f64,
+    },
+    /// V7.5 — Voluntary Continuation (任意継続) of employer Shakai Hoken
+    /// for `duration_months` (max 24 per HIA Art. 37). Replaces NHI for that
+    /// window; falls back to the `fallback` model thereafter.
+    NinkiKeizoku {
+        monthly_premium_jpy: f64,
+        duration_months: u32,
+        fallback: Box<NhiModel>,
     },
 }
 
@@ -723,4 +734,36 @@ pub struct Config {
     /// How often to rebalance: 1=monthly, 3=quarterly, 6=semi-annual, 12=annual.
     #[serde(skip)]
     pub rebalance_frequency_months: u32,
+
+    // ── V7.5 — Exit Tax Monitor ───────────────────────────────────────────────────
+    /// Japan residency start date (used for Exit Tax 5-of-10 test per IT Act Art. 60-2).
+    /// None disables the Exit Tax monitor.
+    #[serde(default)]
+    pub japan_residency_start_date: Option<NaiveDate>,
+    /// Whether to include NISA/iDeCo asset values in the ¥100M Exit Tax threshold.
+    /// Per Art. 60-2 the answer is yes; flag retained for "what if" analysis.
+    #[serde(default = "default_true")]
+    pub exit_tax_include_tax_advantaged: bool,
+
+    // ── V7.5 — Tier 9: Estate Planning Gift Sink ──────────────────────────────────
+    /// Annual gift amount per recipient (JPY). Typically ¥1,100,000 (暦年贈与 exclusion).
+    #[serde(default)]
+    pub annual_gift_jpy_per_recipient: f64,
+    /// Number of gift recipients (typically 1-4 children/grandchildren).
+    #[serde(default)]
+    pub gift_recipient_count: u32,
+    /// US §2503(b) annual gift exclusion per donor-recipient pair (2026 = $19,000).
+    #[serde(default = "default_us_gift_exclusion")]
+    pub us_gift_exclusion_usd: f64,
+
+    // ── V7.5 — Tax-Loss Harvesting (IRC §1091) ────────────────────────────────────
+    /// When true, the TLH pre-waterfall handler fires in `tlh_active_months`.
+    #[serde(default)]
+    pub tlh_enabled: bool,
+    /// Calendar months in which TLH is active (default: November + December).
+    #[serde(default = "default_tlh_months")]
+    pub tlh_active_months: Vec<u32>,
+    /// Minimum USD loss required to harvest a lot (transaction cost threshold).
+    #[serde(default = "default_tlh_threshold")]
+    pub tlh_min_loss_usd: f64,
 }

@@ -154,6 +154,15 @@ fn minimal_cfg() -> Config {
         withdrawal_regime: WithdrawalRegime::Shielded,
         edu_savings_jpy_monthly: 0.0,
         jido_teate_enabled: true,
+        // V7.5 defaults
+        japan_residency_start_date: None,
+        exit_tax_include_tax_advantaged: true,
+        annual_gift_jpy_per_recipient: 0.0,
+        gift_recipient_count: 0,
+        us_gift_exclusion_usd: 19_000.0,
+        tlh_enabled: false,
+        tlh_active_months: vec![11, 12],
+        tlh_min_loss_usd: 500.0,
     }
 }
 
@@ -179,6 +188,8 @@ fn taxable_with_inventory(qty: f64) -> Account {
         avg_jpy_basis_per_share: SHARE_PRICE * FX * 0.5, // arbitrary basis < price
         dividend_months: vec![],
         dividend_currency: DividendCurrency::Usd,
+        pfic_regime: retirement_calculator::models::assets::PficRegime::NotPfic,
+        pfic_prior_year_fmv_per_share: 0.0,
         lots: vec![],
     };
     asset.add_lot(iso(2020, 1, 1), qty, qty * SHARE_PRICE * 0.5);

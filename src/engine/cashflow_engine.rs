@@ -410,6 +410,15 @@ mod tests {
             withdrawal_regime: crate::models::config::WithdrawalRegime::Shielded,
             edu_savings_jpy_monthly: 0.0,
             jido_teate_enabled: true,
+            // V7.5 defaults
+            japan_residency_start_date: None,
+            exit_tax_include_tax_advantaged: true,
+            annual_gift_jpy_per_recipient: 0.0,
+            gift_recipient_count: 0,
+            us_gift_exclusion_usd: 19_000.0,
+            tlh_enabled: false,
+            tlh_active_months: vec![11, 12],
+            tlh_min_loss_usd: 500.0,
         }
     }
 

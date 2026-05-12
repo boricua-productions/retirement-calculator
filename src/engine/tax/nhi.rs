@@ -38,6 +38,25 @@ impl NhiEngine {
             NhiModel::ManualOverride { spike_year_total_jpy, ongoing_annual_total_jpy } => {
                 if is_spike_year { *spike_year_total_jpy } else { *ongoing_annual_total_jpy }
             }
+            // V7.5 — 任意継続 Shakai Hoken continuation (HIA Art. 37).
+            // Duration tracking lives in SimState; this function is stateless.
+            // The caller (schedule_annual_nhi) is responsible for switching to fallback
+            // once nhi_ninki_keizoku_months_remaining reaches zero.
+            NhiModel::NinkiKeizoku { monthly_premium_jpy, duration_months: _, fallback } => {
+                if is_spike_year {
+                    monthly_premium_jpy * 12.0
+                } else {
+                    Self::compute_annual(
+                        fallback,
+                        prev_year_gross_salary_jpy,
+                        prev_year_gross_pension_jpy,
+                        prev_year_investment_income_jpy,
+                        num_insured,
+                        age,
+                        is_spike_year,
+                    )
+                }
+            }
         }
     }
 

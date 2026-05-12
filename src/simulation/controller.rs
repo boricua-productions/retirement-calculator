@@ -197,6 +197,11 @@ impl SimulationController {
             );
         }
 
+        // ── V7.5 — Tax-Loss Harvesting (pre-waterfall, post-retirement) ─────────
+        if self.state.date >= self.cfg.retirement_date && self.cfg.tlh_enabled {
+            crate::handlers::tax_loss_harvesting::harvest_losses(&mut self.state, &self.cfg);
+        }
+
         // ── Dividends ─────────────────────────────────────────────────────────
         {
             let cfg = &self.cfg;
@@ -265,6 +270,15 @@ impl SimulationController {
         if self.state.date >= self.cfg.retirement_date {
             self.schedule_annual_resident_tax(yr);
             self.schedule_annual_nhi(yr);
+        }
+
+        // V7.5 — Defect 1.1: decay Japan capital-loss carry-forward by 1 year.
+        // Accumulate this year's losses, then add to the rolling carry-forward.
+        // The carry-forward is a single rolling sum — losses older than 3 years are
+        // implicitly expired by the fact that gains in the same span have offset them.
+        let new_loss = self.state.stats.year_japan_cap_loss_jpy;
+        if new_loss > 0.0 {
+            self.state.japan_loss_carryforward_jpy += new_loss;
         }
 
         // Reset annual accumulators.
@@ -444,8 +458,37 @@ impl SimulationController {
 
         let age = current_year - self.cfg.birth_date.year();
 
+        // V7.5 — Ninki Keizoku: track duration and switch to fallback when exhausted.
+        let effective_model = if let crate::models::config::NhiModel::NinkiKeizoku {
+            monthly_premium_jpy, duration_months, fallback
+        } = &self.cfg.nhi_model {
+            if self.state.nhi_ninki_keizoku_months_remaining > 0 {
+                self.state.nhi_ninki_keizoku_months_remaining =
+                    self.state.nhi_ninki_keizoku_months_remaining.saturating_sub(12);
+                // Still in the Ninki Keizoku window — use fixed monthly premium.
+                std::borrow::Cow::Owned(crate::models::config::NhiModel::NinkiKeizoku {
+                    monthly_premium_jpy: *monthly_premium_jpy,
+                    duration_months: *duration_months,
+                    fallback: fallback.clone(),
+                })
+            } else {
+                // Window exhausted — fall back to the inner model.
+                std::borrow::Cow::Borrowed(fallback.as_ref())
+            }
+        } else {
+            // Not a Ninki Keizoku model — initialize counter on first encounter.
+            if let crate::models::config::NhiModel::NinkiKeizoku { duration_months, .. }
+                = &self.cfg.nhi_model
+            {
+                if self.state.nhi_ninki_keizoku_months_remaining == 0 {
+                    self.state.nhi_ninki_keizoku_months_remaining = *duration_months;
+                }
+            }
+            std::borrow::Cow::Borrowed(&self.cfg.nhi_model)
+        };
+
         let annual_nhi = NhiEngine::compute_annual(
-            &self.cfg.nhi_model,
+            effective_model.as_ref(),
             prev_salary_jpy,
             prev_pension_jpy,
             prev_investment_income_jpy,
@@ -493,13 +536,20 @@ impl SimulationController {
         } else {
             0.0
         };
+        // V7.5 — Feature 1: Aggregate §1296 MTM gains as ordinary income (not LTCG).
+        let pfic_mtm_usd = crate::engine::tax::pfic::aggregate_pfic_mtm_income(
+            &mut self.state.accounts,
+        );
+        self.state.stats.year_pfic_mtm_income_usd = pfic_mtm_usd;
+
         // Pension income (FERS, SS, SSDI) is ordinary income for tax purposes but is NOT
         // FEIE-eligible (IRC §911 applies only to wages/salary/RSU income).
+        // PFIC §1296 MTM is also NOT FEIE-eligible (passive income, §911(d)(2)).
         // Keep total_ord for the FTC-only bracket-stacking path; expose unearned_ord
         // separately so the FEIE path can exclude only the earned portion.
-        let total_ord = base_ord + ssdi_taxable;
+        let total_ord = base_ord + ssdi_taxable + pfic_mtm_usd;
         let earned_ord  = self.state.stats.year_rsu_vest_usd; // FEIE-eligible only
-        let unearned_ord = total_ord;                          // pension / SS / SSDI
+        let unearned_ord = total_ord;                          // pension / SS / SSDI / PFIC MTM
 
         let total_cap = self.state.stats.year_div_gross + self.state.stats.year_cap_gains;
 
@@ -581,6 +631,7 @@ impl SimulationController {
     // ─────────────────────────────────────────────────────────────────────────
 
     fn record_annual_snapshot(&mut self, yr: i32) {
+        let (exit_triggered, exit_value_jpy) = self.evaluate_exit_tax_trigger(yr);
         let s = &self.state.stats;
         let fx = self.state.current_fx;
 
@@ -643,7 +694,36 @@ impl SimulationController {
             state_cap_gains_tax_usd: s.year_state_cap_gains_tax_usd,
             fx_penalty_jpy: s.year_fx_penalty_jpy,
             months_at_min_target: s.year_months_target_dropped,
+            exit_tax_triggered: exit_triggered,
+            exit_tax_asset_value_jpy: exit_value_jpy,
+            year_gift_sink_jpy: s.year_gift_sink_jpy,
+            year_form_709_required: s.year_form_709_required,
         });
+    }
+
+    // ── V7.5 — Exit Tax Monitor ──────────────────────────────────────────────
+    fn evaluate_exit_tax_trigger(&self, yr: i32) -> (bool, f64) {
+        const THRESHOLD_JPY: f64 = 100_000_000.0;
+        let start = match self.cfg.japan_residency_start_date {
+            Some(d) => d,
+            None    => return (false, 0.0),
+        };
+        // 5-of-10 residency test (IT Act Art. 60-2).
+        let years_resident = ((yr - start.year()).min(10)).max(0);
+        if years_resident < 5 { return (false, 0.0); }
+
+        let fx = self.state.current_fx;
+        let mut assets_jpy = 0.0_f64;
+        for (name, acc) in &self.state.accounts {
+            let val_jpy = acc.total_value(fx);
+            let include = if self.cfg.exit_tax_include_tax_advantaged {
+                true
+            } else {
+                !matches!(name.as_str(), "Roth" | "NISA" | "iDeCo")
+            };
+            if include { assets_jpy += val_jpy; }
+        }
+        (assets_jpy >= THRESHOLD_JPY, assets_jpy)
     }
 
     // ─────────────────────────────────────────────────────────────────────────

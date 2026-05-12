@@ -81,6 +81,17 @@ pub struct AnnualStats {
     /// V7.3 — JPY drawn from the Tier 2.5 Education Fund this year for
     /// Education-tagged expenses (or routed to T8 fallback when exhausted).
     pub year_edu_fund_out_jpy: f64,
+    /// V7.5 — Japan-side capital losses realised this year (JPY, unsigned magnitude).
+    /// Eligible for 3-year carry-forward under IT Act Art. 37-12-2 (損失の繰越控除).
+    pub year_japan_cap_loss_jpy: f64,
+    /// V7.5 — PFIC §1296 mark-to-market gain for the year (USD).
+    /// Taxed as ordinary income; NOT FEIE-eligible (passive income, §911(d)(2)).
+    pub year_pfic_mtm_income_usd: f64,
+    /// V7.5 — JPY diverted into the Tier 9 Gift Sink this year.
+    pub year_gift_sink_jpy: f64,
+    /// V7.5 — true if any per-recipient gift exceeded the US $19k exclusion
+    /// (flagged for Form 709 filing in the audit report).
+    pub year_form_709_required: bool,
 }
 
 impl AnnualStats {

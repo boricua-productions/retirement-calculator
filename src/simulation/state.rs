@@ -49,6 +49,21 @@ pub struct SimState {
     /// Applied to reduce US federal liability before new credits each December.
     pub ftc_carryover_usd: f64,
 
+    // ── V7.5 — Japan Capital-Loss Carry-Forward ───────────────────────────────────
+    /// Rolling 3-year Japan capital-loss carry-forward (JPY, unsigned magnitude).
+    /// Subtracted from investment-income basis in NHI and resident-tax calculations.
+    /// Decayed by 1 year each January; set to zero once the carry-forward window expires.
+    pub japan_loss_carryforward_jpy: f64,
+
+    // ── V7.5 — Estate Planning (Gift Sink) ───────────────────────────────────────
+    /// Cumulative JPY routed to the Tier 9 Gift Sink (held outside the waterfall).
+    pub gift_sink_jpy: f64,
+
+    // ── V7.5 — Ninki Keizoku (NHI continuation) ──────────────────────────────────
+    /// Months remaining in a Ninki Keizoku (任意継続) Shakai Hoken window.
+    /// Counts down each scheduling tick; falls back to NhiModel fallback when zero.
+    pub nhi_ninki_keizoku_months_remaining: u32,
+
     // ── Forced Liquidation Tracking ───────────────────────────────────────────────
     /// Lifetime total of taxable portfolio sold to cover cash deficits (USD).
     pub total_forced_liquidations_usd: f64,
@@ -117,6 +132,9 @@ impl SimState {
             roth_rebalance_executed: false,
             bridge_exhausted_logged: false,
             ftc_carryover_usd: 0.0,
+            japan_loss_carryforward_jpy: 0.0,
+            gift_sink_jpy: 0.0,
+            nhi_ninki_keizoku_months_remaining: 0,
             total_forced_liquidations_usd: 0.0,
             recession_active: false,
             recession_months_remaining: 0,

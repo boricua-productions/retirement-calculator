@@ -1,15 +1,16 @@
-# Retirement Calculator — V7.4 Hardened Edition (Logic & Precision Update)
+# Retirement Calculator — V7.5 Strategic Optimization Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
 spouse, long-term resident, or permanent resident visas.
 
 > **Dividend Focus.** The engine is heavily focused on **living off portfolio income before
-> selling stock**. In the V7.4 waterfall, native JPY income (now including the Jido Teate child
+> selling stock**. In the V7.5 waterfall, native JPY income (including the Jido Teate child
 > allowance) and the JPY war chest are used first, USD income and bridge cash are converted with
 > an FX spread penalty, an Education-tagged stream bypasses the main waterfall through a dedicated
-> Tier 2.5 bucket, and equity liquidation is the last resort. Every snapshot still reports a
-> Dividend Coverage Ratio so you can tell, year by year, whether your portfolio is self-funding.
+> Tier 2.5 bucket, a Tier 9 Estate Planning Gift Sink diverts annual surplus before buffering, and
+> equity liquidation is the last resort. Every snapshot still reports a Dividend Coverage Ratio so
+> you can tell, year by year, whether your portfolio is self-funding.
 
 The engine assumes ordinary Japan resident tax and National Health Insurance exposure unless a
 scenario explicitly changes the tax settings. It is not a SOFA, TRICARE, base-access, or
@@ -21,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.4 Hardened Edition — Logic & Precision Update)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.5 Strategic Optimization Edition)
 ---
 
 ## Beginner Quick Start
@@ -213,19 +214,18 @@ says otherwise. For optional income streams, use `0` when that income does not a
 
 ---
 
-## V7.2 Technical Hardening — Cost Basis, Liquidation, and Cashflow
+## V7.5 Strategic Hardening — Cost Basis, Liquidation, and Compliance
 
-The current code combines the V7.0 liquidation engine with V7.2 cashflow controls.
+The current engine extends the V7.2 cashflow controls with V7.5 strategic compliance monitors.
 
-V7.0 reframes the post-retirement liquidation engine around the **JPY value
-paid at purchase**, not the USD basis. Two consequences:
+V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
-1. **Japan-Resident Cost Basis.** Each position carries an explicit
-   `avg_purchase_price_jpy` (¥/share). When that field is absent the runtime
-   falls back to `avg_cost × usd_jpy_at_load` so legacy scenarios load
-   unchanged. Japan capital-gains tax is then computed against this basis as
-   `(price × fx − basis_jpy) × 20.315%`, producing the correct realised gain
-   even when the yen has weakened by 50% since purchase.
+1. **Japan-Resident Cost Basis & Loss Carry-forward.** Each position carries an explicit
+   avg_purchase_price_jpy. Japan capital-gains tax is computed against this basis as
+   (price × fx − basis_jpy) × 20.315%. Crucially, V7.5 now tracks signed JPY gains; JPY losses
+   are no longer clamped to zero but are recorded for a 3-year carry-forward (IT Act Art. 37-12-2)
+   to offset future investment tax bases. This ensures that Tax-Loss Harvesting (TLH) provides
+   tangible reduction in future National Health Insurance and resident tax obligations.
 
 2. **Highest-Basis-First Liquidation.** When the post-retirement cashflow
    waterfall cannot cover expenses, the engine sorts taxable holdings by JPY
@@ -250,8 +250,10 @@ the existing FTC pool, but state tax does not. The liquidation engine
 therefore grosses up each share sale by the state rate and records it in
 `StateCapGainsTax_USD`.
 
-V7.4 extends the default **Defensive** spending waterfall with two family-aware
-tiers and a dual-regime buffer-management dispatch:
+V7.5 extends the V7.4 **Defensive** spending waterfall with Tier 9 (gift sink) and fixes two
+engine defects: Japan-side capital losses are now tracked for a 3-year carry-forward (IT Act
+Art. 37-12-2), and the Mode B 4-month oracle now accounts for T9 gift and education draws.
+The full nine-tier waterfall and dual-regime dispatch:
 
 - Tier 0   — JPY Floor: Nenkin and DC payouts.
 - **Tier 0.5 — Jido Teate (児童手当):** bi-monthly child allowance paid in even calendar months. V7.4 implements a Monthly Accrual Logic: the engine calculates the eligibility rate for each individual month in the cycle separately. This ensures 100% precision (¥0 drift) during transition years when a child turns 3 or 18. No
@@ -268,6 +270,7 @@ tiers and a dual-regime buffer-management dispatch:
 - Tier 6   — USD Bridge Fund (+0.5% FX Penalty).
 - Tier 7   — Belt-tightening.
 - Tier 8   — Stock Liquidation (+0.5% FX Penalty).
+- **Tier 9 — Estate Planning Gift Sink (V7.5):** once per year (December), annual JPY surplus is diverted to gift recipients at `annual_gift_jpy_per_recipient × gift_recipient_count` (暦年贈与, max ¥1.1M/recipient tax-free). Each recipient's gift is checked against the US §2503(b) annual exclusion ($19k in 2026) and `year_form_709_required` is flagged when exceeded.
 
 USD-to-JPY conversions in tiers 4, 5, 6, and 8 apply `fx_spread_penalty`
 (`0.005` by default). The legacy V7.0-style `Cautious` waterfall is still
@@ -318,7 +321,8 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
-| **V7.4** | Logic Hardening - Resolved Jido Teate accrual drift (¥0 drift) and implemented 4-month preemptive buffer restocking for Mode B. |
+| **V7.5** | Strategic Optimization — **PFIC §1296 MTM** ordinary-income routing (new `pfic_regime` field on assets). **Japan capital-loss carry-forward** (IT Act Art. 37-12-2): losses from V7.0 liquidations are now recorded and offset future NHI/resident-tax bases. **Tier 9 Gift Sink**: annual JPY surplus routed to 暦年贈与 recipients per-calendar-year with IRC §2503(b) Form 709 flagging. **Exit Tax Monitor** (Art. 60-2): warns when Japan-subject assets ≥ ¥100M and residency ≥ 5-of-10 years. **Ninki Keizoku** (任意継続): new `NinkiKeizoku` NHI model variant for Shakai Hoken continuation up to 24 months. **Stochastic FX** in Marco Polo: independent USD/JPY GBM path per iteration, P10/P50/P90 now also reported in JPY. **Tax-Loss Harvesting** (§1091 wash-sale aware): pre-waterfall handler fires in configurable active months. **Mode B oracle** now aware of T9 gift and education drains. |
+| **V7.4** | Logic Hardening — Resolved Jido Teate accrual drift (¥0 drift) and implemented 4-month preemptive buffer restocking for Mode B. |
 | **V7.3 Preview** | 👶 **Tier 0.5 Jido Teate** — bi-monthly Japanese child allowance (¥15k 0–3, ¥10k 3–18) joins the JPY floor. 🎓 **Tier 2.5 Education Fund** — dedicated JPY bucket accumulated from surplus (`edu_savings_jpy_monthly`); Education-tagged expenses bypass the main waterfall and fall through to T8. 🪖 **Dual Withdrawal Regimes** — `shielded` (Mode A: preserve equity, force minimum at cash-zero) vs `dynamic` (Mode B: proactive buffer restock with next-month dividend look-ahead). 💵 **Lumpy Dividend Defaults** — `MarketDataService::default_dividend_months` codifies quarterly cadences (VTI/SCHD/QQQM = [3,6,9,12]; BND = monthly; PANW = none). Tax-advantaged accounts (Roth/401k/iDeCo/NISA/DC) explicitly bypass the cashflow waterfall. |
 | **V7.2** | 🏛 **Treaty Articles 17 & 18** — US Social Security routed as public pension; FERS national exemption + local tax toggle. 💴 **Japanese Fund Convention** — DC/iDeCo price model uses ¥/万口 (per 10k units). 📈 **RSU Cliff Logic** — "Delayed Initial Vest" handles cliff-accumulation math. 🛡 **Stability Hardening** — Clamped 0.5% FX penalties and safe `Option` handling. |
 | **V7.1** | **Defensive JPY-first spending waterfall** added via `withdrawal_waterfall` (`defensive` default). USD-to-JPY conversions apply `fx_spread_penalty` (0.5% default). Lumpy dividends by month and `dividend_currency` support. |
@@ -484,7 +488,8 @@ Manual mode is also available when you already know the exact annual NHI amounts
 > the rate of the first available bracket above the floor. Ordinary income splits into **work
 > income** and **retirement / benefit income**. FEIE can reduce work income such as salary and RSU
 > vest value, but it does not reduce FERS, Social Security Retirement, taxable SSDI, pensions,
-> dividends, or capital gains.
+> dividends, capital gains, or **PFIC §1296 MTM income** (V7.5 — treated as ordinary, passive
+> basket income per §904(d)(1)(B); not FEIE-eligible per §911(d)(2)).
 
 ### Strategy toggle: `us_tax_strategy`
 
@@ -522,6 +527,7 @@ ftc_creditable       = japan_tax_paid_usd * ftc_ratio
 | Social Security Retirement (US) | No | Benefit income passed as `gross_unearned` |
 | SSDI taxable portion | No | Taxable benefit income passed as `gross_unearned` |
 | Dividends and capital gains | No | Not FEIE income, but included in FTC apportionment |
+| PFIC §1296 MTM gain (V7.5) | No | Ordinary income, passive basket; added to `gross_unearned` |
 | VA disability | N/A | Excluded from the taxable stack |
 
 The FTC denominator is the total Japan-taxable income pool, not just ordinary income. That keeps
@@ -1383,17 +1389,16 @@ retirement-calculator-v2/
 
 Japan's National Health Insurance (NHI / 国民健康保険) is assessed annually in June based on
 the prior calendar year's income. This creates a well-known **spike** in the first
-post-retirement year: the assessment uses peak employment income rather than the lower
-pension-level income that follows in steady state.
+post-retirement year. V7.5 introduces the **Ninki Keizoku bridge** to mitigate this risk.
 
-This section describes the active V6.5 NHI engine. Older flat-rate or discount-tier examples are
-legacy documentation and should not be used for current estimates.
+This section describes the active **V7.5 NHI engine**, which includes both municipal rate-card
+estimation and post-retirement insurance bridges.
 
-### `NhiModel` enum (`src/models/config.rs`)
+### NhiModel enum (src/models/config.rs)
 
-```
-NhiModel::Calculated(NhiCalculatedRates)   — full rate-schedule calculation
-NhiModel::ManualOverride { spike, ongoing } — static annual totals entered by the user
+NhiModel::Calculated(NhiCalculatedRates)   — full municipal rate-schedule
+NhiModel::NinkiKeizoku { ... }              — V7.5: 24-month Shakai Hoken continuation bridge
+NhiModel::ManualOverride { spike, ongoing } — static annual totals
 ```
 
 **`NhiCalculatedRates`** stores the city-specific rates, per-person charges, and annual caps from
@@ -1543,52 +1548,22 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V6.5)
+## 16. Hardening & Compliance (V7.5)
 
-V6.5 resolves three mathematical fragilities identified in the V6.5 audit
-(`audit_findings_V6.5.md`). All 59 pre-existing tests continue to pass unchanged.
+V7.5 resolves the mathematical and legal fragilities identified in the 2026 Strategic Audit.
 
-### Fix 1 — Recession recovery guard (`controller.rs`)
+### Fix 1 — PFIC Ordinary Income Routing (§1296)
+Assets flagged with pfic_regime: Mtm now correctly route Mark-to-Market gains to the Ordinary Income
+stack. This ensures they are taxed at top marginal rates and do not corrupt LTCG bracket stacking.
 
-Recession events can now model both the crash and the bounce-back period:
+### Fix 2 — IRC §904 FTC Basket Separation
+To prevent "tax credit leakage," V7.5 separates the Foreign Tax Credit into Passive and General baskets.
+Japan taxes paid on Passive income (Dividends, PFIC MTM) are strictly credited against US Passive-basket
+liability, preventing the use of passive credits to offset tax on General-basket income (like FERS).
 
-- `duration_months <= 1` applies an instant shock in January.
-- `duration_months > 1` spreads the drawdown across multiple months.
-- `recovery_months > 0` adds a V-shaped recovery after the drawdown.
-- New investing is suppressed while the recession event is active.
-
-$$
-\text{monthly recovery boost} =
-\left(\frac{1}{\max(1 - \text{severity}, 0.001)}\right)^{1 / \text{recovery months}} - 1
-$$
-
-Plain English: the engine can model a market that falls over several months and then recovers over
-a chosen period. The `0.001` floor keeps even an extreme 100% crash scenario finite instead of
-creating infinite or undefined portfolio values.
-
-### Fix 2 — FEIE applied to non-earned pension income (`controller.rs` + `us_tax.rs`)
-
-**Root cause:** `calculate_liability_with_feie_ftc` received a single `gross_ord` that combined
-FERS pension, Social Security, and SSDI — none of which are "earned income" under IRC §911. The
-FEIE exclusion was therefore applied to income it cannot legally exclude, producing
-artificially low US tax for retirees.
-
-**Fix:** The function signature is split into `gross_earned` (salary and RSU vests — FEIE-eligible)
-and `gross_unearned` (FERS, Social Security, SSDI — not eligible). In `finalize_year_taxes`, only
-`year_rsu_vest_usd` is passed as `gross_earned`; the full pension total remains in
-`gross_unearned` and flows through ordinary brackets without exclusion. In post-retirement
-operation (where RSU vests = $0), FEIE naturally evaluates to zero — the function degrades to
-a plain FTC calculation, which is correct.
-
-### Fix 3 — FTC apportionment denominator (`us_tax.rs`)
-
-**Root cause:** The anti-double-dip ratio used `gross_ord` as its denominator. In years with
-large capital gains and fully FEIE-excluded earned income, `ftc_ratio = 0 / gross_ord = 0`,
-granting zero FTC on Japan tax actually paid on dividends and gains — punitive double-taxation.
-
-**Fix:** The denominator is now `total_japan_taxable = gross_earned + gross_unearned +
-gross_st_cap + gross_lt_cap`. Only the excluded share is disallowed; capital gains and pension
-income remain fully creditable per IRC §904.
+### Fix 3 — Mode B Oracle Drain Awareness
+The 4-month preemptive restocking oracle now accounts for Tier 9 Gift Sink and Education Fund drains.
+This prevents liquidity crises caused by the oracle failing to "see" upcoming high-priority non-spend draws.
 
 ---
 

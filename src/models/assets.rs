@@ -89,6 +89,19 @@ pub enum DividendCurrency {
 
 fn default_dividend_months() -> Vec<u32> { vec![3, 6, 9, 12] }
 
+/// V7.5 — PFIC tax regime election for a Japan-domiciled fund asset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PficRegime {
+    #[default]
+    NotPfic,
+    /// IRC §1296 — annual mark-to-market; FMV − basis taxed as ordinary income.
+    Mtm,
+    /// IRC §1291 — default excess distribution treatment.
+    /// Out-of-scope for V7.5 (flag and warn; no multi-year reconstruction).
+    ExcessDistribution,
+}
+
 /// A single tax lot of an asset, tracking purchase date and cost basis.
 /// Mirrors Python's `AssetLot` dataclass. Used for FIFO capital gains tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +109,13 @@ pub struct AssetLot {
     pub purchase_date: NaiveDate,
     pub qty: f64,
     pub basis: f64,
+    /// V7.5 — §1091 wash-sale taint: disallowed loss amount (USD) added back to basis.
+    /// Set when a replacement security is acquired within the 30-day window around the sale.
+    #[serde(default)]
+    pub disallowed_loss_usd: f64,
+    /// V7.5 — Date after which this lot is no longer wash-sale tainted.
+    #[serde(default)]
+    pub wash_sale_clean_after: Option<NaiveDate>,
 }
 
 /// A financial asset (e.g., a stock or ETF) held within an account.
@@ -129,6 +149,13 @@ pub struct Asset {
     /// Jpy dividends route directly into the War Chest bucket (no FX churn).
     #[serde(default)]
     pub dividend_currency: DividendCurrency,
+    /// V7.5 — PFIC tax regime. NotPfic (default) = standard capital-gains treatment.
+    #[serde(default)]
+    pub pfic_regime: PficRegime,
+    /// V7.5 — Prior-year FMV per share used by §1296 MTM to compute annual gain.
+    /// Initialized to cost basis per share on the first MTM mark.
+    #[serde(default)]
+    pub pfic_prior_year_fmv_per_share: f64,
     /// All tax lots, maintained in FIFO (purchase date ascending) order.
     pub lots: Vec<AssetLot>,
 }
@@ -148,6 +175,8 @@ impl Asset {
             avg_jpy_basis_per_share: 0.0,
             dividend_months: default_dividend_months(),
             dividend_currency: DividendCurrency::Usd,
+            pfic_regime: PficRegime::NotPfic,
+            pfic_prior_year_fmv_per_share: 0.0,
             lots: Vec::new(),
         }
     }
@@ -198,7 +227,7 @@ impl Asset {
 
     /// Add a new lot (purchase). Lots are kept in ascending purchase_date order.
     pub fn add_lot(&mut self, purchase_date: NaiveDate, qty: f64, basis: f64) {
-        let lot = AssetLot { purchase_date, qty, basis };
+        let lot = AssetLot { purchase_date, qty, basis, disallowed_loss_usd: 0.0, wash_sale_clean_after: None };
         // Insert in sorted order to maintain FIFO invariant.
         let pos = self.lots.partition_point(|l| l.purchase_date <= lot.purchase_date);
         self.lots.insert(pos, lot);

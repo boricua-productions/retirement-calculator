@@ -21,6 +21,37 @@ pub struct TaxLiability {
     pub feie_applied: bool,
 }
 
+/// V7.5 — Defect 1.2: IRC §904 FTC basket separation.
+///
+/// PFIC MTM income (§1296) is passive basket income under §904(d)(1)(B).
+/// FERS, SS, SSDI, RSU vest value are general basket income.
+/// Separating baskets prevents PFIC-generated FTC from spuriously absorbing
+/// Japan tax credit that legally belongs to a different basket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FtcBasket {
+    /// Dividends, capital gains, PFIC MTM income.
+    Passive,
+    /// FERS pension, Social Security, SSDI, RSU vest value.
+    General,
+}
+
+/// Compute the per-basket §904 FTC limit and return (passive_limit, general_limit).
+///
+/// `ftc_limit_per_basket = US_tax_before_ftc × (basket_foreign_income / total_taxable_income)`
+pub fn compute_ftc_basket_limits(
+    federal_before_ftc: f64,
+    passive_foreign_income: f64,
+    general_foreign_income: f64,
+) -> (f64, f64) {
+    let total = passive_foreign_income + general_foreign_income;
+    if total <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let passive_limit = federal_before_ftc * (passive_foreign_income / total);
+    let general_limit = federal_before_ftc * (general_foreign_income / total);
+    (passive_limit, general_limit)
+}
+
 /// Calculates US federal tax on investment income (capital gains + NIIT).
 /// Mirrors Python's `TaxEngine` class in `tax_engine.py`.
 ///

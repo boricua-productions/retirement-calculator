@@ -616,6 +616,28 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         },
         edu_savings_jpy_monthly: get_f64("edu_savings_jpy_monthly", 0.0),
         jido_teate_enabled: get_bool("jido_teate_enabled", true),
+
+        // ── V7.5: Exit Tax Monitor ────────────────────────────────────────────
+        japan_residency_start_date: sets["japan_residency_start_date"]
+            .as_str()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
+        exit_tax_include_tax_advantaged: get_bool("exit_tax_include_tax_advantaged", true),
+
+        // ── V7.5: Tier 9 Gift Sink ────────────────────────────────────────────
+        annual_gift_jpy_per_recipient: get_f64("annual_gift_jpy_per_recipient", 0.0),
+        gift_recipient_count:          get_u32("gift_recipient_count",           0),
+        us_gift_exclusion_usd:         get_f64("us_gift_exclusion_usd",     19_000.0),
+
+        // ── V7.5: Tax-Loss Harvesting ─────────────────────────────────────────
+        tlh_enabled:       get_bool("tlh_enabled",      false),
+        tlh_active_months: {
+            if let Value::Array(arr) = &sets["tlh_active_months"] {
+                arr.iter().filter_map(|v| v.as_u64().map(|n| n as u32)).collect()
+            } else {
+                vec![11, 12]
+            }
+        },
+        tlh_min_loss_usd: get_f64("tlh_min_loss_usd", 500.0),
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────
@@ -696,6 +718,11 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     "jpy" | "Jpy" | "JPY" => DividendCurrency::Jpy,
                     _                     => DividendCurrency::Usd,
                 };
+                let pfic_regime = match info["pfic_regime"].as_str().unwrap_or("not_pfic") {
+                    "mtm" => crate::models::assets::PficRegime::Mtm,
+                    "excess_distribution" => crate::models::assets::PficRegime::ExcessDistribution,
+                    _ => crate::models::assets::PficRegime::NotPfic,
+                };
                 let mut asset = Asset {
                     ticker: ticker.clone(),
                     price, yield_rate, growth_rate,
@@ -706,6 +733,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     avg_jpy_basis_per_share,
                     dividend_months,
                     dividend_currency,
+                    pfic_regime,
+                    pfic_prior_year_fmv_per_share: 0.0,
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);
@@ -766,6 +795,11 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                             Some("jpy") | Some("JPY") => DividendCurrency::Jpy,
                             _ => DividendCurrency::Usd,
                         };
+                        let pfic_regime_b = match info["pfic_regime"].as_str().unwrap_or("not_pfic") {
+                            "mtm" => crate::models::assets::PficRegime::Mtm,
+                            "excess_distribution" => crate::models::assets::PficRegime::ExcessDistribution,
+                            _ => crate::models::assets::PficRegime::NotPfic,
+                        };
                         let mut asset = Asset {
                             ticker: ticker.clone(),
                             price, yield_rate, growth_rate,
@@ -777,6 +811,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                             avg_jpy_basis_per_share,
                             dividend_months: div_months,
                             dividend_currency: div_currency,
+                            pfic_regime: pfic_regime_b,
+                            pfic_prior_year_fmv_per_share: 0.0,
                             lots: Vec::new(),
                         };
                         asset.add_lot(start_date, qty, basis);
@@ -832,6 +868,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     avg_jpy_basis_per_share,
                     dividend_months: div_months,
                     dividend_currency: div_currency,
+                    pfic_regime: crate::models::assets::PficRegime::NotPfic,
+                    pfic_prior_year_fmv_per_share: 0.0,
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);
@@ -860,6 +898,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             avg_jpy_basis_per_share: dc_nav,
             dividend_months: vec![3, 6, 9, 12],
             dividend_currency: DividendCurrency::Jpy,
+            pfic_regime: crate::models::assets::PficRegime::NotPfic,
+            pfic_prior_year_fmv_per_share: 0.0,
             lots: Vec::new(),
         };
         tawara.add_lot(start_date, dc_qty, dc_qty * dc_nav);

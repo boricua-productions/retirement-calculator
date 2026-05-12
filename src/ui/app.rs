@@ -425,6 +425,7 @@ impl RetirementApp {
             annual_volatility: vol,
             annual_net_cashflow_usd: 0.0, // overridden in thread after main sim
             seed: None,
+            fx_stochastic: None,
         }
     }
 

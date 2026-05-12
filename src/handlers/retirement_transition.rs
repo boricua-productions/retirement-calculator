@@ -136,6 +136,8 @@ pub fn handle_transition(
                             purchase_date: vest_date,
                             qty: shares_per_vest,
                             basis: vest_value,
+                            disallowed_loss_usd: 0.0,
+                            wash_sale_clean_after: None,
                         });
                 }
 
