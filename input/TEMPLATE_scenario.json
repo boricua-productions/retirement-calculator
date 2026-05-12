@@ -1,0 +1,226 @@
+{
+  "simulation_settings": {
+    "_comment_section_1": "--- TIMING & DATES ---",
+    "_help_dates": "Start/End define the full simulation window.",
+    "start_date": "2025-12-31",
+    "retirement_date": "2031-01-01",
+    "_help_rebalance_date": "The date on which the major portfolio rebalance and cash funding event occurs.",
+    "rebalance_date": "2031-02-01",
+    "end_date": "2080-12-31",
+
+    "_help_family_dates": "Used to auto-calculate VA drop-offs (Child 18) and Nenkin relief (Age 60).",
+    "birth_date": "1900-01-01",
+    "spouse_birth_date": "1900-01-01",
+    "child_birth_date": "1950-01-01",
+
+    "_comment_section_2": "--- ECONOMICS ---",
+    "_help_fx": "Initial USD/JPY rate. If set to 0, the script fetches the live rate.",
+    "usd_jpy_rate": 110.0,
+    "_help_inflation": "US CPI affects tax brackets and US COLA. Japan CPI affects your JPY expense budget.",
+    "inflation_us_cpi": 0.028,
+    "inflation_japan_cpi": 0.028,
+    "roth_limit_growth": 0.03,
+
+    "_help_drift": "If true, JPY strengthens by 'fx_drift_rate_annual' (simulating mean reversion).",
+    "simulate_yen_strengthening": true,
+    "fx_drift_rate_annual": 0.02,
+
+    "_help_recession": "If true, portfolio drops by 'recession_severity_pct' one month after retirement.",
+    "simulate_recession_at_retirement": true,
+    "recession_severity_pct": 0.20,
+
+    "_help_scheduled_recessions": "Dynamic recession list. Required: year (int), severity (0.0–1.0). Optional: duration_months (default 1 = single-shock), recovery_months (default 0 = no auto-recovery). e.g. [{\"year\": 2034, \"severity\": 0.35, \"duration_months\": 14, \"recovery_months\": 24}]",
+    "simulated_recessions": [],
+
+    "_help_fx_shocks": "Discrete FX rate overrides. Sets USD/JPY to target_fx at the start of the given year (before that year's drift). Required: year (int), target_fx (float). Optional: description (string). e.g. [{\"year\": 2032, \"target_fx\": 80.0, \"description\": \"2011-style yen surge\"}]",
+    "fx_shock_events": [],
+
+    "_comment_section_3": "--- BUDGETING ---",
+    "_help_expenses": "Base expenses in JPY. NHI, Resident Tax, and Nenkin are added ON TOP.",
+    "base_monthly_expenses_jpy": 1016744,
+    "min_monthly_expenses_jpy": 600000,
+
+    "_help_nhi_spike": "First 18-month NHI premium after retirement (high due to prior executive income). Can be adjusted for NHI income-spike effects.",
+    "nhi_spike_monthly_jpy": 73333,
+
+    "_help_nenkin_rule": "Total monthly Nenkin for the household (e.g. 35,020 JPY for two people).",
+    "nenkin_monthly_household_jpy": 35020,
+    "_help_nenkin_baseline": "Baseline Nenkin already in base_expense_jpy; only excess is a separate charge.",
+    "nenkin_baseline_annual_jpy": 171800,
+
+    "_comment_section_4": "--- GROWTH RATES ---",
+    "_help_growth": "Manual annual growth rates per ticker. Set fetch_live_growth_rates=true to override with 10-year historical CAGR from Yahoo Finance (falls back to 7% on failure).",
+    "fetch_live_growth_rates": false,
+    "growth_rates_annual": {
+      "VTI": 0.08, "QQQM": 0.10, "SCHD": 0.08, "MSFT": 0.12, "PANW": 0.12
+    },
+
+    "_comment_section_5": "--- CONTRIBUTIONS (ACCUMULATION PHASE) ---",
+    "roth_ira_annual_limit": 7000,
+    "roth_contribution_made_this_year": false,
+    "roth_contributions_ytd_usd": 0,
+    "japan_dc_monthly_contribution_jpy": 45000,
+
+    "_help_monthly_contribution_ticker": "Ticker to buy with monthly VA-buffer contributions during accumulation.",
+    "monthly_contribution_ticker": "VTI",
+    "_help_salary": "Annual gross compensation (USD) used to calculate marginal tax on RSUs/Dividends pre-retirement.",
+    "total_annual_compensation_usd": 0,
+    "_help_va_buffer": "Amount subtracted from monthly VA payment to determine contribution amount.",
+    "va_contribution_buffer_usd": 800.0,
+
+    "_help_buy_schd": "If true, switches contributions and dividends to SCHD for the last 12 months before retirement.",
+    "buy_schd_last_year": true,
+
+    "_help_rsu_tax": "Options: 'SALARY' (taxes paid from external cash) or 'SELL_TO_COVER' (sells vested shares to cover tax).",
+    "rsu_tax_handling": "SALARY",
+
+    "_comment_section_6": "--- EXITS & PENSIONS ---",
+    "_help_dc_payout": "Options: 'LUMP_SUM' (invested into taxable) or 'ANNUITY_20YR' (monthly income).",
+    "dc_payout_start_age": 60,
+    "dc_payout_method": "ANNUITY_20YR",
+    "_help_gross_inc": "Total income in retirement year (Salary + Bonus). Used to calc Year 1 Resident Tax.",
+    "retirement_year_gross_income_jpy": 40000000,
+
+    "_help_va_profile": "VA Disability Profile uses 2026 official rates. Rating must be a multiple of 10 (0–100). Dependent status: 'vet_only', 'with_spouse', 'with_spouse_and_child'. Set rating=0 to fall back to legacy va_disability_rates map.",
+    "va_disability_rating": 100,
+    "va_dependent_status": "with_spouse_and_child",
+
+    "va_disability_rates": {
+      "_help": "Legacy VA monthly payments per year (used only when va_disability_rating=0). Latest year used as baseline for future projections. Set base=0 to ignore.",
+      "2026": { "base": 4158.17, "child_addon": 160.82 },
+      "2027": { "base": 0, "child_addon": 0 }
+    },
+
+    "_help_fers": "FERS pension start: either specify 'fers_start_date' (YYYY-MM-DD) or 'fers_start_age' (integer). Simulation bridges cashflow until FERS kicks in.",
+    "fers_monthly_payment_usd": 794.55,
+    "fers_start_age": 62,
+
+    "_help_ss": "US Social Security (Totalization Pillar). Taxable as ordinary income under the US Savings Clause. Set to 0 to disable.",
+    "ss_monthly_usd": 0,
+    "ss_start_age": 67,
+
+    "_help_nenkin": "Japanese Nenkin income (Totalization Pillar). Taxed in Japan; FTC credited against US liability. Set to 0 to disable.",
+    "nenkin_income_monthly_jpy": 0,
+    "nenkin_income_start_age": 65,
+
+    "_comment_section_7": "--- PRE-FUNDING & ALLOCATION ---",
+    "_help_war_chest": "Emergency fund kept in cash. Script refills this from portfolio if it drops.",
+    "war_chest_currency": "JPY",
+    "war_chest_target_jpy": 7000000,
+    "war_chest_target_usd": 50000,
+    "pre_funded_war_chest_jpy": 3131679,
+
+    "_help_bridge": "Cash buffer for the first 1-2 years before pensions kick in.",
+    "bridge_fund_months_target": 12,
+    "bridge_fund_currency": "USD",
+    "pre_funded_bridge_usd": 0,
+    "pre_funded_bridge_jpy": 0,
+
+    "_help_tax_prep": "Cash set aside specifically for the massive Year 1 tax bills.",
+    "pre_funded_japan_tax_jpy": 0,
+    "pre_funded_us_tax_usd": 0,
+
+    "_help_rebalance": "Target allocation for portfolios. Taxable rebalances at retirement. Roth rebalances at age 59.5.",
+    "enable_roth_rebalance_at_59": false,
+    "rebalance_target_vti_pct": 0.20,
+    "rebalance_target_schd_pct": 0.80,
+    "roth_rebalance_target_vti_pct": 0.50,
+    "roth_rebalance_target_schd_pct": 0.50,
+
+    "_comment_section_8": "--- JAPAN LOCATION & TAX JURISDICTION ---",
+    "_help_location": "Prefecture and city determine the resident tax (住民税) rate. Standard 10%. Exception: Nagoya City (Aichi) = 9.7%.",
+    "prefecture": "Kanagawa",
+    "city": "Sagamihara",
+
+
+    "_help_us_tax_strategy": "US expat tax optimization. Options: 'ftc_only' (Foreign Tax Credit only) or 'feie_and_ftc' (FEIE up to $126,500 exclusion + FTC on excess). Simulation picks the lower-tax result.",
+    "us_tax_strategy": "ftc_only",
+
+    "_help_jurisdiction": "Controls which tax systems are active. Options: 'both', 'us_only', 'japan_only'.",
+    "tax_jurisdiction": "both",
+    "_help_investment_location": "Primary domicile of the investment portfolio. Options: 'us', 'japan', 'international'.",
+    "investment_location": "us",
+    "_help_filing_status": "IRS filing status. Options: 'Married Filing Jointly', 'Single', 'Married Filing Separately', 'Head of Household'. Determines brackets, std deduction, and LTCG thresholds.",
+    "us_filing_status": "Married Filing Jointly",
+    "_help_state": "Two-letter US state code for state income tax. 'None' = no state tax. Rate auto-derived from code; override with 'us_state_tax_rate'.",
+    "us_state_code": "FL",
+    "us_state_tax_rate": 0.0,
+
+    "_comment_section_9": "--- V7.1 WATERFALL & FX ---",
+    "_help_waterfall": "Cashflow withdrawal strategy. 'defensive' (default, V7.1): JPY-first 8-tier waterfall with FX spread penalty. 'cautious' (V7.0 backward-compat): USD-first with WC top-up.",
+    "withdrawal_waterfall": "defensive",
+    "_help_fx_spread_penalty": "FX conversion spread cost (bid-ask) applied on all USD→JPY conversions in the waterfall (Tiers 4, 5, 6, 8). Default 0.005 = 0.5%.",
+    "fx_spread_penalty": 0.005
+  },
+
+  "rsu_awards": [
+    {
+      "_comment": "Single RSU grant. Add multiple entries for multiple awards.",
+      "grant_date": "2020-01-01",
+      "_help_vesting_start_date": "Optional. If set, vesting year-clock starts from this date instead of grant_date (e.g., for cliff-then-vest grants).",
+      "vesting_start_date": null,
+      "ticker": "PANW",
+      "total_shares": 50000,
+      "vesting_years": 4,
+      "_help_cadence": "Options: 'quarterly' (default, Feb/May/Aug/Nov), 'monthly' (12x/year), 'annually' (1x/year). Ignored if vesting_months is set.",
+      "vesting_cadence": "quarterly",
+      "_help_months": "Explicit list of vesting months (1-12). Leave empty [] to use vesting_cadence default.",
+      "vesting_months": [2, 5, 8, 11]
+    },
+    {
+      "_comment": "Second RSU grant example — monthly cadence with vesting_start_date.",
+      "grant_date": "2022-11-01",
+      "vesting_start_date": "2023-11-01",
+      "ticker": "MSFT",
+      "total_shares": 0,
+      "vesting_years": 4,
+      "vesting_cadence": "monthly",
+      "vesting_months": []
+    }
+  ],
+
+  "market_prices_usd": {
+    "_help": "Manual price overrides. Set to 0 to use fallback prices.",
+    "VTI": 0, "QQQM": 0, "SCHD": 0, "MSFT": 0, "PANW": 0
+  },
+
+  "_help_brokerage_accounts": "Additional named brokerage accounts beyond the primary 'taxable'. Each can have its own tax_jurisdiction (us/japan/both/none) and location.",
+  "brokerage_accounts": [
+    {
+      "_comment": "Example additional brokerage account. Remove or leave empty if not needed.",
+      "_disabled": true,
+      "name": "Fidelity",
+      "tax_jurisdiction": "us",
+      "location": "us",
+      "holdings": {
+        "VTI":  { "qty": 0, "avg_cost": 0.0 },
+        "SCHD": { "qty": 0, "avg_cost": 0.0, "custom_growth_rate": 0.09 }
+      }
+    }
+  ],
+
+  "holdings": {
+
+    "_comment_dividend_rules": "Per-asset dividend control. 'drip_enabled': false = no DRIP. 'dividend_reinvest_target': ticker to reinvest into. 'custom_growth_rate': override annual growth rate. 'dividend_months': months in which dividends fire (e.g. [3,6,9,12] = quarterly). 'dividend_currency': 'usd' (default) or 'jpy' — determines which bucket receives net income (JPY dividends skip USD→JPY FX conversion).",
+
+    "taxable": {
+      "VTI":  { "qty": 100000.33, "avg_cost": 100.00, "category": "INCOME", "drip_enabled": true,  "dividend_reinvest_target": "SCHD", "dividend_months": [3,6,9,12], "dividend_currency": "usd" },
+      "QQQM": { "qty": 100000.33, "avg_cost": 100.33, "category": "GROWTH", "drip_enabled": true,  "dividend_reinvest_target": "SCHD", "dividend_months": [3,6,9,12], "dividend_currency": "usd" },
+      "SCHD": { "qty": 100000.33, "avg_cost": 10.33,  "category": "INCOME", "drip_enabled": false, "dividend_reinvest_target": "VTI",  "dividend_months": [3,6,9,12], "dividend_currency": "usd" },
+      "MSFT": { "qty": 100000.33, "avg_cost": 100.33, "category": "GROWTH", "drip_enabled": true,  "dividend_reinvest_target": "SCHD", "dividend_months": [3,6,9,12], "dividend_currency": "usd" }
+    },
+
+    "roth_ira": {
+      "_comment": "Roth IRA: US tax-free on gains. In Both-jurisdiction mode, Japan resident tax may still apply to Roth distributions.",
+      "VTI":  { "qty": 100000.333, "avg_cost": 100.33, "drip_enabled": true, "dividend_reinvest_target": "VTI",  "dividend_months": [3,6,9,12], "dividend_currency": "usd" },
+      "QQQM": { "qty": 100000.33,  "avg_cost": 100.33, "drip_enabled": true, "dividend_reinvest_target": "QQQM", "dividend_months": [3,6,9,12], "dividend_currency": "usd" }
+    },
+
+    "japan_dc": {
+      "_comment": "Defined Contribution (iDeCo/Corporate DC). Japan jurisdiction. growth_rate overrides the DC fund CAGR.",
+      "qty": 9999000,
+      "nav_jpy_per_10k": 443433,
+      "growth_rate": 0.08
+    }
+  }
+}
