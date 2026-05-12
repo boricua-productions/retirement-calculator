@@ -1,0 +1,147 @@
+{
+  "simulation_settings": {
+    "_comment": "V6.6 Crash Stress Test — 35% crash over 14 months starting Jan 2030, 24-month recovery.",
+
+    "start_date":       "2025-12-31",
+    "retirement_date":  "2031-01-01",
+    "rebalance_date":   "2031-02-01",
+    "end_date":         "2040-12-31",
+
+    "birth_date":        "1975-01-15",
+    "is_married":        true,
+    "spouse_birth_date": "1978-06-01",
+    "child_birth_date":  "2015-03-10",
+
+    "dependents": [
+      { "birth_date": "2015-03-10", "birth_year": 2015, "is_college_student": false }
+    ],
+
+    "spouse_ss_monthly_usd":      0,
+    "spouse_ss_start_age":        67,
+    "spouse_ss_jurisdiction":     "both",
+    "spouse_nenkin_monthly_jpy":  0,
+    "spouse_nenkin_start_age":    65,
+    "spouse_nenkin_jurisdiction": "both",
+
+    "usd_jpy_rate":       145.0,
+    "inflation_us_cpi":   0.028,
+    "inflation_japan_cpi":0.028,
+    "roth_limit_growth":  0.03,
+
+    "simulate_yen_strengthening":   false,
+    "fx_drift_rate_annual":         0.0,
+    "fx_drift_cadence_months":      0,
+    "fx_drift_increase_amount_jpy": 0.0,
+
+    "_comment_recession": "Retirement-shock disabled; relying on the scheduled 2030 multi-month event.",
+    "simulate_recession_at_retirement": false,
+    "recession_severity_pct": 0.20,
+
+    "simulated_recessions": [
+      {
+        "_comment": "2008-style bear: -35% total, spread over 14 months, 24-month V-shaped recovery.",
+        "year": 2030,
+        "severity": 0.35,
+        "duration_months": 14,
+        "recovery_months": 24
+      }
+    ],
+
+    "base_monthly_expenses_jpy": 700000,
+    "min_monthly_expenses_jpy":  450000,
+    "nhi_spike_monthly_jpy":     50000,
+    "nenkin_monthly_household_jpy": 35020,
+    "nenkin_baseline_annual_jpy":   171800,
+
+    "fetch_live_growth_rates": false,
+    "growth_rates_annual": {
+      "VTI": 0.08, "SCHD": 0.08
+    },
+
+    "roth_ira_annual_limit": 7000,
+    "roth_contribution_made_this_year": false,
+    "roth_contributions_ytd_usd": 0,
+    "japan_dc_monthly_contribution_jpy": 45000,
+
+    "monthly_contribution_ticker": "VTI",
+    "total_annual_compensation_usd": 120000,
+    "va_contribution_buffer_usd": 800.0,
+
+    "buy_schd_last_year": true,
+    "rsu_tax_handling": "SALARY",
+
+    "dc_payout_start_age": 60,
+    "dc_payout_method": "LUMP_SUM",
+    "retirement_year_gross_income_jpy": 20000000,
+
+    "va_disability_rating": 70,
+    "va_dependent_status": "with_spouse",
+    "va_disability_rates": {
+      "2026": { "base": 1890.69, "child_addon": 0 }
+    },
+
+    "_comment_fers": "FERS deferred to age 62 (2037) — 6-year bridge gap after retirement.",
+    "fers_monthly_payment_usd": 2500.0,
+    "fers_start_age": 62,
+
+    "ss_monthly_usd": 0,
+    "ss_start_age": 67,
+
+    "nenkin_income_monthly_jpy": 0,
+    "nenkin_income_start_age": 65,
+
+    "war_chest_currency": "JPY",
+    "war_chest_target_jpy": 5000000,
+    "war_chest_target_usd": 50000,
+    "pre_funded_war_chest_jpy": 2000000,
+
+    "bridge_fund_months_target": 6,
+    "bridge_fund_currency": "USD",
+    "pre_funded_bridge_usd": 0,
+    "pre_funded_bridge_jpy": 0,
+
+    "pre_funded_japan_tax_jpy": 0,
+    "pre_funded_us_tax_usd":    0,
+
+    "enable_roth_rebalance_at_59": false,
+    "rebalance_target_vti_pct":  0.30,
+    "rebalance_target_schd_pct": 0.70,
+    "roth_rebalance_target_vti_pct":  0.50,
+    "roth_rebalance_target_schd_pct": 0.50,
+
+    "prefecture": "Kanagawa",
+    "city": "Sagamihara",
+
+    "us_tax_strategy":    "ftc_only",
+    "tax_jurisdiction":   "both",
+    "investment_location":"us",
+    "us_filing_status":   "Married Filing Jointly",
+    "us_state_code":      "FL",
+    "us_state_tax_rate":  0.0
+  },
+
+  "rsu_awards": [],
+
+  "market_prices_usd": {
+    "VTI": 280,
+    "SCHD": 83
+  },
+
+  "brokerage_accounts": [],
+
+  "holdings": {
+    "_comment": "Modest portfolio sized to show bridge exhaustion within the 10-year window.",
+    "taxable": {
+      "VTI":  { "qty": 500,  "avg_cost": 200.00 },
+      "SCHD": { "qty": 800,  "avg_cost":  65.00 }
+    },
+    "roth_ira": {
+      "VTI": { "qty": 200, "avg_cost": 180.00 }
+    },
+    "japan_dc": {
+      "qty": 500000,
+      "nav_jpy_per_10k": 15000,
+      "growth_rate": 0.07
+    }
+  }
+}
