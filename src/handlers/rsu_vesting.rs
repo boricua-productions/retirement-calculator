@@ -35,12 +35,16 @@ pub fn handle_rsu_vesting(
         .collect();
 
     for (_, shares, ticker) in events {
-        // Look up current price for this ticker.
+        // V7.7 — Per-award overrides (first award matching ticker wins).
+        let rsu_overrides = rsu_engine.awards_iter().find(|a| a.ticker == ticker);
+
+        // Price precedence: existing Taxable Asset > RSU stored value > fallback.
         let price = state
             .accounts
             .get("Taxable")
             .and_then(|acc| acc.assets.get(&ticker))
             .map(|a| a.price)
+            .or_else(|| rsu_overrides.and_then(|a| a.unit_value))
             .unwrap_or_else(|| MarketDataService::fallback_price(&ticker));
 
         let vest_value = shares * price;
@@ -75,12 +79,22 @@ pub fn handle_rsu_vesting(
             vest_value
         };
 
+        // Growth precedence: global cfg (from brokerage) > RSU stored > fallback.
         let growth_rate = cfg.growth_rates_annual.get(&ticker).copied()
+            .or_else(|| rsu_overrides.and_then(|a| a.growth_rate))
             .unwrap_or_else(|| MarketDataService::fallback_growth(&ticker));
 
-        let fallback_price = price; // price is already current
+        let fallback_price = price;
         if let Some(taxable) = state.accounts.get_mut("Taxable") {
             taxable.buy(&ticker, buy_amount, current_date, fallback_price, growth_rate);
+            // V7.7 — Attach RSU return profile to the new Asset if none is set yet.
+            if let Some(profile) = rsu_overrides.and_then(|a| a.return_profile.clone()) {
+                if let Some(asset) = taxable.assets.get_mut(&ticker) {
+                    if asset.return_profile.is_none() {
+                        asset.return_profile = Some(profile);
+                    }
+                }
+            }
         }
 
         state.stats.year_rsu_vest_usd += vest_value;

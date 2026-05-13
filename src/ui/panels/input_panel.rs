@@ -113,6 +113,13 @@ pub struct RsuRow {
     pub specific_vesting_months:  String,  // comma-separated e.g. "2,5,8,11"
     pub delayed_initial_vest:     bool,
     pub cliff_vest_months:        String,  // active only when delayed_initial_vest
+    // ── V7.7 — Per-ticker pricing & return profile ──────────────────────────
+    pub unit_value:           String,   // starter price USD/share; empty = fallback
+    pub growth_pct:           String,   // annual growth %; empty = fallback
+    pub use_detailed_profile: bool,
+    pub profile_expanded:     bool,     // UI-only: expand the return profile sub-panel
+    pub cap_growth_pct:       String,   // annual price-only appreciation %
+    pub dividend_yield_pct:   String,   // annual dividend yield %
 }
 
 impl Default for RsuRow {
@@ -125,6 +132,12 @@ impl Default for RsuRow {
             specific_vesting_months:  "2,5,8,11".into(),
             delayed_initial_vest:     false,
             cliff_vest_months:        "0".into(),
+            unit_value:               String::new(),
+            growth_pct:               String::new(),
+            use_detailed_profile:     false,
+            profile_expanded:         false,
+            cap_growth_pct:           String::new(),
+            dividend_yield_pct:       String::new(),
         }
     }
 }
@@ -787,6 +800,11 @@ impl InputPanelState {
                     }
                 };
                 let cliff_months = rsu["cliff_vest_months"].as_u64().unwrap_or(0);
+                let rp = &rsu["return_profile"];
+                let rp_pct = |k: &str| -> String {
+                    rp[k].as_f64().map(|f| format!("{:.3}", f * 100.0)).unwrap_or_default()
+                };
+                let use_detailed_profile = rp.is_object();
                 Some(RsuRow {
                     ticker,
                     grant_date,
@@ -795,6 +813,14 @@ impl InputPanelState {
                     specific_vesting_months,
                     delayed_initial_vest: cliff_months > 0,
                     cliff_vest_months: cliff_months.to_string(),
+                    unit_value: rsu["unit_value"].as_f64()
+                        .map(|f| format!("{:.2}", f)).unwrap_or_default(),
+                    growth_pct: rsu["growth_rate"].as_f64()
+                        .map(|f| format!("{:.1}", f * 100.0)).unwrap_or_default(),
+                    use_detailed_profile,
+                    profile_expanded: false,
+                    cap_growth_pct:     rp_pct("cap_growth"),
+                    dividend_yield_pct: rp_pct("dividend_yield"),
                 })
             }).collect()
         } else {
@@ -1559,6 +1585,37 @@ impl InputPanelState {
                             obj.insert("cliff_vest_months".into(), Value::Number(c.into()));
                         }
                     }
+                    // V7.7 — Per-ticker pricing.
+                    if let Ok(uv) = r.unit_value.trim().parse::<f64>() {
+                        if uv > 0.0 {
+                            if let Some(n) = serde_json::Number::from_f64(uv) {
+                                obj.insert("unit_value".into(), Value::Number(n));
+                            }
+                        }
+                    }
+                    if let Ok(gp) = r.growth_pct.trim().parse::<f64>() {
+                        if gp.is_finite() {
+                            if let Some(n) = serde_json::Number::from_f64(gp / 100.0) {
+                                obj.insert("growth_rate".into(), Value::Number(n));
+                            }
+                        }
+                    }
+                    // V7.7 — Detailed return profile (cap_growth + dividend_yield only).
+                    if r.use_detailed_profile {
+                        let mut prof = serde_json::Map::new();
+                        let put = |m: &mut serde_json::Map<String, Value>, k: &str, s: &str| {
+                            if let Ok(v) = s.trim().parse::<f64>() {
+                                if let Some(n) = serde_json::Number::from_f64(v / 100.0) {
+                                    m.insert(k.into(), Value::Number(n));
+                                }
+                            }
+                        };
+                        put(&mut prof, "cap_growth",     &r.cap_growth_pct);
+                        put(&mut prof, "dividend_yield", &r.dividend_yield_pct);
+                        if !prof.is_empty() {
+                            obj.insert("return_profile".into(), Value::Object(prof));
+                        }
+                    }
                     Some(Value::Object(obj))
                 })
                 .collect();
@@ -2034,6 +2091,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         let mut auto_fill:        Option<(usize, usize)> = None;
         let mut toggle_mgmt:      Option<(usize, usize)> = None;
         let mut toggle_profile:   Option<(usize, usize)> = None;
+        let mut auto_fill_profile: Option<(usize, usize)> = None;
 
         for acct_idx in 0..num_accounts {
             if acct_idx > 0 {
@@ -2410,6 +2468,21 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                                 ui.checkbox(&mut pos.use_detailed_profile,
                                                     "Use detailed return profile")
                                                     .on_hover_text("When on, the engine drives growth/distributions from the component fields below instead of the flat Growth % column.");
+                                                ui.add_space(10.0);
+                                                if ui.small_button("✨ Auto-Fetch")
+                                                    .on_hover_text(
+                                                        "Fetch the asset-class-appropriate components from Yahoo Finance:\n\
+                                                         • Stock: Cap Growth + Dividend Yield\n\
+                                                         • ETF: Cap Growth + Dividend Yield + Cap Gains Distrib + Expense Ratio\n\
+                                                         • Mutual Fund: NAV Growth + Dividend Yield + Cap Gains Distrib + Expense Ratio\n\
+                                                         • Other: all of the above\n\
+                                                         Interest Distrib, Special Distrib, and Return of Capital are not exposed \
+                                                         by Yahoo and remain under manual control."
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    auto_fill_profile = Some((acct_idx, pos_idx));
+                                                }
                                             });
                                             ui.label(RichText::new(
                                                 "All values are annual percentages. Components not shown for the chosen \
@@ -2574,6 +2647,36 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     let pos = &mut state.accounts[ai].positions[pi];
                     pos.unit_value = format!("{:.2}", price);
                     pos.growth_pct = format!("{:.1}", cagr * 100.0);
+                }
+            }
+        }
+        if let Some((ai, pi)) = auto_fill_profile {
+            if ai < state.accounts.len() && pi < state.accounts[ai].positions.len() {
+                let ticker    = state.accounts[ai].positions[pi].ticker.clone();
+                let class_str = state.accounts[ai].positions[pi].asset_class.clone();
+                if !ticker.is_empty() {
+                    let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker);
+                    let pos = &mut state.accounts[ai].positions[pi];
+                    let (show_cap, show_nav, show_cg, show_er) = match class_str.as_str() {
+                        "Stock"      => (true,  false, false, false),
+                        "ETF"        => (true,  false, true,  true ),
+                        "MutualFund" => (false, true,  true,  true ),
+                        "Other"      => (true,  true,  true,  true ),
+                        _            => (true,  false, false, false),
+                    };
+                    pos.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
+                    if show_cap { pos.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0); }
+                    if show_nav { pos.nav_growth_pct     = format!("{:.3}", profile.nav_growth     * 100.0); }
+                    if show_cg  { pos.cap_gains_dist_pct = format!("{:.3}", profile.cap_gains_dist * 100.0); }
+                    if show_er  { pos.expense_ratio_pct  = format!("{:.3}", profile.expense_ratio  * 100.0); }
+                    if matches!(class_str.as_str(), "MutualFund" | "Other") {
+                        log::warn!(
+                            "[MarketData] {}: Yahoo does not expose interest_yield, special_dist, \
+                             or roc — those fields were left as-is. Edit manually if needed.",
+                            ticker
+                        );
+                    }
+                    pos.use_detailed_profile = true;
                 }
             }
         }
@@ -2976,10 +3079,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         ui.add_space(4.0);
 
         if !state.rsu_awards.is_empty() {
-            let mut remove_rsu: Option<usize> = None;
+            let mut remove_rsu:           Option<usize> = None;
+            let mut rsu_auto_fill_simple: Option<usize> = None;
+            let mut rsu_toggle_profile:   Option<usize> = None;
             let num_rsu = state.rsu_awards.len();
             egui::Grid::new("g_rsu_awards")
-                .num_columns(8)
+                .num_columns(12)
                 .striped(true)
                 .spacing([8.0, 4.0])
                 .show(ui, |ui| {
@@ -2993,6 +3098,14 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                         .on_hover_text("Cliff period in months. Shares accumulate and vest in a lump on the first event after the cliff ends.");
                     ui.label(RichText::new("Delayed Init").strong().small())
                         .on_hover_text("Delayed initial vest: first vest event is shifted to grant month + 12 months instead of the first matching calendar month.");
+                    ui.label(RichText::new("✨").strong().small())
+                        .on_hover_text("Auto-fill Price & Growth from Yahoo Finance");
+                    ui.label(RichText::new("Price USD").strong().small())
+                        .on_hover_text("Starter price for the underlying. Used only if this ticker is NOT held in brokerage. Once vested, the engine drives the price forward.");
+                    ui.label(RichText::new("Growth %").strong().small())
+                        .on_hover_text("Annual price growth %. Falls through to global fallback if blank.");
+                    ui.label(RichText::new("Return Profile").strong().small())
+                        .on_hover_text("Toggle a Cap Growth + Dividend Yield component breakdown for this RSU's underlying stock.");
                     ui.label(""); // remove button
                     ui.end_row();
 
@@ -3016,6 +3129,29 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             .hint_text("0").desired_width(44.0)
                             .id(egui::Id::new("rcv").with(rsu_idx)));
                         ui.checkbox(&mut state.rsu_awards[rsu_idx].delayed_initial_vest, "");
+                        if ui.small_button("✨")
+                            .on_hover_text("Auto-fill Price & Growth from Yahoo Finance")
+                            .clicked()
+                        {
+                            rsu_auto_fill_simple = Some(rsu_idx);
+                        }
+                        ui.add(egui::TextEdit::singleline(&mut state.rsu_awards[rsu_idx].unit_value)
+                            .hint_text("current $").desired_width(74.0)
+                            .id(egui::Id::new("ruv").with(rsu_idx)));
+                        ui.add(egui::TextEdit::singleline(&mut state.rsu_awards[rsu_idx].growth_pct)
+                            .hint_text("opt. %").desired_width(60.0)
+                            .id(egui::Id::new("rgp").with(rsu_idx)));
+                        let prof_label = if state.rsu_awards[rsu_idx].use_detailed_profile {
+                            if state.rsu_awards[rsu_idx].profile_expanded { "📊 Detail ▾" } else { "📊 Detail" }
+                        } else {
+                            "Simple"
+                        };
+                        if ui.small_button(prof_label)
+                            .on_hover_text("Toggle Cap Growth + Dividend Yield component breakdown.")
+                            .clicked()
+                        {
+                            rsu_toggle_profile = Some(rsu_idx);
+                        }
                         if ui.small_button("✕").clicked() {
                             remove_rsu = Some(rsu_idx);
                         }
@@ -3024,6 +3160,107 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 });
             if let Some(idx) = remove_rsu {
                 state.rsu_awards.remove(idx);
+            }
+
+            // V7.7 — Per-RSU Detail (return profile) sub-panels.
+            let mut rsu_auto_fill_profile: Option<usize> = None;
+            for rsu_idx in 0..num_rsu {
+                if !state.rsu_awards[rsu_idx].profile_expanded { continue; }
+                let row = &mut state.rsu_awards[rsu_idx];
+                Frame::none()
+                    .fill(Color32::from_rgba_unmultiplied(80, 50, 120, 40))
+                    .inner_margin(egui::Margin::same(6.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(format!(
+                                "📊 {} Return Profile  (RSU — single stock)",
+                                if row.ticker.is_empty() { "[unset]" } else { row.ticker.as_str() }
+                            )).small().strong());
+                            ui.add_space(10.0);
+                            ui.checkbox(&mut row.use_detailed_profile, "Use detailed return profile")
+                                .on_hover_text("When on, the engine seeds the post-vest Asset's growth and dividend yield from the component fields below.");
+                            ui.add_space(10.0);
+                            if ui.small_button("✨ Auto-Fetch")
+                                .on_hover_text(
+                                    "Fetch Cap Growth (10y price CAGR) and Dividend Yield (TTM) \
+                                     from Yahoo Finance. Single-stock RSUs do not have expense \
+                                     ratios or capital-gains distributions."
+                                )
+                                .clicked()
+                            {
+                                rsu_auto_fill_profile = Some(rsu_idx);
+                            }
+                        });
+                        ui.label(RichText::new(
+                            "Annual percentages. NAV growth, interest, cap-gains distributions, \
+                             expense ratio, ROC, and special distributions do not apply to \
+                             single-stock awards."
+                        ).small().color(Color32::GRAY));
+                        let enabled = row.use_detailed_profile;
+                        ui.add_enabled_ui(enabled, |ui| {
+                            egui::Grid::new(egui::Id::new("g_rsu_profile").with(rsu_idx))
+                                .num_columns(4)
+                                .spacing([16.0, 4.0])
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new("Cap Growth % (price):").small().strong())
+                                        .on_hover_text("Annual price-only capital appreciation, excluding dividends.");
+                                    ui.add(egui::TextEdit::singleline(&mut row.cap_growth_pct)
+                                        .hint_text("e.g. 12.0").desired_width(64.0)
+                                        .id(egui::Id::new("rcg").with(rsu_idx)));
+                                    ui.label(RichText::new("Dividend Yield %:").small().strong())
+                                        .on_hover_text("Annual recurring dividend distributions. Routed through the §904 passive basket.");
+                                    ui.add(egui::TextEdit::singleline(&mut row.dividend_yield_pct)
+                                        .hint_text("e.g. 1.2").desired_width(64.0)
+                                        .id(egui::Id::new("rdy").with(rsu_idx)));
+                                    ui.end_row();
+                                });
+                        });
+                        let f = |s: &str| s.trim().parse::<f64>().unwrap_or(0.0);
+                        let cg  = f(&row.cap_growth_pct);
+                        let div = f(&row.dividend_yield_pct);
+                        ui.add_space(2.0);
+                        ui.label(RichText::new(format!(
+                            "Total Return ≈ {:.2}% (price {:+.2}% + dividends {:.2}%)",
+                            cg + div, cg, div
+                        )).small().color(Color32::from_rgb(140, 200, 240)));
+                    });
+            }
+
+            // Deferred mutations for RSU rows.
+            if let Some(idx) = rsu_auto_fill_simple {
+                if idx < state.rsu_awards.len() {
+                    let ticker = state.rsu_awards[idx].ticker.clone();
+                    if !ticker.is_empty() {
+                        let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
+                        let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
+                        let row = &mut state.rsu_awards[idx];
+                        row.unit_value = format!("{:.2}", price);
+                        row.growth_pct = format!("{:.1}", cagr * 100.0);
+                    }
+                }
+            }
+            if let Some(idx) = rsu_toggle_profile {
+                if idx < state.rsu_awards.len() {
+                    let row = &mut state.rsu_awards[idx];
+                    if row.profile_expanded {
+                        row.profile_expanded = false;
+                    } else {
+                        row.profile_expanded = true;
+                        row.use_detailed_profile = true;
+                    }
+                }
+            }
+            if let Some(idx) = rsu_auto_fill_profile {
+                if idx < state.rsu_awards.len() {
+                    let ticker = state.rsu_awards[idx].ticker.clone();
+                    if !ticker.is_empty() {
+                        let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker);
+                        let row = &mut state.rsu_awards[idx];
+                        row.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0);
+                        row.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
+                        row.use_detailed_profile = true;
+                    }
+                }
             }
         } else {
             ui.label(RichText::new("No RSU awards. Click '+ Add RSU Award' to add a tranche.")

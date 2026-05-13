@@ -116,6 +116,11 @@ impl RsuEngine {
         events
     }
 
+    /// V7.7 — Read-only access to the underlying awards (for per-ticker overrides).
+    pub fn awards_iter(&self) -> impl Iterator<Item = &RsuAward> {
+        self.awards.iter()
+    }
+
     /// Returns all vesting events that fall within the given month.
     pub fn events_for_month(&self, date: NaiveDate) -> Vec<&VestingEvent> {
         self.vesting_schedule
@@ -190,6 +195,9 @@ mod tests {
             vesting_months: months,
             vesting_cadence: VestingCadence::Quarterly,
             cliff_vest_months: 0,
+            unit_value: None,
+            growth_rate: None,
+            return_profile: None,
         }
     }
 
@@ -244,6 +252,9 @@ mod tests {
             vesting_months: vec![],
             vesting_cadence: VestingCadence::Monthly,
             cliff_vest_months: 0,
+            unit_value: None,
+            growth_rate: None,
+            return_profile: None,
         };
         let engine = RsuEngine::new(vec![award], None);
         assert_eq!(engine.vesting_schedule.len(), 12);
@@ -261,6 +272,9 @@ mod tests {
             vesting_months: vec![],
             vesting_cadence: VestingCadence::Annually,
             cliff_vest_months: 0,
+            unit_value: None,
+            growth_rate: None,
+            return_profile: None,
         };
         let engine = RsuEngine::new(vec![award], None);
         assert_eq!(engine.vesting_schedule.len(), 4);
@@ -278,6 +292,9 @@ mod tests {
             vesting_months: vec![1],
             vesting_cadence: VestingCadence::Annually,
             cliff_vest_months: 0,
+            unit_value: None,
+            growth_rate: None,
+            return_profile: None,
         };
         let engine = RsuEngine::new(vec![award], None);
         assert_eq!(engine.vesting_schedule[0].date.year(), 2025);
