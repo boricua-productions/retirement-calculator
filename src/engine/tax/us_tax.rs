@@ -176,6 +176,62 @@ impl TaxEngine {
         }
     }
 
+    /// V7.6 — §904 basket-aware FTC. Splits Japan tax into a passive bucket
+    /// (dividends, interest, cap-gains distributions, cap gains, PFIC §1296 MTM)
+    /// and a general bucket (FERS, SS, SSDI, RSU vest), capping each at its
+    /// own §904 limit so passive credit cannot bleed into the general basket
+    /// and vice versa.
+    ///
+    /// `gross_ord_general` — FERS / SS / SSDI / RSU vest (general basket).
+    /// `gross_ord_passive` — PFIC §1296 MTM + interest + special distributions.
+    /// `gross_st_cap`      — short-term capital gains (passive).
+    /// `gross_lt_cap`      — long-term capital gains + dividends (passive).
+    /// `japan_tax_passive_usd` / `japan_tax_general_usd` — pre-split Japan tax.
+    pub fn calculate_liability_with_basket_ftc(
+        &self,
+        year: i32,
+        gross_ord_general: f64,
+        gross_ord_passive: f64,
+        gross_st_cap: f64,
+        gross_lt_cap: f64,
+        japan_tax_passive_usd: f64,
+        japan_tax_general_usd: f64,
+    ) -> TaxLiability {
+        let total_ord = gross_ord_general + gross_ord_passive;
+
+        // Step 1 — compute federal tax pre-FTC on the lumped income.
+        let pre_ftc = self.calculate_liability(year, total_ord, gross_st_cap, gross_lt_cap);
+        // Federal portion before state and before any FTC. Equal to total_tax - state_tax.
+        let federal_before_ftc = (pre_ftc.total_tax - pre_ftc.state_tax).max(0.0);
+
+        // Step 2 — per-basket §904 limits.
+        let passive_income = gross_ord_passive + gross_st_cap + gross_lt_cap;
+        let general_income = gross_ord_general;
+        let (passive_lim, general_lim) =
+            compute_ftc_basket_limits(federal_before_ftc, passive_income, general_income);
+
+        // Step 3 — cap each basket's credit at its own §904 limit.
+        let passive_ftc = japan_tax_passive_usd.min(passive_lim);
+        let general_ftc = japan_tax_general_usd.min(general_lim);
+        let total_ftc   = passive_ftc + general_ftc;
+
+        let federal_after_ftc = (federal_before_ftc - total_ftc).max(0.0);
+
+        let mut breakdown = pre_ftc.breakdown.clone();
+        breakdown.insert("ftc_passive".into(), passive_ftc);
+        breakdown.insert("ftc_general".into(), general_ftc);
+        breakdown.insert("ftc_applied".into(), total_ftc);
+
+        TaxLiability {
+            total_tax: federal_after_ftc + pre_ftc.state_tax,
+            breakdown,
+            state_tax: pre_ftc.state_tax,
+            ftc_applied: total_ftc,
+            feie_exclusion: 0.0,
+            feie_applied: false,
+        }
+    }
+
     /// Calculate using the FEIE → Federal Tax → FTC pipeline.
     ///
     /// Pipeline (IRS Form 2555 / IRC §904 compliant):

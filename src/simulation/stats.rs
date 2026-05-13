@@ -87,6 +87,20 @@ pub struct AnnualStats {
     /// V7.5 — PFIC §1296 mark-to-market gain for the year (USD).
     /// Taxed as ordinary income; NOT FEIE-eligible (passive income, §911(d)(2)).
     pub year_pfic_mtm_income_usd: f64,
+    /// V7.6 — PFIC-flagged capital-gains distributions (ordinary, passive basket).
+    /// Distinct from MTM: this is pass-through CGD from a §1296-flagged fund.
+    /// Accumulated by the dividend handler; consumed at year-end true-up.
+    pub year_pfic_ord_income_usd: f64,
+    /// V7.6 — Passive-basket ordinary income from interest + special distributions.
+    /// Routed to the §904 passive basket; ordinary stack on the federal side.
+    pub year_passive_ord_income_usd: f64,
+    /// V7.6 — Component breakdown of taxable dividends (USD, for audit reporting).
+    pub year_dist_dividend_usd: f64,
+    pub year_dist_interest_usd: f64,
+    pub year_dist_cap_gains_usd: f64,
+    pub year_dist_special_usd: f64,
+    /// V7.6 — Return-of-Capital cash received this year (non-taxable; basis-reducing).
+    pub year_dist_roc_usd: f64,
     /// V7.5 — JPY diverted into the Tier 9 Gift Sink this year.
     pub year_gift_sink_jpy: f64,
     /// V7.5 — true if any per-recipient gift exceeded the US $19k exclusion

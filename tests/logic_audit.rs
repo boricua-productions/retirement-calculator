@@ -190,6 +190,8 @@ fn taxable_with_inventory(qty: f64) -> Account {
         dividend_currency: DividendCurrency::Usd,
         pfic_regime: retirement_calculator::models::assets::PficRegime::NotPfic,
         pfic_prior_year_fmv_per_share: 0.0,
+        asset_class: retirement_calculator::models::assets::AssetClass::default(),
+        return_profile: None,
         lots: vec![],
     };
     asset.add_lot(iso(2020, 1, 1), qty, qty * SHARE_PRICE * 0.5);

@@ -1,29 +1,107 @@
 use chrono::{Datelike, NaiveDate};
-use log::info;
+use log::{info, warn};
 
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::us_tax::TaxEngine;
 use crate::handlers::cashflow_manager::JAPAN_CAPITAL_GAINS_RATE;
-use crate::models::assets::DividendCurrency;
+use crate::models::assets::{Account, DividendCurrency, PficRegime};
 use crate::models::config::{Config, TaxProtocol};
 use crate::simulation::state::SimState;
 
-/// V7.1 — Processes lumpy dividends for all accounts.
+/// V7.6 — Component classification for a single distribution event.
+/// Determines §904 basket routing and PFIC §1296 treatment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DistributionComponent {
+    /// Qualified/ordinary dividend. Passive §904 basket.
+    Dividend,
+    /// Interest distribution. Passive basket, ordinary US stack.
+    Interest,
+    /// Capital-gains distribution (mutual-fund pass-through).
+    /// PFIC §1296 → ordinary passive basket; otherwise LTCG.
+    CapGainsDist,
+    /// Special / non-recurring distribution. Treated as ordinary dividend.
+    Special,
+    /// Return of Capital. Non-taxable; reduces basis. Never enters tax stacks.
+    Roc,
+}
+
+/// V7.6 — A single component-typed distribution event for one asset in one month.
+#[derive(Debug, Clone)]
+pub struct DistributionEvent {
+    pub ticker: String,
+    pub currency: DividendCurrency,
+    pub gross: f64,
+    pub component: DistributionComponent,
+    pub drip_enabled: bool,
+    pub reinvest_target: Option<String>,
+    /// `true` when the source asset has PFIC §1296 MTM regime — cap-gains
+    /// distributions from such an asset route to the ordinary basket.
+    pub is_pfic_mtm: bool,
+}
+
+/// V7.6 — Build the per-month distribution events for an account.
 ///
-/// Each asset now specifies `dividend_months: Vec<u32>` (the calendar months in
-/// which it pays). An asset only fires in a month that appears in that list — no
-/// dividend smoothing. The gross per event is:
-///   `market_value × annual_yield / dividend_months.len()`
+/// Profile-aware: when the asset has a `return_profile`, up to five component
+/// events fire (one per non-zero component). When `return_profile` is `None`,
+/// the legacy single-event path runs — same dividend amount as pre-V7.6.
+/// Exposed `pub` so the V7.6 distribution-routing tests can verify the
+/// per-component split without needing a full SimState.
+pub fn collect_distribution_events(account: &Account, mo: u32) -> Vec<DistributionEvent> {
+    let mut out: Vec<DistributionEvent> = Vec::new();
+    for a in account.assets.values() {
+        if a.qty() <= 0.0 || a.price <= 0.0 || !a.dividend_months.contains(&mo) {
+            continue;
+        }
+        let n = a.dividend_months.len().max(1) as f64;
+        let mv = a.qty() * a.price;
+        let is_pfic_mtm = a.pfic_regime == PficRegime::Mtm;
+        let drip = a.drip_enabled;
+        let target = a.dividend_reinvest_target.clone();
+        let cur = a.dividend_currency.clone();
+
+        let mut push = |rate: f64, c: DistributionComponent| {
+            if rate > 0.0 {
+                out.push(DistributionEvent {
+                    ticker: a.ticker.clone(),
+                    currency: cur.clone(),
+                    gross: mv * rate / n,
+                    component: c,
+                    drip_enabled: drip,
+                    reinvest_target: target.clone(),
+                    is_pfic_mtm,
+                });
+            }
+        };
+
+        if a.return_profile.is_some() {
+            push(a.dividend_yield_rate(),  DistributionComponent::Dividend);
+            push(a.interest_yield_rate(),  DistributionComponent::Interest);
+            push(a.cap_gains_dist_rate(),  DistributionComponent::CapGainsDist);
+            push(a.special_dist_rate(),    DistributionComponent::Special);
+            push(a.roc_rate(),             DistributionComponent::Roc);
+        } else if a.yield_rate > 0.0 {
+            // Legacy path: yield_rate maps entirely to Dividend component.
+            push(a.yield_rate, DistributionComponent::Dividend);
+        }
+    }
+    out
+}
+
+/// V7.6 — Processes component-typed distributions for all accounts.
 ///
 /// Currency routing (JPY-first, no FX churn):
-///   - USD dividends (DividendCurrency::Usd): taxed via US marginal rate,
-///     net stored in `state.current_month_div_net_usd`.
-///   - JPY dividends (DividendCurrency::Jpy): taxed at Japan 20.315% CG rate
-///     (0% for DC account — tax-free), net stored in
-///     `state.current_month_div_net_jpy`.
+///   - USD events: tax via US marginal rate (passive basket); net → `state.current_month_div_net_usd`.
+///   - JPY events: Japan 20.315% CG rate (0% for tax-free); net → `state.current_month_div_net_jpy`.
 ///
-/// Roth / DC DRIP: always reinvested, no tax, respects each asset's
-/// `dividend_months` list.
+/// Component routing:
+///   - Dividend / Special  → standard dividend flow.
+///   - Interest            → standard flow + `year_passive_ord_income_usd` accumulator.
+///   - CapGainsDist        → PFIC MTM → `year_pfic_ord_income_usd`; else `year_cap_gains`.
+///   - Roc                 → non-taxable; reduces basis via `apply_roc_basis_reduction`;
+///                            excess above basis routed to `year_cap_gains` as LTCG.
+///
+/// Roth / DC DRIP: always reinvested, no tax. ROC inside tax-advantaged accounts
+/// still reduces basis (preserves correct exit-tax math) but the cash reinvests.
 ///
 /// Returns `(net_usd, net_jpy)` — the caller stores both into SimState.
 pub fn handle_dividends(
@@ -45,151 +123,264 @@ pub fn handle_dividends(
     let mut div_net_usd = 0.0_f64;
     let mut div_net_jpy = 0.0_f64;
 
-    // ── Taxable account dividends ─────────────────────────────────────────────
-    // Collect per-asset data to avoid borrow-checker conflicts during mutation.
-    let taxable_events: Vec<(String, f64, f64, f64, bool, Option<String>, DividendCurrency, Vec<u32>)> = {
-        let taxable = match state.accounts.get("Taxable") {
-            Some(a) => a,
-            None => return (0.0, 0.0),
-        };
-        taxable.assets.values()
-            .filter(|a| {
-                a.yield_rate > 0.0
-                    && a.qty() > 0.0
-                    && a.price > 0.0
-                    && a.dividend_months.contains(&mo)   // lumpy: only paying months
-            })
-            .map(|a| (
-                a.ticker.clone(),
-                a.qty(),
-                a.price,
-                a.yield_rate,
-                a.drip_enabled,
-                a.dividend_reinvest_target.clone(),
-                a.dividend_currency.clone(),
-                a.dividend_months.clone(),
-            ))
-            .collect()
+    // ── Taxable account distributions ─────────────────────────────────────────
+    let taxable_events: Vec<DistributionEvent> = match state.accounts.get("Taxable") {
+        Some(a) => collect_distribution_events(a, mo),
+        None    => return (0.0, 0.0),
     };
 
-    for (ticker, qty, price, yield_rate, drip_enabled, reinvest_target, div_currency, div_months) in taxable_events {
-        let n_events = div_months.len().max(1) as f64;
-        let gross    = qty * price * (yield_rate / n_events);
+    for ev in taxable_events {
+        match ev.component {
+            // ── ROC: non-taxable, reduce basis, route net cash to waterfall ──
+            DistributionComponent::Roc => {
+                let fx = state.current_fx;
+                let (excess_usd, ticker_log) = if let Some(acc) = state.accounts.get_mut("Taxable") {
+                    if let Some(asset) = acc.assets.get_mut(&ev.ticker) {
+                        match ev.currency {
+                            DividendCurrency::Usd => (
+                                asset.apply_roc_basis_reduction(ev.gross, fx),
+                                ev.ticker.clone(),
+                            ),
+                            DividendCurrency::Jpy => {
+                                // JPY-denominated ROC is uncommon; log and skip
+                                // the basis reduction to avoid currency-mixing.
+                                warn!(
+                                    "   [DIV ROC JPY] {}: ROC on JPY asset not modelled; \
+                                     routing as untaxed cash without basis reduction.",
+                                    ev.ticker,
+                                );
+                                (0.0, ev.ticker.clone())
+                            }
+                        }
+                    } else { (0.0, ev.ticker.clone()) }
+                } else { (0.0, ev.ticker.clone()) };
 
-        match div_currency {
-            DividendCurrency::Usd => {
-                state.stats.year_div_gross += gross;
-                state.stats.acc_div_inc    += gross;
+                if excess_usd > 0.0 {
+                    state.stats.year_cap_gains += excess_usd;
+                    // Japan-first: passive-basket CG tax on the excess.
+                    let jp_tax_usd = excess_usd * JAPAN_CAPITAL_GAINS_RATE;
+                    state.stats.year_japan_cap_gains_tax_jpy += jp_tax_usd * fx;
+                }
 
-                let est_ord = estimate_annual_ord_income(state, yr);
-                let gains_pre  = state.stats.year_div_gross + state.stats.year_cap_gains - gross;
-                let gains_post = state.stats.year_div_gross + state.stats.year_cap_gains;
-                let tax_due = if cfg.tax_jurisdiction != TaxProtocol::JapanOnly {
-                    let pre  = tax_engine.calculate_liability(yr, est_ord, 0.0, gains_pre).total_tax;
-                    let post = tax_engine.calculate_liability(yr, est_ord, 0.0, gains_post).total_tax;
-                    (post - pre).max(0.0)
-                } else {
-                    0.0
+                state.stats.year_dist_roc_usd += match ev.currency {
+                    DividendCurrency::Usd => ev.gross,
+                    DividendCurrency::Jpy => ev.gross / fx,
                 };
 
-                if !is_retired {
-                    if tax_due > 0.0 {
-                        state.stats.tax_paid_external += tax_due;
-                        state.stats.year_div_tax += tax_due;
-                    }
-                    let reinvest_ticker = if is_schd_pivot {
-                        "SCHD".to_string()
-                    } else {
-                        reinvest_target.unwrap_or_else(|| ticker.clone())
-                    };
-                    if drip_enabled || is_schd_pivot {
-                        let fp = MarketDataService::fallback_price(&reinvest_ticker);
-                        let fg = MarketDataService::fallback_growth(&reinvest_ticker);
-                        if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                            taxable.buy(&reinvest_ticker, gross, current_date, fp, fg);
+                // ROC cash: DRIP reinvests; otherwise routes to net.
+                match ev.currency {
+                    DividendCurrency::Usd => {
+                        if ev.drip_enabled && !is_retired {
+                            let target = ev.reinvest_target.clone()
+                                .unwrap_or_else(|| ev.ticker.clone());
+                            let fp = MarketDataService::fallback_price(&target);
+                            let fg = MarketDataService::fallback_growth(&target);
+                            if let Some(taxable) = state.accounts.get_mut("Taxable") {
+                                taxable.buy(&target, ev.gross, current_date, fp, fg);
+                            }
+                        } else {
+                            div_net_usd += ev.gross;
                         }
-                    } else {
-                        div_net_usd += gross;
                     }
-                } else {
-                    let net = gross - tax_due;
-                    div_net_usd += net;
-                    if tax_due > 0.0 {
-                        state.stats.year_tax_routed += tax_due;
-                        state.stats.year_div_tax    += tax_due;
+                    DividendCurrency::Jpy => {
+                        if ev.drip_enabled && !is_retired {
+                            let fp = MarketDataService::fallback_price(&ev.ticker);
+                            let fg = MarketDataService::fallback_growth(&ev.ticker);
+                            if let Some(taxable) = state.accounts.get_mut("Taxable") {
+                                taxable.buy(&ev.ticker, ev.gross, current_date, fp, fg);
+                            }
+                        } else {
+                            div_net_jpy += ev.gross;
+                        }
                     }
-                    info!("   [DIV USD] {} div=${:.2} tax=${:.2} net=${:.2}", ticker, gross, tax_due, net);
                 }
+                info!("   [DIV ROC] {} cur={:?} gross={:.2} excess_ltcg={:.2}",
+                    ticker_log, ev.currency, ev.gross, excess_usd);
             }
 
-            DividendCurrency::Jpy => {
-                // JPY dividends: taxed at Japan 20.315% (or 0% for NISA/iDeCo-like holdings
-                // that carry AccountJurisdiction::None). We approximate NISA by checking
-                // whether the Taxable account's jurisdiction is None; otherwise apply CG rate.
-                let is_tax_free = state.accounts.get("Taxable")
-                    .map(|a| a.tax_jurisdiction == crate::models::assets::AccountJurisdiction::None)
-                    .unwrap_or(false);
-
-                let tax_jpy = if is_retired && !is_tax_free {
-                    gross * JAPAN_CAPITAL_GAINS_RATE
-                } else {
-                    0.0
-                };
-                let net_jpy = gross - tax_jpy;
-
-                // gross in JPY → convert to USD-equivalent for year_div_gross stat.
-                let fx = state.current_fx;
-                state.stats.year_div_gross += gross / fx;
-                state.stats.acc_div_inc    += gross / fx;
-
-                if !is_retired {
-                    // Pre-retirement: DRIP in native JPY (buy more of the same JPY asset).
-                    if drip_enabled || is_schd_pivot {
-                        let fp = MarketDataService::fallback_price(&ticker);
-                        let fg = MarketDataService::fallback_growth(&ticker);
-                        if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                            taxable.buy(&ticker, gross, current_date, fp, fg);
-                        }
-                    } else {
-                        div_net_jpy += gross;
-                    }
-                } else {
-                    div_net_jpy += net_jpy;
-                    if tax_jpy > 0.0 {
-                        state.stats.year_japan_cap_gains_tax_jpy += tax_jpy;
-                    }
-                    info!("   [DIV JPY] {} div=¥{:.0} tax=¥{:.0} net=¥{:.0}", ticker, gross, tax_jpy, net_jpy);
-                }
+            // ── Dividend / Interest / Special / CapGainsDist ──────────────────
+            // All share the same per-event tax/DRIP/net flow; they differ only
+            // in which annual-stat bucket the gross feeds (driving §904 basket
+            // routing at year-end true-up).
+            _ => {
+                let (net_usd_add, net_jpy_add) = process_taxable_dist_event(
+                    state, cfg, tax_engine, &estimate_annual_ord_income,
+                    yr, is_retired, is_schd_pivot, current_date, &ev,
+                );
+                div_net_usd += net_usd_add;
+                div_net_jpy += net_jpy_add;
             }
         }
     }
 
     // ── Roth DRIP (always reinvest, no tax, respects dividend_months) ─────────
-    {
-        let events: Vec<(String, f64, f64, f64, Vec<u32>)> = {
-            let acc = match state.accounts.get("Roth") {
-                Some(a) => a,
-                None => { return finish_dc_drip(state, current_date, mo, div_net_usd, div_net_jpy); }
+    process_drip_account(state, current_date, mo, "Roth");
+
+    finish_dc_drip(state, current_date, mo, div_net_usd, div_net_jpy)
+}
+
+/// V7.6 — Process a single non-ROC distribution event in the Taxable account.
+/// Handles US/JPY currency split, marginal tax estimation, DRIP vs net routing.
+/// Returns the `(net_usd, net_jpy)` increment for this single event.
+fn process_taxable_dist_event(
+    state: &mut SimState,
+    cfg: &Config,
+    tax_engine: &TaxEngine,
+    estimate_annual_ord_income: &impl Fn(&SimState, i32) -> f64,
+    yr: i32,
+    is_retired: bool,
+    is_schd_pivot: bool,
+    current_date: NaiveDate,
+    ev: &DistributionEvent,
+) -> (f64, f64) {
+    let gross = ev.gross;
+    let fx = state.current_fx;
+    let mut net_usd_add = 0.0_f64;
+    let mut net_jpy_add = 0.0_f64;
+
+    // Component-stat tagging (drives year-end §904 basket split).
+    let gross_usd_equiv = match ev.currency {
+        DividendCurrency::Usd => gross,
+        DividendCurrency::Jpy => gross / fx,
+    };
+    match ev.component {
+        DistributionComponent::Dividend => {
+            state.stats.year_dist_dividend_usd += gross_usd_equiv;
+        }
+        DistributionComponent::Interest => {
+            state.stats.year_dist_interest_usd += gross_usd_equiv;
+            state.stats.year_passive_ord_income_usd += gross_usd_equiv;
+        }
+        DistributionComponent::CapGainsDist => {
+            state.stats.year_dist_cap_gains_usd += gross_usd_equiv;
+            if ev.is_pfic_mtm {
+                // PFIC §1296 → ordinary passive basket. NOT added to year_cap_gains.
+                state.stats.year_pfic_ord_income_usd += gross_usd_equiv;
+            } else {
+                state.stats.year_cap_gains += gross_usd_equiv;
+            }
+        }
+        DistributionComponent::Special => {
+            state.stats.year_dist_special_usd += gross_usd_equiv;
+            state.stats.year_passive_ord_income_usd += gross_usd_equiv;
+        }
+        DistributionComponent::Roc => unreachable!("ROC handled in caller"),
+    }
+
+    match ev.currency {
+        DividendCurrency::Usd => {
+            state.stats.year_div_gross += gross;
+            state.stats.acc_div_inc    += gross;
+
+            // Marginal US withhold estimate (same approach as V7.5).
+            let est_ord = estimate_annual_ord_income(state, yr);
+            let gains_pre  = state.stats.year_div_gross + state.stats.year_cap_gains - gross;
+            let gains_post = state.stats.year_div_gross + state.stats.year_cap_gains;
+            let tax_due = if cfg.tax_jurisdiction != TaxProtocol::JapanOnly {
+                let pre  = tax_engine.calculate_liability(yr, est_ord, 0.0, gains_pre).total_tax;
+                let post = tax_engine.calculate_liability(yr, est_ord, 0.0, gains_post).total_tax;
+                (post - pre).max(0.0)
+            } else {
+                0.0
             };
-            acc.assets.values()
-                .filter(|a| a.yield_rate > 0.0 && a.qty() > 0.0 && a.dividend_months.contains(&mo))
-                .map(|a| (a.ticker.clone(), a.qty(), a.price, a.yield_rate, a.dividend_months.clone()))
-                .collect()
-        };
-        for (ticker, qty, price, yield_rate, div_months) in events {
-            let n = div_months.len().max(1) as f64;
-            let div = qty * price * (yield_rate / n);
-            if div > 0.0 {
-                let fp = MarketDataService::fallback_price(&ticker);
-                let fg = MarketDataService::fallback_growth(&ticker);
-                if let Some(acc) = state.accounts.get_mut("Roth") {
-                    acc.buy(&ticker, div, current_date, fp, fg);
+
+            if !is_retired {
+                if tax_due > 0.0 {
+                    state.stats.tax_paid_external += tax_due;
+                    state.stats.year_div_tax += tax_due;
                 }
+                let reinvest_ticker = if is_schd_pivot {
+                    "SCHD".to_string()
+                } else {
+                    ev.reinvest_target.clone().unwrap_or_else(|| ev.ticker.clone())
+                };
+                if ev.drip_enabled || is_schd_pivot {
+                    let fp = MarketDataService::fallback_price(&reinvest_ticker);
+                    let fg = MarketDataService::fallback_growth(&reinvest_ticker);
+                    if let Some(taxable) = state.accounts.get_mut("Taxable") {
+                        taxable.buy(&reinvest_ticker, gross, current_date, fp, fg);
+                    }
+                } else {
+                    net_usd_add += gross;
+                }
+            } else {
+                let net = gross - tax_due;
+                net_usd_add += net;
+                if tax_due > 0.0 {
+                    state.stats.year_tax_routed += tax_due;
+                    state.stats.year_div_tax    += tax_due;
+                }
+                info!("   [DIV USD {:?}] {} div=${:.2} tax=${:.2} net=${:.2}",
+                    ev.component, ev.ticker, gross, tax_due, net);
+            }
+        }
+
+        DividendCurrency::Jpy => {
+            let is_tax_free = state.accounts.get("Taxable")
+                .map(|a| a.tax_jurisdiction == crate::models::assets::AccountJurisdiction::None)
+                .unwrap_or(false);
+
+            let tax_jpy = if is_retired && !is_tax_free {
+                gross * JAPAN_CAPITAL_GAINS_RATE
+            } else {
+                0.0
+            };
+            let net_jpy = gross - tax_jpy;
+
+            state.stats.year_div_gross += gross / fx;
+            state.stats.acc_div_inc    += gross / fx;
+
+            if !is_retired {
+                if ev.drip_enabled || is_schd_pivot {
+                    let fp = MarketDataService::fallback_price(&ev.ticker);
+                    let fg = MarketDataService::fallback_growth(&ev.ticker);
+                    if let Some(taxable) = state.accounts.get_mut("Taxable") {
+                        taxable.buy(&ev.ticker, gross, current_date, fp, fg);
+                    }
+                } else {
+                    net_jpy_add += gross;
+                }
+            } else {
+                net_jpy_add += net_jpy;
+                if tax_jpy > 0.0 {
+                    state.stats.year_japan_cap_gains_tax_jpy += tax_jpy;
+                }
+                info!("   [DIV JPY {:?}] {} div=¥{:.0} tax=¥{:.0} net=¥{:.0}",
+                    ev.component, ev.ticker, gross, tax_jpy, net_jpy);
             }
         }
     }
 
-    finish_dc_drip(state, current_date, mo, div_net_usd, div_net_jpy)
+    (net_usd_add, net_jpy_add)
+}
+
+/// V7.6 — DRIP an account's distribution events in place. Tax-advantaged
+/// accounts (Roth, DC) reinvest all components into the source asset; ROC
+/// still reduces basis (preserves exit-tax math) before the reinvestment.
+fn process_drip_account(state: &mut SimState, current_date: NaiveDate, mo: u32, name: &str) {
+    let events: Vec<DistributionEvent> = match state.accounts.get(name) {
+        Some(a) => collect_distribution_events(a, mo),
+        None    => return,
+    };
+    let fx = state.current_fx;
+    for ev in events {
+        if matches!(ev.component, DistributionComponent::Roc) {
+            if let Some(acc) = state.accounts.get_mut(name) {
+                if let Some(asset) = acc.assets.get_mut(&ev.ticker) {
+                    if matches!(ev.currency, DividendCurrency::Usd) {
+                        asset.apply_roc_basis_reduction(ev.gross, fx);
+                    }
+                }
+            }
+        }
+        if ev.gross > 0.0 {
+            let fp = MarketDataService::fallback_price(&ev.ticker);
+            let fg = MarketDataService::fallback_growth(&ev.ticker);
+            if let Some(acc) = state.accounts.get_mut(name) {
+                acc.buy(&ev.ticker, ev.gross, current_date, fp, fg);
+            }
+        }
+    }
 }
 
 /// Processes DC DRIP then returns the (usd, jpy) dividend tuple.
@@ -200,30 +391,7 @@ fn finish_dc_drip(
     div_net_usd: f64,
     div_net_jpy: f64,
 ) -> (f64, f64) {
-    // ── Japan DC DRIP (always reinvest, tax-free, respects dividend_months) ───
-    {
-        let events: Vec<(String, f64, f64, f64, Vec<u32>)> = {
-            let acc = match state.accounts.get("DC") {
-                Some(a) => a,
-                None => return (div_net_usd, div_net_jpy),
-            };
-            acc.assets.values()
-                .filter(|a| a.yield_rate > 0.0 && a.qty() > 0.0 && a.dividend_months.contains(&mo))
-                .map(|a| (a.ticker.clone(), a.qty(), a.price, a.yield_rate, a.dividend_months.clone()))
-                .collect()
-        };
-        for (ticker, qty, price, yield_rate, div_months) in events {
-            let n = div_months.len().max(1) as f64;
-            let div = qty * price * (yield_rate / n);
-            if div > 0.0 {
-                let fp = MarketDataService::fallback_price(&ticker);
-                let fg = MarketDataService::fallback_growth(&ticker);
-                if let Some(acc) = state.accounts.get_mut("DC") {
-                    acc.buy(&ticker, div, current_date, fp, fg);
-                }
-            }
-        }
-    }
+    process_drip_account(state, current_date, mo, "DC");
     (div_net_usd, div_net_jpy)
 }
 

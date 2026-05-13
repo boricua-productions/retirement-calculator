@@ -735,6 +735,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     dividend_currency,
                     pfic_regime,
                     pfic_prior_year_fmv_per_share: 0.0,
+                    asset_class: crate::models::assets::AssetClass::default(),
+                    return_profile: None,
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);
@@ -813,6 +815,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                             dividend_currency: div_currency,
                             pfic_regime: pfic_regime_b,
                             pfic_prior_year_fmv_per_share: 0.0,
+                            asset_class: crate::models::assets::AssetClass::default(),
+                            return_profile: None,
                             lots: Vec::new(),
                         };
                         asset.add_lot(start_date, qty, basis);
@@ -870,6 +874,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     dividend_currency: div_currency,
                     pfic_regime: crate::models::assets::PficRegime::NotPfic,
                     pfic_prior_year_fmv_per_share: 0.0,
+                    asset_class: crate::models::assets::AssetClass::default(),
+                    return_profile: None,
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);
@@ -900,6 +906,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             dividend_currency: DividendCurrency::Jpy,
             pfic_regime: crate::models::assets::PficRegime::NotPfic,
             pfic_prior_year_fmv_per_share: 0.0,
+            asset_class: crate::models::assets::AssetClass::default(),
+            return_profile: None,
             lots: Vec::new(),
         };
         tawara.add_lot(start_date, dc_qty, dc_qty * dc_nav);
