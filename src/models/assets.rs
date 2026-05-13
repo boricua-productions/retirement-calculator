@@ -102,6 +102,60 @@ pub enum PficRegime {
     ExcessDistribution,
 }
 
+/// V7.6 — Asset class drives distribution routing and PFIC defaults.
+/// Funds domiciled outside the US flow through the PFIC check; stocks bypass it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetClass {
+    #[default]
+    Stock,
+    Etf,
+    MutualFund,
+    Other,
+}
+
+/// V7.6 — Component-based return profile. Decomposes a flat yield into
+/// tax-aware sub-streams so the distribution handler can route each component
+/// through the correct §904 basket and §1296 check.
+///
+/// Invariants:
+///   - `cap_growth` is price-only; reinvested distributions are NOT baked in.
+///   - `nav_growth` is reserved for fund NAV accounting; stocks/ETFs leave at 0.
+///   - All yields are annual fractions (0.04 = 4%).
+///   - `expense_ratio` is deducted from `cap_growth` before the price update.
+///   - `roc` (Return of Capital) is non-taxable in the year received; it
+///     reduces both USD and JPY cost basis proportionally.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DetailedReturnProfile {
+    #[serde(default)]
+    pub cap_growth: f64,
+    #[serde(default)]
+    pub nav_growth: f64,
+    #[serde(default)]
+    pub dividend_yield: f64,
+    #[serde(default)]
+    pub interest_yield: f64,
+    #[serde(default)]
+    pub cap_gains_dist: f64,
+    #[serde(default)]
+    pub special_dist: f64,
+    #[serde(default)]
+    pub roc: f64,
+    #[serde(default)]
+    pub expense_ratio: f64,
+}
+
+impl DetailedReturnProfile {
+    /// Total annual taxable distribution yield (excludes ROC, which is basis return).
+    pub fn total_taxable_yield(&self) -> f64 {
+        self.dividend_yield + self.interest_yield + self.cap_gains_dist + self.special_dist
+    }
+    /// Net effective price growth after expense-ratio drag.
+    pub fn net_growth(&self) -> f64 {
+        (self.cap_growth - self.expense_ratio).max(-0.999)
+    }
+}
+
 /// A single tax lot of an asset, tracking purchase date and cost basis.
 /// Mirrors Python's `AssetLot` dataclass. Used for FIFO capital gains tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +210,15 @@ pub struct Asset {
     /// Initialized to cost basis per share on the first MTM mark.
     #[serde(default)]
     pub pfic_prior_year_fmv_per_share: f64,
+    /// V7.6 — Asset classification (Stock / Etf / MutualFund / Other).
+    /// Defaults to Stock for backward compatibility with pre-V7.6 configs.
+    #[serde(default)]
+    pub asset_class: AssetClass,
+    /// V7.6 — Component-based return profile. When `Some`, supersedes the flat
+    /// `yield_rate` / `growth_rate` fields for all per-month calculations.
+    /// When `None`, the legacy single-yield model is used (back-compat).
+    #[serde(default)]
+    pub return_profile: Option<DetailedReturnProfile>,
     /// All tax lots, maintained in FIFO (purchase date ascending) order.
     pub lots: Vec<AssetLot>,
 }
@@ -177,6 +240,8 @@ impl Asset {
             dividend_currency: DividendCurrency::Usd,
             pfic_regime: PficRegime::NotPfic,
             pfic_prior_year_fmv_per_share: 0.0,
+            asset_class: AssetClass::Stock,
+            return_profile: None,
             lots: Vec::new(),
         }
     }
@@ -199,6 +264,54 @@ impl Asset {
         self.custom_growth_rate.unwrap_or(self.growth_rate)
     }
 
+    /// V7.6 — Profile-aware effective price growth. Falls back to the legacy
+    /// `custom_growth_rate` / `growth_rate` path when no profile is attached.
+    pub fn effective_cap_growth(&self) -> f64 {
+        match &self.return_profile {
+            Some(p) => p.net_growth(),
+            None    => self.custom_growth_rate.unwrap_or(self.growth_rate),
+        }
+    }
+
+    /// V7.6 — Dividend (qualified/ordinary) yield. Passive §904 basket.
+    pub fn dividend_yield_rate(&self) -> f64 {
+        match &self.return_profile {
+            Some(p) => p.dividend_yield,
+            None    => self.yield_rate,  // legacy: all yield treated as dividends
+        }
+    }
+
+    /// V7.6 — Interest distribution yield. Passive §904 basket, ordinary US stack.
+    pub fn interest_yield_rate(&self) -> f64 {
+        self.return_profile.as_ref().map(|p| p.interest_yield).unwrap_or(0.0)
+    }
+
+    /// V7.6 — Capital-gains distribution yield (mutual-fund pass-through).
+    /// PFIC §1296 → ordinary basket; otherwise LTCG passive basket.
+    pub fn cap_gains_dist_rate(&self) -> f64 {
+        self.return_profile.as_ref().map(|p| p.cap_gains_dist).unwrap_or(0.0)
+    }
+
+    /// V7.6 — Special / non-recurring distribution yield.
+    pub fn special_dist_rate(&self) -> f64 {
+        self.return_profile.as_ref().map(|p| p.special_dist).unwrap_or(0.0)
+    }
+
+    /// V7.6 — Return-of-Capital yield. Non-taxable in the year received;
+    /// reduces cost basis (both USD and JPY).
+    pub fn roc_rate(&self) -> f64 {
+        self.return_profile.as_ref().map(|p| p.roc).unwrap_or(0.0)
+    }
+
+    /// V7.6 — Total taxable distribution yield (sum of all taxable components,
+    /// excluding ROC). Used by the Mode B oracle to size forward draws.
+    pub fn total_distribution_yield(&self) -> f64 {
+        match &self.return_profile {
+            Some(p) => p.total_taxable_yield(),
+            None    => self.yield_rate,
+        }
+    }
+
     /// Total shares across all lots.
     pub fn qty(&self) -> f64 {
         self.lots.iter().map(|l| l.qty).sum()
@@ -216,8 +329,10 @@ impl Asset {
     }
 
     /// Monthly compounded growth factor derived from the effective annual growth rate.
+    /// V7.6 — uses the profile-aware `effective_cap_growth()`, which subtracts the
+    /// expense ratio before compounding so the drag is automatic.
     pub fn monthly_growth_factor(&self) -> f64 {
-        (1.0 + self.effective_growth_rate()).powf(1.0 / 12.0)
+        (1.0 + self.effective_cap_growth()).powf(1.0 / 12.0)
     }
 
     /// Apply one month of price growth.
@@ -231,6 +346,40 @@ impl Asset {
         // Insert in sorted order to maintain FIFO invariant.
         let pos = self.lots.partition_point(|l| l.purchase_date <= lot.purchase_date);
         self.lots.insert(pos, lot);
+    }
+
+    /// V7.6 — Apply a Return-of-Capital event. ROC is non-taxable in the year
+    /// received and reduces both USD and JPY cost basis proportionally across
+    /// all FIFO lots. Any excess above total basis is returned as an LTCG
+    /// magnitude (USD) for the caller to route through the standard CG path.
+    ///
+    /// `fx_at_event` is used only to lazily sync `avg_jpy_basis_per_share` when
+    /// it has not yet been populated; the proportional reduction itself does
+    /// not depend on FX.
+    pub fn apply_roc_basis_reduction(&mut self, roc_usd: f64, fx_at_event: f64) -> f64 {
+        if roc_usd <= 0.0 || self.lots.is_empty() {
+            return 0.0;
+        }
+        let total_basis: f64 = self.lots.iter().map(|l| l.basis).sum();
+        if total_basis <= 0.0 {
+            return roc_usd;  // no basis to reduce — entire amount becomes gain
+        }
+        let absorbed = roc_usd.min(total_basis);
+        let excess   = (roc_usd - absorbed).max(0.0);
+        let ratio    = absorbed / total_basis;
+        for lot in &mut self.lots {
+            lot.basis *= 1.0 - ratio;
+        }
+        if self.avg_jpy_basis_per_share > 0.0 {
+            self.avg_jpy_basis_per_share *= 1.0 - ratio;
+        } else {
+            let q = self.qty();
+            if q > 0.0 {
+                let new_usd_per_share = self.lots.iter().map(|l| l.basis).sum::<f64>() / q;
+                self.avg_jpy_basis_per_share = new_usd_per_share * fx_at_event;
+            }
+        }
+        excess
     }
 }
 

@@ -97,6 +97,25 @@ pub struct AnnualSnapshot {
     pub year_gift_sink_jpy: f64,
     /// True if any per-recipient gift exceeded the US §2503(b) annual exclusion.
     pub year_form_709_required: bool,
+
+    // ── V7.6 — Tax Friction & component breakdown ────────────────────────────
+    /// Gross investment return this year before any taxes/expenses (USD).
+    /// = price growth (pre-expense-ratio) × avg portfolio value + total distributions.
+    #[serde(default)]
+    pub total_gross_return_usd: f64,
+    /// Net investment return after expense ratios and distribution taxes (USD).
+    #[serde(default)]
+    pub total_net_return_usd: f64,
+    /// Tax + expense friction (gross - net) for the year (USD). Surfaced so the
+    /// user can compare regimes without naming the underlying tax categories.
+    #[serde(default)]
+    pub tax_friction_usd: f64,
+    /// Distribution breakdown (USD). Audit-only — Overview rolls these into Dividends.
+    #[serde(default)] pub dist_dividend_usd: f64,
+    #[serde(default)] pub dist_interest_usd: f64,
+    #[serde(default)] pub dist_cap_gains_usd: f64,
+    #[serde(default)] pub dist_special_usd: f64,
+    #[serde(default)] pub dist_roc_usd: f64,
 }
 
 /// A quarterly solvency warning recorded when income < expenses for a quarter.

@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.5 Strategic Optimization Edition
+# Retirement Calculator — V7.6 Granular Returns Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.5 Strategic Optimization Edition)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.6 Granular Returns Edition)
 ---
 
 ## Beginner Quick Start
@@ -321,6 +321,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V7.6** | Granular Returns — **Component-Based Return Profile** on each asset (new optional `return_profile` with `cap_growth`, `nav_growth`, `dividend_yield`, `interest_yield`, `cap_gains_dist`, `special_dist`, `roc`, `expense_ratio`). **Asset Class** taxonomy (`Stock` / `Etf` / `MutualFund` / `Other`). **Return-of-Capital basis reduction** — ROC is non-taxable in the year received and reduces both USD and JPY cost basis proportionally across FIFO lots; excess above basis falls through to LTCG. **§904 basket-aware FTC** — new `calculate_liability_with_basket_ftc` actually wires the Passive/General split into the December true-up so passive credit (PFIC, dividends, cap gains) cannot leak into the General basket (FERS/SS). **Audit CSV** now exposes `TotalGrossReturn_USD`, `TotalNetReturn_USD`, `TaxFriction_USD`, and a five-column distribution breakdown (`Dist_Dividend_USD`, `Dist_Interest_USD`, `Dist_CapGains_USD`, `Dist_Special_USD`, `Dist_ROC_USD`). Pre-V7.6 scenarios with no `return_profile` produce identical numerics — fully back-compat. |
 | **V7.5** | Strategic Optimization — **PFIC §1296 MTM** ordinary-income routing (new `pfic_regime` field on assets). **Japan capital-loss carry-forward** (IT Act Art. 37-12-2): losses from V7.0 liquidations are now recorded and offset future NHI/resident-tax bases. **Tier 9 Gift Sink**: annual JPY surplus routed to 暦年贈与 recipients per-calendar-year with IRC §2503(b) Form 709 flagging. **Exit Tax Monitor** (Art. 60-2): warns when Japan-subject assets ≥ ¥100M and residency ≥ 5-of-10 years. **Ninki Keizoku** (任意継続): new `NinkiKeizoku` NHI model variant for Shakai Hoken continuation up to 24 months. **Stochastic FX** in Marco Polo: independent USD/JPY GBM path per iteration, P10/P50/P90 now also reported in JPY. **Tax-Loss Harvesting** (§1091 wash-sale aware): pre-waterfall handler fires in configurable active months. **Mode B oracle** now aware of T9 gift and education drains. |
 | **V7.4** | Logic Hardening — Resolved Jido Teate accrual drift (¥0 drift) and implemented 4-month preemptive buffer restocking for Mode B. |
 | **V7.3 Preview** | 👶 **Tier 0.5 Jido Teate** — bi-monthly Japanese child allowance (¥15k 0–3, ¥10k 3–18) joins the JPY floor. 🎓 **Tier 2.5 Education Fund** — dedicated JPY bucket accumulated from surplus (`edu_savings_jpy_monthly`); Education-tagged expenses bypass the main waterfall and fall through to T8. 🪖 **Dual Withdrawal Regimes** — `shielded` (Mode A: preserve equity, force minimum at cash-zero) vs `dynamic` (Mode B: proactive buffer restock with next-month dividend look-ahead). 💵 **Lumpy Dividend Defaults** — `MarketDataService::default_dividend_months` codifies quarterly cadences (VTI/SCHD/QQQM = [3,6,9,12]; BND = monthly; PANW = none). Tax-advantaged accounts (Roth/401k/iDeCo/NISA/DC) explicitly bypass the cashflow waterfall. |
@@ -349,7 +350,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V6.5)](#16-hardening--compliance-v65)
+16. [Hardening & Compliance (V7.6)](#16-hardening--compliance-v76)
 
 ---
 
@@ -788,10 +789,32 @@ Each holding in `taxable` and `roth_ira` carries:
 - **`drip_enabled`** — whether dividends are reinvested
 - **`dividend_reinvest_target`** — ticker to reinvest dividends into
 - **`custom_growth_rate`** — per-asset CAGR override
+- **`asset_class`** *(V7.6)* — `stock` / `etf` / `mutual_fund` / `other`; drives PFIC defaults and per-component routing
+- **`return_profile`** *(V7.6, optional)* — see below
 
 > **Cost basis is the user's responsibility.** The simulation uses FIFO lot accounting for
 > capital gains. An incorrect `avg_cost` will produce incorrect tax liability at rebalance
 > and during any deficit-driven forced liquidations.
+
+### V7.6 — Component-Based Return Profile
+
+The legacy `yield_rate` / `growth_rate` pair is a single flat number. V7.6 introduces an optional
+`return_profile` block that decomposes returns into tax-aware components so the engine can route
+each one through the correct §904 basket and §1296 check:
+
+| Component | Annual fraction | Tax behaviour |
+|-----------|----------------|---------------|
+| `cap_growth` | price appreciation | drives `Asset::grow()`; expense ratio is deducted before compounding |
+| `nav_growth` | NAV-only growth (fund accounting) | reserved; default `0` for stocks/ETFs |
+| `dividend_yield` | qualified/ordinary dividends | passive §904 basket |
+| `interest_yield` | interest distributions | passive basket, ordinary US stack |
+| `cap_gains_dist` | mutual-fund cap-gains pass-through | PFIC §1296 → ordinary passive; otherwise LTCG |
+| `special_dist` | non-recurring distributions | treated as ordinary dividend |
+| `roc` | return of capital | **non-taxable** in the year received; reduces basis proportionally; excess above basis falls to LTCG |
+| `expense_ratio` | fund internal cost | deducted from `cap_growth` before monthly compounding |
+
+When `return_profile` is absent, the legacy single-yield path runs unchanged — the V7.6 model is
+fully back-compat with pre-V7.6 scenario files.
 
 ### Live 10-year CAGR (`fetch_live_growth_rates: true`)
 
@@ -1220,7 +1243,7 @@ a user-selected audit CSV, defaulting to the filename `simulation_audit.csv`.
 Each button displays a **green** confirmation or **red** error (e.g., file locked in Excel)
 that auto-clears after 5 seconds.
 
-### Audit CSV column reference (36 columns)
+### Audit CSV column reference (44 columns)
 
 | Column | Unit | Description |
 |--------|------|-------------|
@@ -1260,6 +1283,14 @@ that auto-clears after 5 seconds.
 | `StateCapGainsTax_USD` | USD | US state capital-gains tax reserved during forced liquidations |
 | `FXPenalty_JPY` | JPY | Cumulative FX spread penalty from USD-to-JPY conversions in the defensive waterfall |
 | `MonthsAtMin` | months | Number of months where spending was reduced from base to minimum target |
+| `TotalGrossReturn_USD` *(V7.6)* | USD | Gross investment return — distributions + cap gains + PFIC MTM, before tax friction |
+| `TotalNetReturn_USD` *(V7.6)* | USD | Gross return minus dividend, Japan cap-gains, and US state cap-gains tax |
+| `TaxFriction_USD` *(V7.6)* | USD | Dual-field delta (`Gross − Net`) — surfaces tax drag without naming the regime |
+| `Dist_Dividend_USD` *(V7.6)* | USD | Qualified/ordinary dividend component of the year's distributions |
+| `Dist_Interest_USD` *(V7.6)* | USD | Interest distribution component (passive basket) |
+| `Dist_CapGains_USD` *(V7.6)* | USD | Capital-gains distribution component (mutual-fund pass-through; PFIC-routed when MTM-flagged) |
+| `Dist_Special_USD` *(V7.6)* | USD | Non-recurring distribution component |
+| `Dist_ROC_USD` *(V7.6)* | USD | Return-of-Capital cash received (non-taxable; basis-reducing) |
 
 ### `Retirement_Summary.txt` — section layout
 
@@ -1311,7 +1342,7 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**59/59 tests** across all modules:
+**89/89 tests** across all modules:
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -1323,7 +1354,10 @@ cargo test
 | `engine::va_benefits` | 4 | 100% VetOnly ($3,938.58), 100% WithSpouseAndChild ($4,267.28), 50% WithSpouse ($1,233.13), SMC-K through R.2 2026 rates, override logic |
 | `engine::tax::nhi` | 10 | Medical/support/nursing components, caps, ManualOverride dispatch, investment income flag |
 | `simulation::controller` | 2 | crash_2030 stress scenario, FX shock 2032 |
-| *(other)* | 2 | — |
+| `handlers::*` (V7.3/V7.5) | 16 | Jido Teate, education routing, lumpy dividends, tax-loss harvesting wash-sale, et al. |
+| `tests/logic_audit.rs` | 8 | Property + scenario invariants (Shielded/Dynamic regimes, restocking, education routing) |
+| `tests/v7_tax_and_liquidation_test.rs` | 3 | Highest-basis-first liquidation, state-tax gross-up, dividend-only no-sell |
+| `tests/v7_6_distributions.rs` *(V7.6)* | 5 | ROC proportional reduction, ROC excess → LTCG, PFIC §1296 CGD routing, expense-ratio drag, basket-FTC no-leak |
 
 ---
 
@@ -1351,11 +1385,12 @@ retirement-calculator-v2/
     │       ├── japan_regions.rs    ← All 47 prefectures + cities; Juminzei rate lookup
     │       ├── japan_tax.rs        ← JapanTaxEngine: resident tax and pension deduction
     │       ├── nhi.rs              ← NhiEngine: municipal-rate NHI, caps, manual override
-    │       └── us_tax.rs           ← TaxEngine: LTCG, NIIT, FTC, FEIE pipeline, state tax
+    │       ├── pfic.rs             ← V7.5 §1296 MTM aggregation (per-asset & portfolio-wide)
+    │       └── us_tax.rs           ← TaxEngine: LTCG, NIIT, FTC, FEIE, V7.6 §904 basket-aware FTC
     ├── handlers/
     │   ├── cashflow_manager.rs     ← Post-retirement monthly cash-flow orchestration
     │   ├── contributions.rs        ← Pre-retirement Roth / DC / VA-buffer contributions
-    │   ├── dividends.rs            ← Dividend DRIP and withholding
+    │   ├── dividends.rs            ← V7.6 component-aware distribution events (Dividend / Interest / CGD / Special / ROC); DRIP and withholding
     │   ├── retirement_transition.rs ← Rebalance event, war chest, bridge fund, transition tax
     │   ├── roth_rebalancer.rs      ← Optional Roth rebalance at age 59.5
     │   └── rsu_vesting.rs          ← RSU vest events, SELL_TO_COVER / SALARY logic
@@ -1365,7 +1400,7 @@ retirement-calculator-v2/
     │   ├── constants.rs            ← SimConstants (legacy NHI compatibility, embedded NHI baseline, etc.)
     │   ├── expense.rs              ← ExpenseRule (NHI, Nenkin, ResTax installments)
     │   ├── rsu.rs                  ← RsuAward schema
-    │   └── snapshot.rs             ← AnnualSnapshot (32 CSV columns), SimResults, TransitionReport
+    │   └── snapshot.rs             ← AnnualSnapshot (44 CSV columns inc. V7.6 dual-field + dist breakdown), SimResults, TransitionReport
     ├── reporter.rs                 ← Text report, CSV, and clipboard formatters
     ├── simulation/
     │   ├── controller.rs           ← SimulationController: month loop, tax true-up
@@ -1548,22 +1583,42 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5)
+## 16. Hardening & Compliance (V7.6)
 
-V7.5 resolves the mathematical and legal fragilities identified in the 2026 Strategic Audit.
+V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
+extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
+through the correct §904 basket and §1296 check.
 
-### Fix 1 — PFIC Ordinary Income Routing (§1296)
-Assets flagged with pfic_regime: Mtm now correctly route Mark-to-Market gains to the Ordinary Income
+### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
+Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income
 stack. This ensures they are taxed at top marginal rates and do not corrupt LTCG bracket stacking.
 
-### Fix 2 — IRC §904 FTC Basket Separation
-To prevent "tax credit leakage," V7.5 separates the Foreign Tax Credit into Passive and General baskets.
-Japan taxes paid on Passive income (Dividends, PFIC MTM) are strictly credited against US Passive-basket
-liability, preventing the use of passive credits to offset tax on General-basket income (like FERS).
+### Fix 2 — IRC §904 FTC Basket Separation *(V7.5 declared, V7.6 wired)*
+The Foreign Tax Credit is separated into Passive and General baskets via
+`calculate_liability_with_basket_ftc` in `engine/tax/us_tax.rs`. Japan taxes paid on Passive income
+(dividends, PFIC MTM, interest, cap-gains distributions) are strictly capped at the §904 passive
+limit, preventing passive credits from offsetting tax on General-basket income such as FERS or
+Social Security. Japan resident tax is allocated proportionally by income share; Japan capital-gains
+tax is unambiguously passive.
 
-### Fix 3 — Mode B Oracle Drain Awareness
-The 4-month preemptive restocking oracle now accounts for Tier 9 Gift Sink and Education Fund drains.
+### Fix 3 — Mode B Oracle Drain Awareness *(V7.5)*
+The 4-month preemptive restocking oracle accounts for Tier 9 Gift Sink and Education Fund drains.
 This prevents liquidity crises caused by the oracle failing to "see" upcoming high-priority non-spend draws.
+
+### Fix 4 — Component-Based Return Profile *(V7.6)*
+The flat `yield_rate` / `growth_rate` model was replaced with an optional `DetailedReturnProfile`
+that decomposes returns into `cap_growth`, `nav_growth`, `dividend_yield`, `interest_yield`,
+`cap_gains_dist`, `special_dist`, `roc`, and `expense_ratio`. Each component routes through the
+correct US/Japan tax pipeline:
+- **Interest + Special** → passive-basket ordinary US stack
+- **CapGainsDist** → ordinary passive (when PFIC §1296 MTM) or LTCG passive (otherwise)
+- **ROC** → non-taxable; reduces FIFO basis proportionally; excess above basis falls to LTCG
+- **Expense ratio** → deducted from `cap_growth` before monthly compounding (automatic drag)
+
+Pre-V7.6 scenarios (no `return_profile`) produce identical numerics — the accessor methods on
+`Asset` route through the legacy flat-yield path. The Audit CSV exposes the per-component split via
+the new `Dist_*_USD`, `TotalGrossReturn_USD`, `TotalNetReturn_USD`, and `TaxFriction_USD` columns
+so users can compare regimes without naming the underlying tax categories.
 
 ---
 

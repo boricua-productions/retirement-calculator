@@ -542,14 +542,20 @@ impl SimulationController {
         );
         self.state.stats.year_pfic_mtm_income_usd = pfic_mtm_usd;
 
-        // Pension income (FERS, SS, SSDI) is ordinary income for tax purposes but is NOT
-        // FEIE-eligible (IRC §911 applies only to wages/salary/RSU income).
-        // PFIC §1296 MTM is also NOT FEIE-eligible (passive income, §911(d)(2)).
-        // Keep total_ord for the FTC-only bracket-stacking path; expose unearned_ord
-        // separately so the FEIE path can exclude only the earned portion.
-        let total_ord = base_ord + ssdi_taxable + pfic_mtm_usd;
-        let earned_ord  = self.state.stats.year_rsu_vest_usd; // FEIE-eligible only
-        let unearned_ord = total_ord;                          // pension / SS / SSDI / PFIC MTM
+        // V7.6 — §904 basket split. Passive-basket ordinary income includes:
+        //   • PFIC §1296 MTM (already accumulated above)
+        //   • PFIC-flagged cap-gains distributions (year_pfic_ord_income_usd)
+        //   • Interest + special distributions (year_passive_ord_income_usd)
+        // General-basket ordinary income: FERS, SS, taxable SSDI.
+        let passive_ord = pfic_mtm_usd
+            + self.state.stats.year_pfic_ord_income_usd
+            + self.state.stats.year_passive_ord_income_usd;
+        let general_ord = base_ord + ssdi_taxable;
+
+        // Keep total_ord for back-compat / FEIE path (which lumps the two).
+        let total_ord    = general_ord + passive_ord;
+        let earned_ord   = self.state.stats.year_rsu_vest_usd; // FEIE-eligible only
+        let unearned_ord = total_ord;                           // pension / SS / SSDI / PFIC
 
         let total_cap = self.state.stats.year_div_gross + self.state.stats.year_cap_gains;
 
@@ -571,26 +577,55 @@ impl SimulationController {
         // Japan-First FTC: credit Japan resident taxes paid this year against US liability.
         // V7.0: also include the Japan capital-gains tax (20.315%) realised at sale —
         // it is a foreign income tax under IRC §901 and so eligible for the FTC pool.
-        let japan_tax_paid_usd = if self.cfg.tax_jurisdiction == TaxJurisdiction::Both {
-            (self.state.stats.year_japan_res_tax_jpy
-                + self.state.stats.year_japan_cap_gains_tax_jpy)
-                / self.state.current_fx
-        } else {
-            0.0
-        };
+        // V7.6: split into §904 baskets. Japan cap-gains tax is unambiguously
+        // passive-basket (transactional, on investment income). Japan resident
+        // tax is allocated by income proportion (passive vs general); this
+        // prevents passive credit from absorbing general-basket liability and
+        // vice versa, the central §904 leakage guard.
+        let (japan_tax_passive_usd, japan_tax_general_usd) =
+            if self.cfg.tax_jurisdiction == TaxJurisdiction::Both {
+                let cg_passive = self.state.stats.year_japan_cap_gains_tax_jpy
+                    / self.state.current_fx;
+                let res_total  = self.state.stats.year_japan_res_tax_jpy
+                    / self.state.current_fx;
+                let passive_inc = passive_ord + total_cap;
+                let general_inc = general_ord;
+                let denom = passive_inc + general_inc;
+                let (res_passive, res_general) = if denom > 0.0 {
+                    let p_share = passive_inc / denom;
+                    (res_total * p_share, res_total * (1.0 - p_share))
+                } else {
+                    (0.0, res_total)
+                };
+                (cg_passive + res_passive, res_general)
+            } else {
+                (0.0, 0.0)
+            };
 
         // IRC §904 carryover: augment current-year Japan tax with unused credits from
-        // prior years. The engine caps at federal_before_ftc, consuming carryover first.
+        // prior years. Carryover defaults to the passive basket (where most
+        // expat investment income lives); for stricter accounting users could
+        // later split carryover by origin, but the single-bucket model is
+        // sufficient for the V7.6 audit.
         let available_carryover = self.state.ftc_carryover_usd;
-        let effective_japan_tax_usd = japan_tax_paid_usd + available_carryover;
+        let effective_passive_usd = japan_tax_passive_usd + available_carryover;
+        let effective_general_usd = japan_tax_general_usd;
+        // Lumped value retained for the FEIE path (legacy lumped FTC math).
+        let effective_japan_tax_usd = effective_passive_usd + effective_general_usd;
 
-        // Choose FEIE+FTC optimisation or plain FTC-only based on strategy setting.
+        // Choose FEIE+FTC optimisation or basket-aware FTC based on strategy setting.
         let liability = match self.cfg.us_tax_strategy {
             UsTaxStrategy::FeieAndFtc => self.tax_engine.calculate_liability_with_feie_ftc(
                 yr, earned_ord, unearned_ord, 0.0, total_cap, effective_japan_tax_usd,
             ),
-            UsTaxStrategy::FtcOnly => self.tax_engine.calculate_liability_with_ftc(
-                yr, total_ord, 0.0, total_cap, effective_japan_tax_usd,
+            UsTaxStrategy::FtcOnly => self.tax_engine.calculate_liability_with_basket_ftc(
+                yr,
+                general_ord,
+                passive_ord,
+                0.0,
+                total_cap,
+                effective_passive_usd,
+                effective_general_usd,
             ),
         };
 
@@ -698,6 +733,25 @@ impl SimulationController {
             exit_tax_asset_value_jpy: exit_value_jpy,
             year_gift_sink_jpy: s.year_gift_sink_jpy,
             year_form_709_required: s.year_form_709_required,
+
+            // V7.6 — dual-field reporting. Gross = all distribution components +
+            // capital gains realised; Net = gross minus dividend/CG taxes. Tax
+            // friction surfaces the delta without naming the underlying regime.
+            total_gross_return_usd: s.year_div_gross + s.year_cap_gains
+                + s.year_dist_roc_usd + s.year_pfic_mtm_income_usd,
+            total_net_return_usd: s.year_div_gross + s.year_cap_gains
+                + s.year_dist_roc_usd + s.year_pfic_mtm_income_usd
+                - s.year_div_tax
+                - s.year_state_cap_gains_tax_usd
+                - (s.year_japan_cap_gains_tax_jpy / fx),
+            tax_friction_usd: s.year_div_tax
+                + s.year_state_cap_gains_tax_usd
+                + (s.year_japan_cap_gains_tax_jpy / fx),
+            dist_dividend_usd: s.year_dist_dividend_usd,
+            dist_interest_usd: s.year_dist_interest_usd,
+            dist_cap_gains_usd: s.year_dist_cap_gains_usd,
+            dist_special_usd: s.year_dist_special_usd,
+            dist_roc_usd: s.year_dist_roc_usd,
         });
     }
 
