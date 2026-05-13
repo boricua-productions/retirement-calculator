@@ -5,6 +5,23 @@ use crate::models::config::Position;
 /// Global market average CAGR fallback when live data is unavailable (7%).
 pub const GLOBAL_MARKET_FALLBACK_GROWTH: f64 = 0.07;
 
+/// V7.7 — Snapshot of the five auto-fetchable detailed-profile components.
+/// All values are annual fractions (0.04 = 4%). Any field that could not be
+/// resolved from a live source is set to 0.0 and a warn-level log is emitted.
+/// The UI gates which fields to apply based on the row's Asset Class.
+///
+/// `cap_growth` and `nav_growth` carry the same underlying value (10y CAGR of
+/// unadjusted `close`). They are split so the UI can route to whichever field
+/// is visible for the row's class without knowing the helper internals.
+#[derive(Debug, Clone, Default)]
+pub struct DetailedMarketProfile {
+    pub cap_growth:     f64,
+    pub nav_growth:     f64,
+    pub dividend_yield: f64,
+    pub cap_gains_dist: f64,
+    pub expense_ratio:  f64,
+}
+
 /// Provides fallback market data and live 10-year CAGR fetching.
 /// Live data is fetched from Yahoo Finance; any network/parse error falls back
 /// gracefully to the global market average.
@@ -242,5 +259,125 @@ impl MarketDataService {
             }
         }
         prices
+    }
+
+    /// V7.7 — Fetch a five-component snapshot for the detailed return profile.
+    /// Performs three independent Yahoo Finance calls; each fails independently.
+    pub fn fetch_detailed_profile(ticker: &str) -> DetailedMarketProfile {
+        let price_cagr = Self::fetch_10y_price_cagr(ticker);
+        let (dividend_yield, cap_gains_dist) = Self::fetch_ttm_distribution_yields(ticker);
+        let expense_ratio = Self::fetch_expense_ratio(ticker);
+        DetailedMarketProfile {
+            cap_growth:     price_cagr,
+            nav_growth:     price_cagr,
+            dividend_yield,
+            cap_gains_dist,
+            expense_ratio,
+        }
+    }
+
+    /// 10-year price-only CAGR using unadjusted `close` (split-adjusted only;
+    /// dividends NOT reinvested). Correct input for `cap_growth` / `nav_growth`.
+    fn fetch_10y_price_cagr(ticker: &str) -> f64 {
+        let url = format!(
+            "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1mo&range=10y",
+            ticker
+        );
+        let result = (|| -> Result<f64, Box<dyn std::error::Error>> {
+            let resp = ureq::get(&url)
+                .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
+                .call()?;
+            let body = resp.into_string()?;
+            let json: serde_json::Value = serde_json::from_str(&body)?;
+            let closes = json["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+                .as_array().ok_or("missing close series")?;
+            let first = closes.iter().find_map(|v| v.as_f64()).ok_or("no first price")?;
+            let last  = closes.iter().rev().find_map(|v| v.as_f64()).ok_or("no last price")?;
+            if first <= 0.0 || last <= 0.0 { return Err("non-positive price".into()); }
+            let years = (closes.len() as f64) / 12.0;
+            Ok((last / first).powf(1.0 / years) - 1.0)
+        })();
+        match result {
+            Ok(cagr) => {
+                let clamped = cagr.clamp(-0.50, 1.00);
+                if (clamped - cagr).abs() > 0.001 {
+                    warn!("[MarketData] {}: price CAGR {:.2}% out of range, using fallback",
+                        ticker, cagr * 100.0);
+                    Self::fallback_growth(ticker)
+                } else {
+                    clamped
+                }
+            }
+            Err(e) => {
+                warn!("[MarketData] {}: price CAGR fetch failed ({}), using fallback {:.0}%",
+                    ticker, e, Self::fallback_growth(ticker) * 100.0);
+                Self::fallback_growth(ticker)
+            }
+        }
+    }
+
+    /// TTM dividend and capital-gain yields from Yahoo chart events.
+    /// Returns (dividend_yield, cap_gains_dist) as annual fractions.
+    fn fetch_ttm_distribution_yields(ticker: &str) -> (f64, f64) {
+        let url = format!(
+            "https://query1.finance.yahoo.com/v8/finance/chart/{}?interval=1d&range=1y&events=div,capitalGain",
+            ticker
+        );
+        let result = (|| -> Result<(f64, f64), Box<dyn std::error::Error>> {
+            let resp = ureq::get(&url)
+                .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
+                .call()?;
+            let body = resp.into_string()?;
+            let json: serde_json::Value = serde_json::from_str(&body)?;
+            let closes = json["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"]
+                .as_array().ok_or("missing adjclose")?;
+            let price = closes.iter().rev().find_map(|v| v.as_f64()).ok_or("no price")?;
+            if price <= 0.0 { return Err("non-positive price".into()); }
+            let sum_events = |key: &str| -> f64 {
+                json["chart"]["result"][0]["events"][key]
+                    .as_object()
+                    .map(|m| m.values().filter_map(|e| e["amount"].as_f64()).sum::<f64>())
+                    .unwrap_or(0.0)
+            };
+            let div_sum = sum_events("dividends");
+            let cg_sum  = { let a = sum_events("capitalGains"); if a > 0.0 { a } else { sum_events("capitalGain") } };
+            Ok((div_sum / price, cg_sum / price))
+        })();
+        match result {
+            Ok((d, cg)) => (d.clamp(0.0, 0.50), cg.clamp(0.0, 0.50)),
+            Err(e) => {
+                warn!("[MarketData] {}: distribution-yield fetch failed ({}), using 0%", ticker, e);
+                (0.0, 0.0)
+            }
+        }
+    }
+
+    /// Annual fund expense ratio from Yahoo quoteSummary. Returns 0.0 for
+    /// individual stocks (no fundProfile) and on any network/parse error.
+    fn fetch_expense_ratio(ticker: &str) -> f64 {
+        let url = format!(
+            "https://query1.finance.yahoo.com/v10/finance/quoteSummary/{}?modules=fundProfile",
+            ticker
+        );
+        let result = (|| -> Result<f64, Box<dyn std::error::Error>> {
+            let resp = ureq::get(&url)
+                .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
+                .call()?;
+            let body = resp.into_string()?;
+            let json: serde_json::Value = serde_json::from_str(&body)?;
+            let er = json["quoteSummary"]["result"][0]["fundProfile"]
+                ["feesExpensesInvestment"]["annualReportExpenseRatio"]["raw"]
+                .as_f64()
+                .ok_or("missing annualReportExpenseRatio")?;
+            if er < 0.0 || er > 0.10 { return Err("expense ratio out of range".into()); }
+            Ok(er)
+        })();
+        match result {
+            Ok(er) => er,
+            Err(e) => {
+                warn!("[MarketData] {}: expense-ratio fetch failed ({}), defaulting to 0", ticker, e);
+                0.0
+            }
+        }
     }
 }

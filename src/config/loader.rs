@@ -301,6 +301,21 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                 vesting_months,
                 vesting_cadence,
                 cliff_vest_months,
+                unit_value:   rsu["unit_value"].as_f64().filter(|&p| p > 0.0),
+                growth_rate:  rsu["growth_rate"].as_f64().filter(|&g| g > -0.5 && g < 1.0),
+                return_profile: rsu["return_profile"].as_object().map(|obj| {
+                    let f = |k: &str| obj.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    crate::models::assets::DetailedReturnProfile {
+                        cap_growth:     f("cap_growth"),
+                        nav_growth:     f("nav_growth"),
+                        dividend_yield: f("dividend_yield"),
+                        interest_yield: f("interest_yield"),
+                        cap_gains_dist: f("cap_gains_dist"),
+                        special_dist:   f("special_dist"),
+                        roc:            f("roc"),
+                        expense_ratio:  f("expense_ratio"),
+                    }
+                }),
             });
         }
     }

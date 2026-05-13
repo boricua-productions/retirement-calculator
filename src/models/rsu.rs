@@ -66,6 +66,19 @@ pub struct RsuAward {
     /// delivered all at once on the first event on or after the cliff end date.
     #[serde(default)]
     pub cliff_vest_months: u32,
+    /// V7.7 — Optional starter price (USD/share). Used on first vest if no
+    /// brokerage Taxable asset for this ticker already exists.
+    #[serde(default)]
+    pub unit_value: Option<f64>,
+    /// V7.7 — Optional annual growth rate (fraction, e.g. 0.10 = 10%).
+    /// Seeds the Asset on first vest; thereafter the engine owns price growth.
+    #[serde(default)]
+    pub growth_rate: Option<f64>,
+    /// V7.7 — Optional per-component return profile (cap_growth + dividend_yield
+    /// in practice). Attached to the Taxable Asset on first vest if no profile
+    /// is already set (brokerage holding wins).
+    #[serde(default)]
+    pub return_profile: Option<crate::models::assets::DetailedReturnProfile>,
 }
 
 impl RsuAward {
