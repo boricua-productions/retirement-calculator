@@ -51,6 +51,24 @@ pub struct PositionRow {
     pub mgmt_expanded:        bool,   // UI-only: expand the management sub-panel
     /// V6.6: per-position rebalance date (YYYY-MM-DD, empty = use account/global).
     pub rebalance_date:       String,
+    // ── V7.6 — Asset classification & detailed return profile ──────────────────
+    /// "Stock" | "ETF" | "MutualFund" | "Other".
+    pub asset_class:          String,
+    /// When true, the component-wise return profile drives the engine instead of
+    /// the single legacy `growth_pct` + flat dividend yield.
+    pub use_detailed_profile: bool,
+    /// UI-only: expand the return-profile sub-panel.
+    pub profile_expanded:     bool,
+    /// Annual price-only capital appreciation %, e.g. "5.2". Stocks / ETFs / Other.
+    pub cap_growth_pct:        String,
+    /// Annual fund-NAV growth %. Mutual Fund / Other.
+    pub nav_growth_pct:        String,
+    pub dividend_yield_pct:    String,
+    pub interest_yield_pct:    String,
+    pub cap_gains_dist_pct:    String,
+    pub special_dist_pct:      String,
+    pub roc_pct:               String,
+    pub expense_ratio_pct:     String,
 }
 
 impl Default for PositionRow {
@@ -70,6 +88,17 @@ impl Default for PositionRow {
             target_alloc_pct:     String::new(),
             mgmt_expanded:        false,
             rebalance_date:       String::new(),
+            asset_class:          "Stock".into(),
+            use_detailed_profile: false,
+            profile_expanded:     false,
+            cap_growth_pct:        String::new(),
+            nav_growth_pct:        String::new(),
+            dividend_yield_pct:    String::new(),
+            interest_yield_pct:    String::new(),
+            cap_gains_dist_pct:    String::new(),
+            special_dist_pct:      String::new(),
+            roc_pct:               String::new(),
+            expense_ratio_pct:     String::new(),
         }
     }
 }
@@ -275,6 +304,15 @@ pub struct InputPanelState {
     pub va_override_monthly:  String,
     pub smc_override_enabled: bool,
     pub smc_override_monthly: String,
+    // ── Family Financial Planning (V7.3 / V7.5 — optional) ──────────────────
+    /// When true, the Tier 2.5 Education Fund accumulation channel is active.
+    pub education_fund_enabled: bool,
+    pub edu_savings_jpy_monthly: String,
+    /// When true, the Tier 9 Estate Planning Gift Sink is active.
+    pub gift_sink_enabled: bool,
+    pub annual_gift_jpy_per_recipient: String,
+    pub gift_recipient_count: String,
+    pub us_gift_exclusion_usd: String,
     // ── Source ───────────────────────────────────────────────────────────────
     pub source_json: Option<Value>,
     pub source_path: Option<String>,
@@ -374,6 +412,12 @@ impl Default for InputPanelState {
             va_override_monthly:  String::new(),
             smc_override_enabled: false,
             smc_override_monthly: String::new(),
+            education_fund_enabled:        false,
+            edu_savings_jpy_monthly:       "0".into(),
+            gift_sink_enabled:             false,
+            annual_gift_jpy_per_recipient: "1100000".into(),
+            gift_recipient_count:          "0".into(),
+            us_gift_exclusion_usd:         "19000".into(),
             source_json:  Some(blank_json),
             source_path:  None,
             reload_path:  None,
@@ -507,9 +551,33 @@ impl InputPanelState {
                 let drip_enabled = info["drip_enabled"].as_bool().unwrap_or(true);
                 let drip_reinvest_ticker = info["dividend_reinvest_target"]
                     .as_str().unwrap_or("").to_string();
+                // V7.6 — Asset classification + detailed return profile (optional).
+                let asset_class = match info["asset_class"].as_str().unwrap_or("stock") {
+                    "etf" | "ETF" | "Etf"                  => "ETF",
+                    "mutual_fund" | "MutualFund" | "mutual" => "MutualFund",
+                    "other" | "Other"                       => "Other",
+                    _                                       => "Stock",
+                }.to_string();
+                let profile = &info["return_profile"];
+                let use_detailed_profile = profile.is_object();
+                let pct_from_frac = |k: &str| -> String {
+                    profile[k].as_f64()
+                        .map(|f| format!("{:.3}", f * 100.0))
+                        .unwrap_or_default()
+                };
                 rows.push(PositionRow {
                     ticker: ticker.clone(), units, unit_value, cost_basis, growth_pct, volatility_pct,
                     drip_enabled, drip_reinvest_ticker,
+                    asset_class,
+                    use_detailed_profile,
+                    cap_growth_pct:     pct_from_frac("cap_growth"),
+                    nav_growth_pct:     pct_from_frac("nav_growth"),
+                    dividend_yield_pct: pct_from_frac("dividend_yield"),
+                    interest_yield_pct: pct_from_frac("interest_yield"),
+                    cap_gains_dist_pct: pct_from_frac("cap_gains_dist"),
+                    special_dist_pct:   pct_from_frac("special_dist"),
+                    roc_pct:            pct_from_frac("roc"),
+                    expense_ratio_pct:  pct_from_frac("expense_ratio"),
                     ..Default::default()
                 });
             }
@@ -862,6 +930,13 @@ impl InputPanelState {
             va_override_monthly,
             smc_override_enabled,
             smc_override_monthly,
+            education_fund_enabled: sets["edu_savings_jpy_monthly"].as_f64().unwrap_or(0.0) > 0.0,
+            edu_savings_jpy_monthly: num_str("edu_savings_jpy_monthly", "0"),
+            gift_sink_enabled: sets["gift_recipient_count"].as_u64().unwrap_or(0) > 0
+                            && sets["annual_gift_jpy_per_recipient"].as_f64().unwrap_or(0.0) > 0.0,
+            annual_gift_jpy_per_recipient: num_str("annual_gift_jpy_per_recipient", "1100000"),
+            gift_recipient_count:          num_str("gift_recipient_count",          "0"),
+            us_gift_exclusion_usd:         num_str("us_gift_exclusion_usd",         "19000"),
             source_json: Some(json.clone()),
             source_path: Some(path.to_string()),
             reload_path: None,
@@ -1121,6 +1196,25 @@ impl InputPanelState {
                 settings.remove("smc_monthly_override");
             }
 
+            // ── Family Financial Planning (V7.3 Education / V7.5 Gift Sink) ──
+            // Toggled OFF → write 0 so the simulator's optional channels stay dormant.
+            if self.education_fund_enabled {
+                set_f64!("edu_savings_jpy_monthly", self.edu_savings_jpy_monthly);
+            } else {
+                settings.insert("edu_savings_jpy_monthly".into(),
+                                Value::Number(serde_json::Number::from(0)));
+            }
+            if self.gift_sink_enabled {
+                set_f64!("annual_gift_jpy_per_recipient", self.annual_gift_jpy_per_recipient);
+                set_u64!("gift_recipient_count",          self.gift_recipient_count);
+                set_f64!("us_gift_exclusion_usd",         self.us_gift_exclusion_usd);
+            } else {
+                settings.insert("annual_gift_jpy_per_recipient".into(),
+                                Value::Number(serde_json::Number::from(0)));
+                settings.insert("gift_recipient_count".into(),
+                                Value::Number(serde_json::Number::from(0)));
+            }
+
             // Recession events
             let recessions: Vec<Value> = self.recession_years.split(',')
                 .filter_map(|entry| {
@@ -1284,6 +1378,41 @@ impl InputPanelState {
                     if !row.drip_reinvest_ticker.is_empty() {
                         pos.insert("dividend_reinvest_target".into(),
                             Value::String(row.drip_reinvest_ticker.clone()));
+                    }
+
+                    // ── V7.6 — Asset class + (optional) detailed return profile.
+                    // Container-style tax-advantaged accounts (iDeCo / 401(k)) and
+                    // the DC Plan keep the legacy flat-growth model.
+                    let class_is_container = matches!(account.account_type.as_str(),
+                        "iDeCo" | "401(k)" | "DC Plan");
+                    if !class_is_container {
+                        let class_snake = match row.asset_class.as_str() {
+                            "ETF"        => "etf",
+                            "MutualFund" => "mutual_fund",
+                            "Other"      => "other",
+                            _            => "stock",
+                        };
+                        pos.insert("asset_class".into(), Value::String(class_snake.into()));
+
+                        if row.use_detailed_profile {
+                            let mut prof = serde_json::Map::new();
+                            let put = |m: &mut serde_json::Map<String, Value>, k: &str, s: &str| {
+                                if let Ok(v) = s.trim().parse::<f64>() {
+                                    if let Some(n) = serde_json::Number::from_f64(v / 100.0) {
+                                        m.insert(k.into(), Value::Number(n));
+                                    }
+                                }
+                            };
+                            put(&mut prof, "cap_growth",     &row.cap_growth_pct);
+                            put(&mut prof, "nav_growth",     &row.nav_growth_pct);
+                            put(&mut prof, "dividend_yield", &row.dividend_yield_pct);
+                            put(&mut prof, "interest_yield", &row.interest_yield_pct);
+                            put(&mut prof, "cap_gains_dist", &row.cap_gains_dist_pct);
+                            put(&mut prof, "special_dist",   &row.special_dist_pct);
+                            put(&mut prof, "roc",            &row.roc_pct);
+                            put(&mut prof, "expense_ratio",  &row.expense_ratio_pct);
+                            pos.insert("return_profile".into(), Value::Object(prof));
+                        }
                     }
                     holdings_map.insert(row.ticker.clone(), Value::Object(pos));
 
@@ -1904,6 +2033,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         let mut remove_position:  Option<(usize, usize)> = None;
         let mut auto_fill:        Option<(usize, usize)> = None;
         let mut toggle_mgmt:      Option<(usize, usize)> = None;
+        let mut toggle_profile:   Option<(usize, usize)> = None;
 
         for acct_idx in 0..num_accounts {
             if acct_idx > 0 {
@@ -2078,8 +2208,11 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             // Single unified 8-column grid — all rows share one ID scope so the
                             // auto-counter never resets between rows. Each TextEdit also carries an
                             // explicit id_salt for additional row-level uniqueness.
+                            // V7.6: account types where component-level return modelling does
+                            // not apply (container-style tax-advantaged accounts).
+                            let hide_asset_class = matches!(acct_type.as_str(), "iDeCo" | "401(k)");
                             egui::Grid::new(egui::Id::new("input_positions_grid").with(acct_idx))
-                                .num_columns(8)
+                                .num_columns(10)
                                 .striped(true)
                                 .spacing([12.0, 8.0])
                                 .show(ui, |ui| {
@@ -2106,6 +2239,15 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                             }
                                         });
                                     });
+                                    if hide_asset_class {
+                                        ui.label("");
+                                        ui.label("");
+                                    } else {
+                                        ui.label(RichText::new("Asset Class").strong().small())
+                                            .on_hover_text("Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.).");
+                                        ui.label(RichText::new("Return Profile").strong().small())
+                                            .on_hover_text("Toggle a detailed component-level return breakdown (NAV growth, dividends, interest, cap-gains distributions, ROC, expense ratio).");
+                                    }
                                     ui.label(RichText::new("⚙ Management").strong().small());
                                     ui.label(RichText::new("☐ Select/Delete").strong().small());
                                     ui.end_row();
@@ -2148,6 +2290,38 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                             ui.add(egui::TextEdit::singleline(&mut pos.growth_pct)
                                                 .id_salt(("growth", acct_idx, pos_idx))
                                                 .hint_text("opt. %").desired_width(60.0));
+                                        }
+
+                                        // ── V7.6 — Asset class dropdown + detailed-profile toggle ──
+                                        if hide_asset_class {
+                                            ui.label("");
+                                            ui.label("");
+                                        } else {
+                                            egui::ComboBox::from_id_salt(("ac", acct_idx, pos_idx))
+                                                .selected_text(match pos.asset_class.as_str() {
+                                                    "ETF"        => "ETF",
+                                                    "MutualFund" => "Mutual Fund",
+                                                    "Other"      => "Other",
+                                                    _            => "Stock",
+                                                })
+                                                .width(110.0)
+                                                .show_ui(ui, |ui| {
+                                                    ui.selectable_value(&mut pos.asset_class, "Stock".into(),       "Stock");
+                                                    ui.selectable_value(&mut pos.asset_class, "ETF".into(),         "ETF");
+                                                    ui.selectable_value(&mut pos.asset_class, "MutualFund".into(),  "Mutual Fund");
+                                                    ui.selectable_value(&mut pos.asset_class, "Other".into(),       "Other");
+                                                });
+                                            let prof_label = if pos.use_detailed_profile {
+                                                if pos.profile_expanded { "📊 Detail ▾" } else { "📊 Detail" }
+                                            } else {
+                                                "Simple"
+                                            };
+                                            if ui.small_button(prof_label)
+                                                .on_hover_text("Toggle a per-component breakdown (NAV growth, dividends, interest, cap-gains distributions, ROC, expense ratio). Available components depend on asset class.")
+                                                .clicked()
+                                            {
+                                                toggle_profile = Some((acct_idx, pos_idx));
+                                            }
                                         }
 
                                         let mgmt_label = if pos.mgmt_expanded { "⚙▾" } else { "⚙" };
@@ -2217,6 +2391,123 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                 }
                             }
 
+                            // ── V7.6 — Detailed Return Profile sub-panels ────────────
+                            if !hide_asset_class {
+                                for pos_idx in 0..pos_count {
+                                    if !state.accounts[acct_idx].positions[pos_idx].profile_expanded {
+                                        continue;
+                                    }
+                                    let pos = &mut state.accounts[acct_idx].positions[pos_idx];
+                                    Frame::none()
+                                        .fill(Color32::from_rgba_unmultiplied(80, 50, 120, 40))
+                                        .inner_margin(egui::Margin::same(6.0))
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new(
+                                                    format!("📊 {} Return Profile  (class: {})", pos.ticker, pos.asset_class)
+                                                ).small().strong());
+                                                ui.add_space(10.0);
+                                                ui.checkbox(&mut pos.use_detailed_profile,
+                                                    "Use detailed return profile")
+                                                    .on_hover_text("When on, the engine drives growth/distributions from the component fields below instead of the flat Growth % column.");
+                                            });
+                                            ui.label(RichText::new(
+                                                "All values are annual percentages. Components not shown for the chosen \
+                                                 asset class default to 0. Switch class to 'Other' to expose every field."
+                                            ).small().color(Color32::GRAY));
+
+                                            // Which fields to show, per asset class.
+                                            let show_cap_growth     = matches!(pos.asset_class.as_str(), "Stock" | "ETF" | "Other");
+                                            let show_nav_growth     = matches!(pos.asset_class.as_str(), "MutualFund" | "Other");
+                                            let show_dividend       = true;
+                                            let show_interest       = matches!(pos.asset_class.as_str(), "MutualFund" | "Other");
+                                            let show_cap_gains_dist = matches!(pos.asset_class.as_str(), "ETF" | "MutualFund" | "Other");
+                                            let show_special        = matches!(pos.asset_class.as_str(), "MutualFund" | "Other");
+                                            let show_roc            = matches!(pos.asset_class.as_str(), "MutualFund" | "Other");
+                                            let show_expense        = matches!(pos.asset_class.as_str(), "ETF" | "MutualFund" | "Other");
+
+                                            let enabled = pos.use_detailed_profile;
+                                            ui.add_enabled_ui(enabled, |ui| {
+                                                egui::Grid::new(egui::Id::new("g_profile").with(acct_idx).with(pos_idx))
+                                                    .num_columns(4)
+                                                    .spacing([16.0, 4.0])
+                                                    .show(ui, |ui| {
+                                                        let field = |ui: &mut Ui, label: &str, value: &mut String, hint: &str, tip: &str| {
+                                                            ui.label(RichText::new(label).small().strong())
+                                                                .on_hover_text(tip);
+                                                            ui.add(egui::TextEdit::singleline(value)
+                                                                .hint_text(hint).desired_width(64.0));
+                                                        };
+                                                        let mut cells = 0usize;
+                                                        let wrap = |ui: &mut Ui, cells: &mut usize| {
+                                                            *cells += 1;
+                                                            if *cells % 2 == 0 { ui.end_row(); }
+                                                        };
+                                                        if show_cap_growth {
+                                                            field(ui, "Cap Growth % (price):", &mut pos.cap_growth_pct, "e.g. 5.2",
+                                                                "Annual price-only capital appreciation, excluding distributions.");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if show_nav_growth {
+                                                            field(ui, "NAV Growth %:", &mut pos.nav_growth_pct, "e.g. 4.8",
+                                                                "Fund NAV growth (post-distribution). Distinct from price for ETFs that trade away from NAV.");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if show_dividend {
+                                                            field(ui, "Dividend Yield %:", &mut pos.dividend_yield_pct, "e.g. 1.8",
+                                                                "Recurring dividend distributions (qualified or ordinary). Routed through the §904 passive basket.");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if show_interest {
+                                                            field(ui, "Interest Distrib %:", &mut pos.interest_yield_pct, "e.g. 0.4",
+                                                                "Bond-fund / money-market interest pass-through. Ordinary income (US) and 利子所得 (JP).");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if show_cap_gains_dist {
+                                                            field(ui, "Cap Gains Distrib %:", &mut pos.cap_gains_dist_pct, "e.g. 0.6",
+                                                                "Mutual-fund / ETF year-end capital-gains pass-through. LTCG basket unless PFIC §1296 MTM applies.");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if show_special {
+                                                            field(ui, "Special Distrib %:", &mut pos.special_dist_pct, "e.g. 0.0",
+                                                                "Non-recurring distributions (e.g. one-off year-end specials).");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if show_roc {
+                                                            field(ui, "Return of Capital %:", &mut pos.roc_pct, "e.g. 0.0",
+                                                                "Non-taxable in the year received. Reduces USD and JPY cost basis pro rata.");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if show_expense {
+                                                            field(ui, "Expense Ratio %:", &mut pos.expense_ratio_pct, "e.g. 0.03",
+                                                                "Annual fund management fee. Deducted from price growth before each month's update.");
+                                                            wrap(ui, &mut cells);
+                                                        }
+                                                        if cells % 2 == 1 { ui.end_row(); }
+                                                    });
+                                            });
+
+                                            // ── Computed Total Return readout ────────
+                                            let f = |s: &str| s.trim().parse::<f64>().unwrap_or(0.0);
+                                            let price_growth = if show_nav_growth {
+                                                f(&pos.nav_growth_pct)
+                                            } else {
+                                                f(&pos.cap_growth_pct)
+                                            } - f(&pos.expense_ratio_pct);
+                                            let distributions = f(&pos.dividend_yield_pct)
+                                                + f(&pos.interest_yield_pct)
+                                                + f(&pos.cap_gains_dist_pct)
+                                                + f(&pos.special_dist_pct);
+                                            let total_return = price_growth + distributions + f(&pos.roc_pct);
+                                            ui.add_space(2.0);
+                                            ui.label(RichText::new(format!(
+                                                "Total Return ≈ {:.2}% (price {:+.2}% + distributions {:.2}% + ROC {:.2}%)",
+                                                total_return, price_growth, distributions, f(&pos.roc_pct)
+                                            )).small().color(Color32::from_rgb(140, 200, 240)));
+                                        });
+                                }
+                            }
+
                             // Cost-basis / est-value summary
                             let (mut total_basis, mut total_value) = (0.0_f64, 0.0_f64);
                             for pos in &state.accounts[acct_idx].positions {
@@ -2250,6 +2541,19 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             if ai < state.accounts.len() && pi < state.accounts[ai].positions.len() {
                 let expanded = &mut state.accounts[ai].positions[pi].mgmt_expanded;
                 *expanded = !*expanded;
+            }
+        }
+        if let Some((ai, pi)) = toggle_profile {
+            if ai < state.accounts.len() && pi < state.accounts[ai].positions.len() {
+                let pos = &mut state.accounts[ai].positions[pi];
+                // First click: expand and turn on detailed profile.
+                // Click while expanded: just collapse (leave the toggle as-is).
+                if pos.profile_expanded {
+                    pos.profile_expanded = false;
+                } else {
+                    pos.profile_expanded = true;
+                    pos.use_detailed_profile = true;
+                }
             }
         }
         if let Some((ai, pi)) = remove_position {
@@ -2584,6 +2888,54 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             vfield_tt(ui, "War Chest Target (JPY)", &mut state.war_chest_target_jpy, "e.g. 7000000", !errors.contains("war_chest_target_jpy"),
                 "JPY reserve for tax bills, NHI true-ups, and equity-shock recovery. Tapped only after the bridge is empty.");
         });
+        ui.add_space(8.0);
+
+        // ── Family Financial Planning (V7.3 Education / V7.5 Gift Sink) ──────────
+        section(ui, "Family Financial Planning (Optional)");
+        ui.label(RichText::new(
+            "Education funding and inter-generational gifting are optional. Leave the \
+             toggles off if you don't plan to fund schooling or pass money to heirs.")
+            .small().color(Color32::GRAY));
+        ui.add_space(4.0);
+
+        ui.checkbox(&mut state.education_fund_enabled,
+            "Fund Education (Tier 2.5 — dedicated JPY bucket for school costs)")
+            .on_hover_text("Skims JPY surplus into a separate fund that pays Education-tagged expenses BEFORE the main waterfall.");
+        if state.education_fund_enabled {
+            grid(ui, "g_edu", |ui| {
+                vfield_tt(ui, "Monthly Skim (JPY)",
+                    &mut state.edu_savings_jpy_monthly,
+                    "e.g. 50000",
+                    true,
+                    "Monthly JPY skim from post-spend surplus into the Education Fund. \
+                     Skim is opportunistic — only taken when surplus exists.");
+            });
+        }
+        ui.add_space(6.0);
+
+        ui.checkbox(&mut state.gift_sink_enabled,
+            "Annual Gift to Heirs (Tier 9 — 暦年贈与 estate-planning sink)")
+            .on_hover_text("Diverts a fixed annual amount per recipient out of the spendable pool in December. Modeled against the JP 暦年贈与 exclusion and flagged against the US §2503(b) limit.");
+        if state.gift_sink_enabled {
+            grid(ui, "g_gift", |ui| {
+                vfield_tt(ui, "JPY per Recipient / Year",
+                    &mut state.annual_gift_jpy_per_recipient,
+                    "e.g. 1100000",
+                    true,
+                    "Annual JPY gift per recipient. ¥1,100,000 is the Japan 暦年贈与 exclusion.");
+                vfield_tt(ui, "Number of Recipients",
+                    &mut state.gift_recipient_count,
+                    "e.g. 2",
+                    true,
+                    "Count of distinct recipients (children, grandchildren, etc.).");
+                vfield_tt(ui, "US §2503(b) Exclusion (USD)",
+                    &mut state.us_gift_exclusion_usd,
+                    "19000",
+                    true,
+                    "US annual gift-tax exclusion per donor-recipient pair (2026 = $19,000). \
+                     Per-recipient gifts above this trigger a US reporting flag.");
+            });
+        }
         ui.add_space(8.0);
 
         // ── Market Simulation ────────────────────────────────────────────────────

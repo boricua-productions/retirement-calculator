@@ -1,5 +1,5 @@
 use chrono::{Datelike, NaiveDate};
-use log::{info, warn};
+use log::info;
 
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::us_tax::TaxEngine;
@@ -142,14 +142,14 @@ pub fn handle_dividends(
                                 ev.ticker.clone(),
                             ),
                             DividendCurrency::Jpy => {
-                                // JPY-denominated ROC is uncommon; log and skip
-                                // the basis reduction to avoid currency-mixing.
-                                warn!(
-                                    "   [DIV ROC JPY] {}: ROC on JPY asset not modelled; \
-                                     routing as untaxed cash without basis reduction.",
-                                    ev.ticker,
-                                );
-                                (0.0, ev.ticker.clone())
+                                // Convert to USD-equivalent so the proportional reduction
+                                // hits the FIFO lot basis (tracked in USD). Any excess
+                                // above basis becomes a JPY-taxed capital gain.
+                                let roc_usd_equiv = ev.gross / fx;
+                                (
+                                    asset.apply_roc_basis_reduction(roc_usd_equiv, fx),
+                                    ev.ticker.clone(),
+                                )
                             }
                         }
                     } else { (0.0, ev.ticker.clone()) }

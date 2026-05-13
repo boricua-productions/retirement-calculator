@@ -1040,10 +1040,11 @@ fn project_dividends_for_month_jpy(
     };
     let mut total_jpy = 0.0_f64;
     for asset in taxable.assets.values() {
-        if asset.yield_rate <= 0.0 || asset.qty() <= 0.0 || asset.price <= 0.0 { continue; }
+        let dist_y = asset.total_distribution_yield();
+        if dist_y <= 0.0 || asset.qty() <= 0.0 || asset.price <= 0.0 { continue; }
         if !asset.dividend_months.contains(&target_month) { continue; }
         let n = asset.dividend_months.len().max(1) as f64;
-        let gross = asset.qty() * asset.price * (asset.yield_rate / n);
+        let gross = asset.qty() * asset.price * (dist_y / n);
         match asset.dividend_currency {
             crate::models::assets::DividendCurrency::Jpy => {
                 total_jpy += gross * (1.0 - JAPAN_CAPITAL_GAINS_RATE);
@@ -1114,10 +1115,11 @@ fn project_next_month_dividends_jpy(state: &SimState, fx: f64, penalty: f64) -> 
 
     let mut total_jpy = 0.0_f64;
     for asset in taxable.assets.values() {
-        if asset.yield_rate <= 0.0 || asset.qty() <= 0.0 || asset.price <= 0.0 { continue; }
+        let dist_y = asset.total_distribution_yield();
+        if dist_y <= 0.0 || asset.qty() <= 0.0 || asset.price <= 0.0 { continue; }
         if !asset.dividend_months.contains(&next_month) { continue; }
         let n = asset.dividend_months.len().max(1) as f64;
-        let gross = asset.qty() * asset.price * (asset.yield_rate / n);
+        let gross = asset.qty() * asset.price * (dist_y / n);
         match asset.dividend_currency {
             crate::models::assets::DividendCurrency::Jpy => {
                 total_jpy += gross * (1.0 - JAPAN_CAPITAL_GAINS_RATE);

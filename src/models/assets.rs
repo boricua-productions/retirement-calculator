@@ -356,7 +356,7 @@ impl Asset {
     /// `fx_at_event` is used only to lazily sync `avg_jpy_basis_per_share` when
     /// it has not yet been populated; the proportional reduction itself does
     /// not depend on FX.
-    pub fn apply_roc_basis_reduction(&mut self, roc_usd: f64, fx_at_event: f64) -> f64 {
+    pub fn apply_roc_basis_reduction(&mut self, roc_usd: f64, _fx_at_event: f64) -> f64 {
         if roc_usd <= 0.0 || self.lots.is_empty() {
             return 0.0;
         }
@@ -372,13 +372,12 @@ impl Asset {
         }
         if self.avg_jpy_basis_per_share > 0.0 {
             self.avg_jpy_basis_per_share *= 1.0 - ratio;
-        } else {
-            let q = self.qty();
-            if q > 0.0 {
-                let new_usd_per_share = self.lots.iter().map(|l| l.basis).sum::<f64>() / q;
-                self.avg_jpy_basis_per_share = new_usd_per_share * fx_at_event;
-            }
         }
+        // When avg_jpy_basis_per_share is unset (0.0 sentinel) we intentionally do
+        // NOT synthesize it from fx_at_event: that would lock in the wrong FX rate.
+        // jpy_basis_per_share(fx_fallback) will re-derive from the now-reduced USD
+        // basis at the moment of any future computation, preserving the load-time FX
+        // semantics without introducing drift.
         excess
     }
 }
