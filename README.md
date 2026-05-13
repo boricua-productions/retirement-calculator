@@ -131,6 +131,17 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | **Accum $/mo** | Scheduled monthly purchase amount during accumulation. |
 | **Freq** | How often the scheduled purchase fires: monthly, quarterly, or annually. |
 | **Stop at Retirement** | Stops scheduled buys once retirement begins. |
+| **Asset Class** *(V7.6)* | Per-position dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.). Hidden for iDeCo and 401(k) accounts — those container-style tax-advantaged accounts keep the flat-growth model. |
+| **Return Profile** *(V7.6)* | Per-position toggle: `Simple` keeps the legacy single Growth %; `📊 Detail` exposes a component-level breakdown filtered by Asset Class (Cap Growth, NAV Growth, Dividend Yield, Interest Distrib, Cap Gains Distrib, Special Distrib, Return of Capital, Expense Ratio). A live read-only `Total Return ≈` line sums price growth + distributions + ROC. |
+
+#### Family Financial Planning *(Optional)*
+
+Both channels are off by default and only emit JSON when the corresponding switch is on.
+
+| Field | What it is for |
+|-------|----------------|
+| **Fund Education** *(V7.3)* | Toggles the Tier 2.5 dedicated JPY bucket. When on, exposes **Monthly Skim (JPY)** which drains post-spend surplus into the bucket; Education-tagged expenses pull from it before touching the main waterfall. |
+| **Annual Gift to Heirs** *(V7.5)* | Toggles the Tier 9 estate-planning sink. When on, exposes **JPY per Recipient / Year**, **Number of Recipients**, and **US §2503(b) Exclusion (USD)**. Fires once per year (December); per-recipient gifts above the US exclusion raise `year_form_709_required`. |
 
 #### DC Plan Configuration
 
@@ -214,9 +225,10 @@ says otherwise. For optional income streams, use `0` when that income does not a
 
 ---
 
-## V7.5 Strategic Hardening — Cost Basis, Liquidation, and Compliance
+## V7.5–V7.6 Strategic Hardening — Cost Basis, Liquidation, and Compliance
 
-The current engine extends the V7.2 cashflow controls with V7.5 strategic compliance monitors.
+The current engine extends the V7.2 cashflow controls with V7.5 strategic compliance monitors
+and the V7.6 component-aware return model.
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -752,34 +764,39 @@ its column — never `"N/A"` or a blank. Boolean/status columns such as `FEIE_Ap
 
 ### `Vec<Position>` data model
 
-Portfolio holdings are represented as `Vec<Position>` — a typed, ordered slice of:
+Portfolio holdings are represented as `Vec<Position>` — a typed, ordered slice (`src/models/config.rs`):
 
 ```rust
 pub struct Position {
-    pub ticker:   String,
-    pub quantity: f64,
-    pub avg_cost: f64, // cost basis per share
-}
-
-impl Position {
-    pub fn cost_basis(&self) -> f64 { self.quantity * self.avg_cost }
+    pub ticker:                  String,
+    pub quantity:                f64,
+    pub avg_cost:                f64,                 // USD cost basis per share
+    pub rebalance_date:          Option<NaiveDate>,   // V6.6: per-position override
+    pub recession_override:      Option<f64>,         // V6.6: per-position drawdown %
+    pub avg_purchase_price_jpy:  f64,                 // V7.0: JPY-resident cost basis
 }
 ```
 
 `MarketDataService::calculate_account_value(&[Position])` returns `(cost_basis_usd, current_value_usd)`.
 The UI stock table and the simulation engine both read from this model; the JSON loader
-(`src/config/loader.rs`) hydrates `holdings.taxable` into `Vec<Position>` at startup.
+(`src/config/loader.rs`) hydrates each `holdings.<account>` map into an `Asset` keyed by ticker
+within an `Account` keyed by account name.
 
-### Three accounts
+### Accounts
 
-| Account | Currency | Tax treatment |
-|---------|----------|---------------|
+| JSON Key | Currency | Tax treatment |
+|----------|----------|---------------|
 | `taxable` | USD | Capital gains + dividends taxed under `tax_jurisdiction` |
+| `ira` | USD | Traditional IRA — US-deferred; Japan resident tax applies to distributions |
 | `roth_ira` | USD | US tax-free on gains; Japan resident tax may apply to distributions |
-| `japan_dc` | JPY | Japan DC / iDeCo — payout at `dc_payout_start_age` |
+| `k401` | USD | 401(k) — container-style; flat-growth model (no per-component breakdown) |
+| `nisa` | JPY | NISA — JP-side tax-advantaged shelter |
+| `ideco` | JPY | iDeCo — container-style; flat-growth model (no per-component breakdown) |
+| `japan_dc` | JPY | Japan corporate DC — uses the `DcFundRow` per-fund allocation schema; payout at `dc_payout_start_age` |
 
 Additional named brokerage accounts may be defined under `brokerage_accounts` in the JSON,
-each with its own `tax_jurisdiction` and `location`.
+each with its own `tax_jurisdiction` and `location`. NISA / iDeCo / 401(k) / DC dividends DRIP
+internally and never participate in the cashflow waterfall.
 
 ### Per-asset growth and dividends
 
@@ -882,11 +899,12 @@ Input Config, and **🔀 Compare**.
 
 ### V6.0 Active Management & Sustainability
 
-#### ⚙ Per-Ticker Management Sub-Panel
+#### ⚙ Per-Ticker Management & 📊 Return Profile Sub-Panels
 
-Each position row in the Investment Accounts grid has a **⚙** button. The grid itself stays compact
-with 8 columns, and any expanded management panels are shown just below the grid so the account
-table remains readable.
+Each position row in the Investment Accounts grid carries a **⚙** button (management settings)
+and a **📊 / Simple** button (V7.6 detailed return profile). The grid uses 10 columns; expanded
+sub-panels render below the grid so the account table stays readable. The Asset Class and Return
+Profile columns are hidden for iDeCo / 401(k) accounts (container-style; flat-growth model).
 
 | Field | Description |
 |-------|-------------|
@@ -895,8 +913,13 @@ table remains readable.
 | **Accum $/mo** | Monthly scheduled buy amount in USD. Processed by the accumulation rules engine before the VA-surplus contribution each month. |
 | **Freq** | Accumulation frequency: Monthly / Quarterly / Annual. |
 | **Stop at Retirement** | If checked, the accumulation rule fires only during the pre-retirement phase. |
+| **Asset Class** *(V7.6)* | Dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components apply and how each is taxed. |
+| **Return Profile** *(V7.6)* | When toggled on, the per-position **📊 Detail** sub-panel exposes the component fields (filtered by Asset Class): Cap Growth %, NAV Growth %, Dividend Yield %, Interest Distrib %, Cap Gains Distrib %, Special Distrib %, Return of Capital %, Expense Ratio %. A live `Total Return ≈ price + distributions + ROC` line summarises the breakdown. |
 
-Management settings are persisted in the saved JSON under `simulation_settings.accumulation_rules` (array) and `simulation_settings.target_allocations` (object).
+Management settings are persisted in the saved JSON under `simulation_settings.accumulation_rules`
+(array) and `simulation_settings.target_allocations` (object). The asset class is written as
+`holdings.<account>.<ticker>.asset_class` (snake_case) and the detailed return profile as the
+nested `return_profile` object on the same per-ticker entry.
 
 #### ⚖ Target-State Rebalancing Engine
 
@@ -1092,9 +1115,9 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 
 | JSON key | Location | Type | Description |
 |----------|----------|------|-------------|
-| `holdings.taxable` | JSON | Object | Taxable brokerage. Keys are ticker symbols; each entry has `qty`, `avg_cost`, and optional `avg_purchase_price_jpy`, `drip_enabled`, `dividend_reinvest_target`, `custom_growth_rate`, `category`, `dividend_months`, `dividend_currency` |
-| `holdings.roth_ira` | JSON | Object | Roth IRA. Same per-asset schema as `taxable` |
-| `holdings.japan_dc` | JSON | Object | Japan DC / iDeCo. Fields: qty (units), nav_jpy_per_10k (NAV in ¥ per 10,000 units / 万口), growth_rate. Currently restricted to a single fund. |
+| `holdings.taxable` | JSON | Object | Taxable brokerage. Keys are ticker symbols; each entry has `qty`, `avg_cost`, and optional `avg_purchase_price_jpy`, `drip_enabled`, `dividend_reinvest_target`, `custom_growth_rate`, `category`, `dividend_months`, `dividend_currency`, `pfic_regime` *(V7.5)*, `asset_class` *(V7.6: `stock`/`etf`/`mutual_fund`/`other`)*, `return_profile` *(V7.6: nested object — see §6)* |
+| `holdings.roth_ira` / `holdings.ira` / `holdings.k401` / `holdings.nisa` / `holdings.ideco` | JSON | Object | Same per-asset schema as `taxable`. Per-component `return_profile` and `asset_class` are honoured for IRA / Roth IRA / NISA; iDeCo and 401(k) bypass the per-component model. |
+| `holdings.japan_dc` | JSON | Object | Japan corporate DC. Multi-fund: top-level `qty` (units) and `nav_jpy_per_10k` (NAV in ¥ per 10,000 units / 万口); the per-fund allocation is persisted in `simulation_settings.dc_funds` (array of `{fund_name, units, price_per_10k_jpy, contrib_alloc_pct, growth_rate_pct, stop_at_retirement}`). |
 | `market_prices_usd` | JSON | Object | Manual price override per ticker. Set to `0` to use fallback price |
 | `growth_rates_annual` | JSON | Object | Per-ticker annual CAGR. Ignored for any ticker when `fetch_live_growth_rates: true` |
 | `fetch_live_growth_rates` | Input Config | `bool` | `false` | When `true`, fetches 10-year CAGR from Yahoo Finance; falls back to 7% on failure |
@@ -1183,6 +1206,11 @@ values.
 | `pre_funded_us_tax_usd` | — | `f64` | `0` | Pre-reserved US tax cash at simulation start |
 | `dc_payout_method` | — | string | `ANNUITY_20YR` | `LUMP_SUM` (invested to Taxable) or `ANNUITY_20YR` (240 monthly draws) |
 | `dc_payout_start_age` | — | `u32` | `60` | Age at which DC payout begins |
+| `jido_teate_enabled` *(V7.3)* | — | `bool` | `true` | Tier 0.5 Jido Teate child allowance. When `true` and a dependent child is age 0–18, pays ¥15k/mo (0–3) or ¥10k/mo (3–18) on a bi-monthly cadence. No income cap is modeled. |
+| `edu_savings_jpy_monthly` *(V7.3)* | Monthly Skim (JPY) | `f64` | `0` | Tier 2.5 Education Fund accumulation. Monthly JPY skim from post-spend surplus into the dedicated bucket. `0` disables the channel. UI gates this behind a **Fund Education** toggle in the Family Financial Planning section. |
+| `annual_gift_jpy_per_recipient` *(V7.5)* | JPY per Recipient / Year | `f64` | `0` | Tier 9 Estate Planning Gift Sink: annual JPY gift amount per recipient (typically ¥1,100,000 = 暦年贈与 exclusion). Fires once per year in December. |
+| `gift_recipient_count` *(V7.5)* | Number of Recipients | `u32` | `0` | Number of gift recipients. `0` (or `annual_gift_jpy_per_recipient = 0`) disables the channel. |
+| `us_gift_exclusion_usd` *(V7.5)* | US §2503(b) Exclusion (USD) | `f64` | `19000` | US annual gift-tax exclusion per donor-recipient pair (2026). Per-recipient gifts above this raise `year_form_709_required`. |
 
 ### 9.6 Rebalancing
 
@@ -1411,7 +1439,7 @@ retirement-calculator-v2/
         └── panels/
             ├── chart_panel.rs
             ├── config_panel.rs
-            ├── input_panel.rs      ← Input Config tab; Vec<StockRow>; Equity & Vesting; VA/SMC overrides
+            ├── input_panel.rs      ← Input Config tab; Vec<InvestmentAccountRow>/PositionRow; Asset Class + Return Profile (V7.6); Family Financial Planning toggles (V7.3 edu / V7.5 gift); VA/SMC overrides
             ├── overview_panel.rs
             ├── results_table.rs
             ├── rsu_panel.rs

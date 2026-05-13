@@ -6,7 +6,7 @@ use std::fs;
 
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::us_tax::state_tax_rate;
-use crate::models::assets::{Account, AccountJurisdiction, AccountLocation, Asset, AssetCategory, Currency, DividendCurrency};
+use crate::models::assets::{Account, AccountJurisdiction, AccountLocation, Asset, AssetCategory, AssetClass, Currency, DetailedReturnProfile, DividendCurrency};
 use crate::models::config::{AccumulationRule, Config, Dependent, FamilyUnit, FXShockEvent, InvestmentLocation, MilitaryRetiredConfig, NhiCalculatedRates, NhiModel, RecessionEvent, TaxProtocol, TaxRules, UsTaxStrategy, VaDependentStatus, VaRates, WaterfallStrategy, WithdrawalStrategy};
 use crate::models::expense::ExpenseRule;
 use crate::models::rsu::{RsuAward, VestingCadence};
@@ -33,6 +33,35 @@ impl std::fmt::Display for LoadError {
 pub struct LoadedScenario {
     pub config: Config,
     pub accounts: HashMap<String, Account>,
+}
+
+/// V7.6 — Parse `info["asset_class"]` snake_case string into an `AssetClass`.
+fn parse_asset_class(info: &Value) -> AssetClass {
+    match info["asset_class"].as_str().unwrap_or("stock") {
+        "etf" | "ETF" | "Etf"                   => AssetClass::Etf,
+        "mutual_fund" | "MutualFund" | "mutual" => AssetClass::MutualFund,
+        "other" | "Other"                       => AssetClass::Other,
+        _                                       => AssetClass::Stock,
+    }
+}
+
+/// V7.6 — Parse `info["return_profile"]` object into a `DetailedReturnProfile`.
+/// Returns `None` if the field is absent or not an object (engine falls back to
+/// the legacy single-yield model).
+fn parse_return_profile(info: &Value) -> Option<DetailedReturnProfile> {
+    let p = info.get("return_profile")?;
+    if !p.is_object() { return None; }
+    let f = |k: &str| p[k].as_f64().unwrap_or(0.0);
+    Some(DetailedReturnProfile {
+        cap_growth:     f("cap_growth"),
+        nav_growth:     f("nav_growth"),
+        dividend_yield: f("dividend_yield"),
+        interest_yield: f("interest_yield"),
+        cap_gains_dist: f("cap_gains_dist"),
+        special_dist:   f("special_dist"),
+        roc:            f("roc"),
+        expense_ratio:  f("expense_ratio"),
+    })
 }
 
 /// Parse a JSON scenario file into a `LoadedScenario`.
@@ -735,8 +764,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     dividend_currency,
                     pfic_regime,
                     pfic_prior_year_fmv_per_share: 0.0,
-                    asset_class: crate::models::assets::AssetClass::default(),
-                    return_profile: None,
+                    asset_class: parse_asset_class(info),
+                    return_profile: parse_return_profile(info),
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);
@@ -815,8 +844,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                             dividend_currency: div_currency,
                             pfic_regime: pfic_regime_b,
                             pfic_prior_year_fmv_per_share: 0.0,
-                            asset_class: crate::models::assets::AssetClass::default(),
-                            return_profile: None,
+                            asset_class: parse_asset_class(info),
+                            return_profile: parse_return_profile(info),
                             lots: Vec::new(),
                         };
                         asset.add_lot(start_date, qty, basis);
@@ -874,8 +903,8 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     dividend_currency: div_currency,
                     pfic_regime: crate::models::assets::PficRegime::NotPfic,
                     pfic_prior_year_fmv_per_share: 0.0,
-                    asset_class: crate::models::assets::AssetClass::default(),
-                    return_profile: None,
+                    asset_class: parse_asset_class(info),
+                    return_profile: parse_return_profile(info),
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);

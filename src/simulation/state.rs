@@ -47,7 +47,13 @@ pub struct SimState {
     // ── FTC Carryover (IRC §904) ──────────────────────────────────────────────────
     /// Unused Foreign Tax Credit carried forward from prior years (USD).
     /// Applied to reduce US federal liability before new credits each December.
+    /// Retained for snapshot reporting; equals passive + general totals.
     pub ftc_carryover_usd: f64,
+    /// V7.6 — Passive-basket FTC carryover (IRC §904(c)). Dividends, cap-gains
+    /// distributions, interest, PFIC §1296 MTM. Must not offset general-basket tax.
+    pub ftc_carryover_passive_usd: f64,
+    /// V7.6 — General-basket FTC carryover (IRC §904(c)). FERS, SS, SSDI, RSU.
+    pub ftc_carryover_general_usd: f64,
 
     // ── V7.5 — Japan Capital-Loss Carry-Forward ───────────────────────────────────
     /// Rolling 3-year Japan capital-loss carry-forward (JPY, unsigned magnitude).
@@ -132,6 +138,8 @@ impl SimState {
             roth_rebalance_executed: false,
             bridge_exhausted_logged: false,
             ftc_carryover_usd: 0.0,
+            ftc_carryover_passive_usd: 0.0,
+            ftc_carryover_general_usd: 0.0,
             japan_loss_carryforward_jpy: 0.0,
             gift_sink_jpy: 0.0,
             nhi_ninki_keizoku_months_remaining: 0,

@@ -602,14 +602,12 @@ impl SimulationController {
                 (0.0, 0.0)
             };
 
-        // IRC §904 carryover: augment current-year Japan tax with unused credits from
-        // prior years. Carryover defaults to the passive basket (where most
-        // expat investment income lives); for stricter accounting users could
-        // later split carryover by origin, but the single-bucket model is
-        // sufficient for the V7.6 audit.
-        let available_carryover = self.state.ftc_carryover_usd;
-        let effective_passive_usd = japan_tax_passive_usd + available_carryover;
-        let effective_general_usd = japan_tax_general_usd;
+        // IRC §904(c) per-basket carryover: prior-year unused credits stay in their
+        // source basket so passive credit can never absorb general-basket liability.
+        let effective_passive_usd = japan_tax_passive_usd
+            + self.state.ftc_carryover_passive_usd;
+        let effective_general_usd = japan_tax_general_usd
+            + self.state.ftc_carryover_general_usd;
         // Lumped value retained for the FEIE path (legacy lumped FTC math).
         let effective_japan_tax_usd = effective_passive_usd + effective_general_usd;
 
@@ -632,12 +630,35 @@ impl SimulationController {
         // Restore std_deduction (senior add-on is per-year, not permanently inflated).
         self.tax_engine.rules.std_deduction = saved_std_deduction;
 
-        // Any effective Japan tax not absorbed by the federal liability carries forward.
-        let unused_ftc = (effective_japan_tax_usd - liability.ftc_applied).max(0.0);
+        // Per-basket unused FTC: each basket's surplus carries within that basket.
+        let passive_used = liability.breakdown.get("ftc_passive").copied().unwrap_or(0.0);
+        let general_used = liability.breakdown.get("ftc_general").copied().unwrap_or(0.0);
+        // For the FEIE path, breakdown has only "ftc_applied"; fall back to proportional split.
+        let new_passive_co = if liability.feie_applied {
+            (effective_japan_tax_usd - liability.ftc_applied).max(0.0)
+                * if effective_japan_tax_usd > 0.0 {
+                    effective_passive_usd / effective_japan_tax_usd
+                } else { 1.0 }
+        } else {
+            (effective_passive_usd - passive_used).max(0.0)
+        };
+        let new_general_co = if liability.feie_applied {
+            (effective_japan_tax_usd - liability.ftc_applied).max(0.0)
+                * if effective_japan_tax_usd > 0.0 {
+                    effective_general_usd / effective_japan_tax_usd
+                } else { 0.0 }
+        } else {
+            (effective_general_usd - general_used).max(0.0)
+        };
+        let unused_ftc = new_passive_co + new_general_co;
         if unused_ftc > 0.0 {
-            info!("   [FTC Carryover] Year {}: ${:.2} unused FTC carried forward (was ${:.2})",
-                yr, unused_ftc, available_carryover);
+            info!(
+                "   [FTC Carryover] Year {}: ${:.2} unused (passive ${:.2} / general ${:.2})",
+                yr, unused_ftc, new_passive_co, new_general_co,
+            );
         }
+        self.state.ftc_carryover_passive_usd = new_passive_co;
+        self.state.ftc_carryover_general_usd = new_general_co;
         self.state.ftc_carryover_usd = unused_ftc;
 
         self.state.stats.year_feie_applied = liability.feie_applied;
