@@ -396,6 +396,32 @@ impl GainBreakdown {
     }
 }
 
+/// V7.7 — A single target allocation entry for per-account rebalancing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebalanceTarget {
+    pub ticker: String,
+    /// Target weight as a fraction (0.0–1.0). Weights should sum to 1.0.
+    pub weight: f64,
+}
+
+/// V7.7 — Per-account rebalance strategy. When attached to an `Account`, the
+/// rebalancing engine fires on the configured schedule independent of the global
+/// `cfg.rebalance_enabled` flag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountRebalanceStrategy {
+    pub enabled: bool,
+    /// First (year, month) when this strategy may fire.
+    pub trigger_year_month: (i32, u32),
+    /// When true, fires exactly once on `trigger_year_month` then self-disables.
+    pub is_one_time: bool,
+    /// Fire every N months after `trigger_year_month` (ignored when `is_one_time`).
+    #[serde(default = "default_frequency_months")]
+    pub frequency_months: u32,
+    pub targets: Vec<RebalanceTarget>,
+}
+
+fn default_frequency_months() -> u32 { 12 }
+
 /// A financial account holding multiple assets.
 /// Mirrors Python's `Account` class.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -409,6 +435,18 @@ pub struct Account {
     /// Which tax jurisdiction(s) apply to gains/income from this account.
     #[serde(default)]
     pub tax_jurisdiction: AccountJurisdiction,
+    /// V7.7 — Per-account rebalance strategy. When `Some`, the account-level
+    /// rebalancer fires independently of the global `cfg.rebalance_enabled` flag.
+    #[serde(default)]
+    pub rebalance_strategy: Option<AccountRebalanceStrategy>,
+    /// V7.7 — When true, US tax rules apply to income/gains from this account.
+    /// Default false → only accounts the US tax system explicitly reaches are taxed.
+    #[serde(default)]
+    pub us_tax_advantaged: bool,
+    /// V7.7 — When true, Japan tax rules do NOT apply to income/gains from this
+    /// account (e.g. NISA, iDeCo / DC). Default false.
+    #[serde(default)]
+    pub japan_tax_advantaged: bool,
 }
 
 impl Account {
@@ -420,6 +458,9 @@ impl Account {
             assets: HashMap::new(),
             location: AccountLocation::default(),
             tax_jurisdiction: AccountJurisdiction::default(),
+            rebalance_strategy: None,
+            us_tax_advantaged: false,
+            japan_tax_advantaged: false,
         }
     }
 
@@ -436,6 +477,9 @@ impl Account {
             assets: HashMap::new(),
             location,
             tax_jurisdiction,
+            rebalance_strategy: None,
+            us_tax_advantaged: false,
+            japan_tax_advantaged: false,
         }
     }
 

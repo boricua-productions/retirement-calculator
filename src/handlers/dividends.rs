@@ -4,8 +4,8 @@ use log::info;
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::us_tax::TaxEngine;
 use crate::handlers::cashflow_manager::JAPAN_CAPITAL_GAINS_RATE;
-use crate::models::assets::{Account, DividendCurrency, PficRegime};
-use crate::models::config::{Config, TaxProtocol};
+use crate::models::assets::{Account, AccountJurisdiction, DividendCurrency, PficRegime};
+use crate::models::config::Config;
 use crate::simulation::state::SimState;
 
 /// V7.6 — Component classification for a single distribution event.
@@ -124,9 +124,23 @@ pub fn handle_dividends(
     let mut div_net_jpy = 0.0_f64;
 
     // ── Taxable account distributions ─────────────────────────────────────────
-    let taxable_events: Vec<DistributionEvent> = match state.accounts.get("Taxable") {
-        Some(a) => collect_distribution_events(a, mo),
-        None    => return (0.0, 0.0),
+    // §5.1 — Extract per-account tax flags before borrowing state mutably.
+    let (taxable_events, apply_us_tax, apply_japan_tax) = {
+        let acc = match state.accounts.get("Taxable") {
+            Some(a) => a,
+            None    => return (0.0, 0.0),
+        };
+        let events = collect_distribution_events(acc, mo);
+        let jurisdiction = acc.tax_jurisdiction;
+        let us_tax_adv  = acc.us_tax_advantaged;
+        let jp_tax_adv  = acc.japan_tax_advantaged;
+        let consult_us  = matches!(jurisdiction,
+            AccountJurisdiction::Us | AccountJurisdiction::Both);
+        let consult_jp  = matches!(jurisdiction,
+            AccountJurisdiction::Japan | AccountJurisdiction::Both);
+        let apply_us  = consult_us  && !us_tax_adv;
+        let apply_jp  = consult_jp  && !jp_tax_adv;
+        (events, apply_us, apply_jp)
     };
 
     for ev in taxable_events {
@@ -206,6 +220,7 @@ pub fn handle_dividends(
                 let (net_usd_add, net_jpy_add) = process_taxable_dist_event(
                     state, cfg, tax_engine, &estimate_annual_ord_income,
                     yr, is_retired, is_schd_pivot, current_date, &ev,
+                    apply_us_tax, apply_japan_tax,
                 );
                 div_net_usd += net_usd_add;
                 div_net_jpy += net_jpy_add;
@@ -219,12 +234,13 @@ pub fn handle_dividends(
     finish_dc_drip(state, current_date, mo, div_net_usd, div_net_jpy)
 }
 
-/// V7.6 — Process a single non-ROC distribution event in the Taxable account.
+/// V7.7 — Process a single non-ROC distribution event in the Taxable account.
 /// Handles US/JPY currency split, marginal tax estimation, DRIP vs net routing.
+/// `apply_us_tax` / `apply_japan_tax` come from the §5.1 account-level logic gate.
 /// Returns the `(net_usd, net_jpy)` increment for this single event.
 fn process_taxable_dist_event(
     state: &mut SimState,
-    cfg: &Config,
+    _cfg: &Config,
     tax_engine: &TaxEngine,
     estimate_annual_ord_income: &impl Fn(&SimState, i32) -> f64,
     yr: i32,
@@ -232,6 +248,8 @@ fn process_taxable_dist_event(
     is_schd_pivot: bool,
     current_date: NaiveDate,
     ev: &DistributionEvent,
+    apply_us_tax: bool,
+    apply_japan_tax: bool,
 ) -> (f64, f64) {
     let gross = ev.gross;
     let fx = state.current_fx;
@@ -276,13 +294,21 @@ fn process_taxable_dist_event(
             let est_ord = estimate_annual_ord_income(state, yr);
             let gains_pre  = state.stats.year_div_gross + state.stats.year_cap_gains - gross;
             let gains_post = state.stats.year_div_gross + state.stats.year_cap_gains;
-            let tax_due = if cfg.tax_jurisdiction != TaxProtocol::JapanOnly {
+            // §5.1 gate: apply US tax only when account jurisdiction requires it.
+            let us_tax_due = if apply_us_tax {
                 let pre  = tax_engine.calculate_liability(yr, est_ord, 0.0, gains_pre).total_tax;
                 let post = tax_engine.calculate_liability(yr, est_ord, 0.0, gains_post).total_tax;
                 (post - pre).max(0.0)
             } else {
                 0.0
             };
+            // §5.1 gate: apply Japan 20.315% on USD dividends post-retirement when required.
+            let jp_tax_usd = if apply_japan_tax && is_retired {
+                gross * JAPAN_CAPITAL_GAINS_RATE
+            } else {
+                0.0
+            };
+            let tax_due = us_tax_due + jp_tax_usd;
 
             if !is_retired {
                 if tax_due > 0.0 {
@@ -306,21 +332,21 @@ fn process_taxable_dist_event(
             } else {
                 let net = gross - tax_due;
                 net_usd_add += net;
-                if tax_due > 0.0 {
-                    state.stats.year_tax_routed += tax_due;
-                    state.stats.year_div_tax    += tax_due;
+                if us_tax_due > 0.0 {
+                    state.stats.year_tax_routed += us_tax_due;
+                    state.stats.year_div_tax    += us_tax_due;
                 }
-                info!("   [DIV USD {:?}] {} div=${:.2} tax=${:.2} net=${:.2}",
-                    ev.component, ev.ticker, gross, tax_due, net);
+                if jp_tax_usd > 0.0 {
+                    state.stats.year_japan_cap_gains_tax_jpy += jp_tax_usd * fx;
+                }
+                info!("   [DIV USD {:?}] {} div=${:.2} us_tax=${:.2} jp_tax=${:.2} net=${:.2}",
+                    ev.component, ev.ticker, gross, us_tax_due, jp_tax_usd, net);
             }
         }
 
         DividendCurrency::Jpy => {
-            let is_tax_free = state.accounts.get("Taxable")
-                .map(|a| a.tax_jurisdiction == crate::models::assets::AccountJurisdiction::None)
-                .unwrap_or(false);
-
-            let tax_jpy = if is_retired && !is_tax_free {
+            // §5.1 gate: Japan tax applies only when account requires it.
+            let tax_jpy = if is_retired && apply_japan_tax {
                 gross * JAPAN_CAPITAL_GAINS_RATE
             } else {
                 0.0

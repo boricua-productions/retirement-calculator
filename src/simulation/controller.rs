@@ -17,7 +17,7 @@ use crate::engine::tax::us_tax::{ssdi_combined_income_taxable_portion, TaxEngine
 use crate::handlers::cashflow_manager::manage_monthly_cashflow;
 use crate::handlers::contributions::handle_contributions;
 use crate::handlers::dividends::handle_dividends;
-use crate::handlers::rebalancing::handle_rebalancing;
+use crate::handlers::rebalancing::{execute_account_rebalance_strategy, handle_rebalancing, is_rebalance_month};
 use crate::handlers::retirement_transition::handle_transition;
 use crate::handlers::roth_rebalancer::{execute_roth_rebalance, roth_rebalance_trigger_date};
 use crate::handlers::rsu_vesting::handle_rsu_vesting;
@@ -183,6 +183,13 @@ impl SimulationController {
             }
         }
 
+        // ── V7.7 — Pre-retirement salary JPY accumulation ────────────────────
+        if self.state.date < self.cfg.retirement_date {
+            let monthly_salary_jpy =
+                (self.cfg.total_annual_compensation_usd / 12.0) * self.state.current_fx;
+            self.state.stats.year_salary_jpy += monthly_salary_jpy;
+        }
+
         // ── RSU vesting ───────────────────────────────────────────────────────
         {
             let cfg = &self.cfg;
@@ -222,6 +229,36 @@ impl SimulationController {
         // ── Periodic target-state rebalancing (V6.0) ─────────────────────────
         handle_rebalancing(&mut self.state, &self.cfg);
 
+        // ── V7.7 — Per-account rebalance strategy ─────────────────────────────
+        let acct_names: Vec<String> = self.state.accounts.keys().cloned().collect();
+        for acct_name in acct_names {
+            let strategy_opt = self.state.accounts.get(&acct_name)
+                .and_then(|a| a.rebalance_strategy.clone());
+            if let Some(strategy) = strategy_opt {
+                if !strategy.enabled { continue; }
+                let (tyr, tmo) = strategy.trigger_year_month;
+                let should_fire = if strategy.is_one_time {
+                    yr == tyr && mo == tmo
+                } else if yr < tyr || (yr == tyr && mo < tmo) {
+                    false
+                } else {
+                    is_rebalance_month(self.state.date, strategy.frequency_months)
+                };
+                if should_fire {
+                    execute_account_rebalance_strategy(
+                        &mut self.state, &self.cfg, &acct_name, &strategy,
+                    );
+                    if strategy.is_one_time {
+                        if let Some(acct) = self.state.accounts.get_mut(&acct_name) {
+                            if let Some(s) = &mut acct.rebalance_strategy {
+                                s.enabled = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Post-retirement cashflow management ───────────────────────────────
         if self.state.date >= self.cfg.retirement_date {
             let cfg = &self.cfg;
@@ -235,6 +272,13 @@ impl SimulationController {
                 mo,
                 is_qtr,
             );
+        }
+
+        // ── V7.7 — December pre-retirement history capture ────────────────────
+        if mo == 12 && self.state.date < self.cfg.retirement_date {
+            self.state.salary_history.insert(yr, self.state.stats.year_salary_jpy);
+            self.state.rsu_vest_history.insert(yr, self.state.stats.year_rsu_vest_jpy);
+            self.compute_working_year_japan_income_tax(yr);
         }
 
         // ── Year-end tax true-up (December, post-retirement) ──────────────────
@@ -367,16 +411,28 @@ impl SimulationController {
 
         let prev_year = current_year - 1;
 
-        let gross_salary = if prev_year == self.cfg.retirement_date.year() {
-            self.cfg.retirement_year_gross_income_jpy
-        } else {
-            0.0
+        // N-1 hand-off: use salary + RSU vest history captured in December of the
+        // prior year. Falls back to the static config field for backward compat when
+        // history is absent (configs that predate V7.7).
+        let gross_salary = {
+            let sal = self.state.salary_history.get(&prev_year).copied().unwrap_or(0.0);
+            let rsu = self.state.rsu_vest_history.get(&prev_year).copied().unwrap_or(0.0);
+            if sal + rsu > 0.0 {
+                sal + rsu
+            } else if prev_year == self.cfg.retirement_date.year() {
+                self.cfg.retirement_year_gross_income_jpy
+            } else {
+                0.0
+            }
         };
         // Convert prior-year income streams to JPY for Japan's resident tax engine.
         let fers_annual_jpy = self.state.fers_history.get(&prev_year).copied().unwrap_or(0.0)
             * self.state.current_fx;
-        // Article 18: FERS exempt from Japan resident tax when flag is set.
-        let fers_for_japan = if self.cfg.fers_japan_local_tax_exempt { 0.0 } else { fers_annual_jpy };
+        // Article 18: FERS exempt from Japan resident tax when the flag is set OR
+        // when FERS jurisdiction is configured as US-only (treaty routing).
+        let fers_for_japan = if self.cfg.fers_japan_local_tax_exempt
+            || self.cfg.fers_jurisdiction == TaxJurisdiction::UsOnly
+        { 0.0 } else { fers_annual_jpy };
         // Article 17: SS classified as public pension income in Japan (公的年金等控除 applies).
         let ss_annual_jpy = self.state.stats.year_ss_payout_usd * self.state.current_fx;
         // SSDI routed through public pension deduction (existing treatment, unchanged).
@@ -511,6 +567,31 @@ impl SimulationController {
             self.cfg.expense_rules.push(rule.clone());
             self.cf_engine.add_expense_rules(&[rule]);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  V7.7 — Working-year Japan income tax (所得税) calculator
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn compute_working_year_japan_income_tax(&mut self, yr: i32) {
+        if self.cfg.tax_jurisdiction == TaxJurisdiction::UsOnly {
+            return;
+        }
+        let gross_earned_jpy = self.state.stats.year_salary_jpy
+            + self.state.stats.year_rsu_vest_jpy;
+        if gross_earned_jpy <= 0.0 {
+            return;
+        }
+        let age = yr - self.cfg.birth_date.year();
+        let soc_ins_paid = self.state.stats.year_exp_nhi + self.state.stats.year_exp_nenkin;
+        let tax = JapanTaxEngine::calculate_income_tax(
+            gross_earned_jpy,
+            0.0,
+            soc_ins_paid,
+            age,
+            1,
+        );
+        self.state.stats.year_japan_income_tax_jpy = tax;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -773,6 +854,7 @@ impl SimulationController {
             dist_cap_gains_usd: s.year_dist_cap_gains_usd,
             dist_special_usd: s.year_dist_special_usd,
             dist_roc_usd: s.year_dist_roc_usd,
+            japan_income_tax_jpy: s.year_japan_income_tax_jpy,
         });
     }
 

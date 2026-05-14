@@ -98,6 +98,7 @@ pub fn handle_rsu_vesting(
         }
 
         state.stats.year_rsu_vest_usd += vest_value;
+        state.stats.year_rsu_vest_jpy += vest_value * state.current_fx;
         state.stats.acc_ord_inc += vest_value;
     }
 }

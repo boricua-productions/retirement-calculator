@@ -108,6 +108,62 @@ impl JapanTaxEngine {
         taxable * income_rate + per_capita_jpy
     }
 
+    /// V7.7 — Calculates Japan income tax (所得税) for working years.
+    ///
+    /// Formula:
+    ///   net_salary  = max(0, salary - employment_deduction)
+    ///   net_pension = max(0, pension - pension_deduction)
+    ///   basis       = net_salary + net_pension
+    ///   basic_deduction  = ¥480,000 (income tax; cf. resident tax ¥430,000)
+    ///   spouse_deduction = ¥380,000 × num_dependents (income ≤ ¥9M)
+    ///   taxable = max(0, basis − basic − spouse − social_insurance)
+    ///   tax = bracket lookup + reconstruction surcharge (× 1.021)
+    pub fn calculate_income_tax(
+        gross_salary_jpy: f64,
+        gross_pension_jpy: f64,
+        social_insurance_paid_jpy: f64,
+        age: i32,
+        num_dependents: u32,
+    ) -> f64 {
+        let net_salary  = (gross_salary_jpy  - Self::employment_deduction(gross_salary_jpy)).max(0.0);
+        let net_pension = (gross_pension_jpy - Self::pension_deduction(gross_pension_jpy, age)).max(0.0);
+        let total_income_basis = net_salary + net_pension;
+
+        let basic_deduction = 480_000.0;
+        let spouse_deduction = if total_income_basis <= 9_000_000.0 {
+            380_000.0 * num_dependents as f64
+        } else if total_income_basis <= 9_500_000.0 {
+            260_000.0 * num_dependents as f64
+        } else if total_income_basis <= 10_000_000.0 {
+            130_000.0 * num_dependents as f64
+        } else {
+            0.0
+        };
+
+        let total_deductions = social_insurance_paid_jpy + basic_deduction + spouse_deduction;
+        let taxable = (total_income_basis - total_deductions).max(0.0);
+
+        // Progressive brackets (NTA 2024 — income tax, not resident tax).
+        let base_tax = if taxable <= 1_950_000.0 {
+            taxable * 0.05
+        } else if taxable <= 3_300_000.0 {
+            taxable * 0.10 - 97_500.0
+        } else if taxable <= 6_950_000.0 {
+            taxable * 0.20 - 427_500.0
+        } else if taxable <= 9_000_000.0 {
+            taxable * 0.23 - 636_000.0
+        } else if taxable <= 18_000_000.0 {
+            taxable * 0.33 - 1_536_000.0
+        } else if taxable <= 40_000_000.0 {
+            taxable * 0.40 - 2_796_000.0
+        } else {
+            taxable * 0.45 - 4_796_000.0
+        };
+
+        // 2.1% reconstruction surcharge (復興特別所得税).
+        base_tax * 1.021
+    }
+
     /// Estimates resident tax for the year immediately following retirement.
     /// Uses the same basic deduction (¥430,000) and standard per-capita flat fee
     /// (¥6,000) as `calculate_resident_tax`, so the bridge-fund sizing matches

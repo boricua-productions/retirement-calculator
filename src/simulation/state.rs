@@ -102,6 +102,13 @@ pub struct SimState {
     /// Annual gross dividend income history: year → gross_usd.
     /// Used to include US investment income in the NHI basis when enabled.
     pub div_income_history: HashMap<i32, f64>,
+    /// V7.7 — Annual gross salary history: year → gross_jpy.
+    /// Captured in December of each pre-retirement year; drives N-1 resident tax.
+    pub salary_history: HashMap<i32, f64>,
+    /// V7.7 — Annual RSU vest value history: year → vest_jpy.
+    /// Captured in December of each pre-retirement year; combined with salary
+    /// for the N-1 resident tax N-1 hand-off.
+    pub rsu_vest_history: HashMap<i32, f64>,
 
     // ── Quarterly Cashflow Tracking ───────────────────────────────────────────────
     pub qtr_inc_jpy: f64,
@@ -154,6 +161,8 @@ impl SimState {
             fers_history: HashMap::new(),
             social_insurance_history: HashMap::new(),
             div_income_history: HashMap::new(),
+            salary_history: HashMap::new(),
+            rsu_vest_history: HashMap::new(),
             qtr_inc_jpy: 0.0,
             qtr_exp_jpy: 0.0,
             current_month_div_net_usd: 0.0,

@@ -106,6 +106,15 @@ pub struct AnnualStats {
     /// V7.5 — true if any per-recipient gift exceeded the US $19k exclusion
     /// (flagged for Form 709 filing in the audit report).
     pub year_form_709_required: bool,
+    /// V7.7 — Gross salary earned this year (JPY). Pre-retirement only.
+    /// Accumulated monthly; captured into `salary_history` in December.
+    pub year_salary_jpy: f64,
+    /// V7.7 — RSU vest value this year (JPY). Pre-retirement only.
+    /// Accumulated at each vest event; captured into `rsu_vest_history` in December.
+    pub year_rsu_vest_jpy: f64,
+    /// V7.7 — Japan income tax (所得税) paid this year (JPY). Pre-retirement only.
+    /// Computed once in December via `JapanTaxEngine::calculate_income_tax`.
+    pub year_japan_income_tax_jpy: f64,
 }
 
 impl AnnualStats {

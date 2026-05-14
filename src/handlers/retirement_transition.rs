@@ -6,6 +6,7 @@ use crate::engine::market_data::MarketDataService;
 use crate::engine::rsu_engine::add_years;
 use crate::engine::tax::japan_tax::JapanTaxEngine;
 use crate::engine::tax::us_tax::TaxEngine;
+use crate::handlers::rebalancing::execute_account_rebalance_strategy;
 use crate::models::assets::{AssetLot, Asset};
 use crate::models::config::Config;
 use crate::models::constants::SimConstants;
@@ -312,6 +313,20 @@ pub fn handle_transition(
                 .buy(primary, cash_for_reinvest, current_date, price, growth);
             let qty_bought = if price > 0.0 { spent / price } else { 0.0 };
             buys_snapshot.push(BuyRecord { ticker: primary.to_string(), qty_bought, cost: spent });
+        }
+    }
+
+    // V7.7 — RSU migrate_on_retirement: if any award has the flag set, fire the
+    // Taxable account's per-account rebalance_strategy to migrate RSU proceeds
+    // into the configured target allocations.
+    let has_rsu_migration = cfg.rsu_awards.iter().any(|a| a.migrate_on_retirement);
+    if has_rsu_migration {
+        let strategy_opt = state.accounts.get("Taxable")
+            .and_then(|a| a.rebalance_strategy.clone());
+        if let Some(mut strategy) = strategy_opt {
+            // Force one-time execution regardless of the trigger date.
+            strategy.enabled = true;
+            execute_account_rebalance_strategy(state, cfg, "Taxable", &strategy);
         }
     }
 

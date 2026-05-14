@@ -163,6 +163,9 @@ fn minimal_cfg() -> Config {
         tlh_enabled: false,
         tlh_active_months: vec![11, 12],
         tlh_min_loss_usd: 500.0,
+        // V7.7 defaults
+        enable_education_savings: true,
+        enable_gift_sink: true,
     }
 }
 
