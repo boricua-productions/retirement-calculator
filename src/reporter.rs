@@ -355,22 +355,30 @@ pub fn format_text_report(results: &SimResults, rsu_engine: &RsuEngine) -> Strin
     out
 }
 
+/// V7.7 — Returns the CSV column header line (§1.3 Zero-Footprint check).
+/// Used by tests to verify no prohibited regulatory terms appear in CSV output.
+pub fn csv_headers() -> Vec<&'static str> {
+    CSV_HEADER_LINE.split(',').collect()
+}
+
+const CSV_HEADER_LINE: &str =
+    "Year,FX_JPY_per_USD,Brokerage_USD,Roth_USD,DC_JPY,\
+     DivGross_USD,DivNet_USD,FERSNet_USD,VA_Benefit_USD,RSUVest_USD,\
+     SS_Payout_USD,Nenkin_Income_JPY,\
+     TotalIncNet_USD,TotalIncNet_JPY,\
+     BaseExp_JPY,NHI_JPY,Nenkin_JPY,ResTax_JPY,TotalExp_JPY,\
+     Gap_JPY,USTaxCharged_USD,JapanTaxCharged_JPY,FEIE_Applied,\
+     BridgeFund_USD,WarChest_JPY,WarChestUsed_JPY,ExtTaxPaid_USD,\
+     BridgeExhausted,ForcedLiquidations_USD,FTC_Carryover_USD,Purchasing_Power_USD,\
+     DivCoverageRatio,JapanCapGainsTax_JPY,StateCapGainsTax_USD,\
+     FXPenalty_JPY,MonthsAtMin,\
+     TotalGrossReturn_USD,TotalNetReturn_USD,TaxFriction_USD,\
+     Dist_Dividend_USD,Dist_Interest_USD,Dist_CapGains_USD,Dist_Special_USD,Dist_ROC_USD";
+
 /// Formats the full annual breakdown as a CSV string.
 pub fn format_csv(results: &SimResults) -> String {
-    let mut csv = String::from(
-        "Year,FX_JPY_per_USD,Brokerage_USD,Roth_USD,DC_JPY,\
-         DivGross_USD,DivNet_USD,FERSNet_USD,VA_Benefit_USD,RSUVest_USD,\
-         SS_Payout_USD,Nenkin_Income_JPY,\
-         TotalIncNet_USD,TotalIncNet_JPY,\
-         BaseExp_JPY,NHI_JPY,Nenkin_JPY,ResTax_JPY,TotalExp_JPY,\
-         Gap_JPY,USTaxCharged_USD,JapanTaxCharged_JPY,FEIE_Applied,\
-         BridgeFund_USD,WarChest_JPY,WarChestUsed_JPY,ExtTaxPaid_USD,\
-         BridgeExhausted,ForcedLiquidations_USD,FTC_Carryover_USD,Purchasing_Power_USD,\
-         DivCoverageRatio,JapanCapGainsTax_JPY,StateCapGainsTax_USD,\
-         FXPenalty_JPY,MonthsAtMin,\
-         TotalGrossReturn_USD,TotalNetReturn_USD,TaxFriction_USD,\
-         Dist_Dividend_USD,Dist_Interest_USD,Dist_CapGains_USD,Dist_Special_USD,Dist_ROC_USD\n",
-    );
+    let mut csv = String::from(CSV_HEADER_LINE);
+    csv.push('\n');
     for s in &results.annual_summary {
         csv.push_str(&format!(
             "{},{:.2},{:.2},{:.2},{:.0},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.0},\

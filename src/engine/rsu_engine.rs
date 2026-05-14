@@ -198,6 +198,7 @@ mod tests {
             unit_value: None,
             growth_rate: None,
             return_profile: None,
+            migrate_on_retirement: false,
         }
     }
 
@@ -255,6 +256,7 @@ mod tests {
             unit_value: None,
             growth_rate: None,
             return_profile: None,
+            migrate_on_retirement: false,
         };
         let engine = RsuEngine::new(vec![award], None);
         assert_eq!(engine.vesting_schedule.len(), 12);
@@ -275,6 +277,7 @@ mod tests {
             unit_value: None,
             growth_rate: None,
             return_profile: None,
+            migrate_on_retirement: false,
         };
         let engine = RsuEngine::new(vec![award], None);
         assert_eq!(engine.vesting_schedule.len(), 4);
@@ -295,6 +298,7 @@ mod tests {
             unit_value: None,
             growth_rate: None,
             return_profile: None,
+            migrate_on_retirement: false,
         };
         let engine = RsuEngine::new(vec![award], None);
         assert_eq!(engine.vesting_schedule[0].date.year(), 2025);

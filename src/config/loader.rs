@@ -303,6 +303,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                 cliff_vest_months,
                 unit_value:   rsu["unit_value"].as_f64().filter(|&p| p > 0.0),
                 growth_rate:  rsu["growth_rate"].as_f64().filter(|&g| g > -0.5 && g < 1.0),
+                migrate_on_retirement: rsu["migrate_on_retirement"].as_bool().unwrap_or(false),
                 return_profile: rsu["return_profile"].as_object().map(|obj| {
                     let f = |k: &str| obj.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
                     crate::models::assets::DetailedReturnProfile {
@@ -682,6 +683,10 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             }
         },
         tlh_min_loss_usd: get_f64("tlh_min_loss_usd", 500.0),
+
+        // ── V7.7: Master Toggle Switches ─────────────────────────────────────
+        enable_education_savings: get_bool("enable_education_savings", true),
+        enable_gift_sink:         get_bool("enable_gift_sink",         true),
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────

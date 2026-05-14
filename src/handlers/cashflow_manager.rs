@@ -126,7 +126,7 @@ fn manage_monthly_cashflow_defensive(
     // Education-tagged expenses pull from the dedicated Education bucket first.
     // If the bucket is empty, the residual falls through to a Tier-8 sale
     // sized exactly to the shortfall (no other tier touches it).
-    if exp.education > 0.0 {
+    if cfg.enable_education_savings && exp.education > 0.0 {
         process_education_expense(state, cfg, exp.education, fx, penalty);
     }
 
@@ -279,9 +279,13 @@ fn manage_monthly_cashflow_defensive(
 
             // V7.5 — Defect 1.4: pass monthly non-spend drains (T9 gift + edu skim).
             let monthly_non_spend_drain = {
-                let annual_gift = cfg.annual_gift_jpy_per_recipient
-                    * cfg.gift_recipient_count as f64;
-                annual_gift / 12.0 + cfg.edu_savings_jpy_monthly
+                let annual_gift = if cfg.enable_gift_sink {
+                    cfg.annual_gift_jpy_per_recipient * cfg.gift_recipient_count as f64
+                } else { 0.0 };
+                let edu_drain = if cfg.enable_education_savings {
+                    cfg.edu_savings_jpy_monthly
+                } else { 0.0 };
+                annual_gift / 12.0 + edu_drain
             };
             let (proj_min_wc, proj_min_bridge_usd) =
                 project_buffer_minimums(state, target_base_jpy, monthly_non_spend_drain, fx, penalty, MODE_B_LOOKAHEAD_MONTHS);
@@ -342,7 +346,7 @@ fn manage_monthly_cashflow_defensive(
 
     // ── V7.5 — Tier 9: Estate Planning Gift Sink ─────────────────────────────
     // Fires once per year (December) to model legal-year donation semantics.
-    let t9_jpy_drawn = if state.date.month() == 12 {
+    let t9_jpy_drawn = if cfg.enable_gift_sink && state.date.month() == 12 {
         process_tier9_gift_sink(state, cfg, jpy_surplus_raw)
     } else {
         0.0
@@ -941,7 +945,7 @@ fn process_education_expense(
 /// available JPY surplus into the Education Fund. Returns the remaining JPY
 /// surplus to flow through the normal V7.1 surplus deposit rules.
 fn skim_education_savings(state: &mut SimState, cfg: &Config, jpy_surplus: f64) -> f64 {
-    let target = cfg.edu_savings_jpy_monthly;
+    let target = if cfg.enable_education_savings { cfg.edu_savings_jpy_monthly } else { 0.0 };
     if target <= 0.0 || jpy_surplus <= 0.0 { return jpy_surplus; }
     let skim = target.min(jpy_surplus);
     state.education_fund_jpy += skim;

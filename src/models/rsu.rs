@@ -79,6 +79,12 @@ pub struct RsuAward {
     /// is already set (brokerage holding wins).
     #[serde(default)]
     pub return_profile: Option<crate::models::assets::DetailedReturnProfile>,
+    /// V7.7 — When true, unvested shares are forfeited at retirement (handled by
+    /// the RSU engine's retirement_date cutoff) and the Taxable account's
+    /// `rebalance_strategy` fires immediately post-transition to migrate the
+    /// proceeds into target allocations.
+    #[serde(default)]
+    pub migrate_on_retirement: bool,
 }
 
 impl RsuAward {

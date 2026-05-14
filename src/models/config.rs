@@ -766,4 +766,15 @@ pub struct Config {
     /// Minimum USD loss required to harvest a lot (transaction cost threshold).
     #[serde(default = "default_tlh_threshold")]
     pub tlh_min_loss_usd: f64,
+
+    // ── V7.7 — Master Toggle Switches ────────────────────────────────────────────
+    /// When false, the Tier 2.5 Education Fund accumulation channel is disabled.
+    /// All surplus that would have gone to the education fund instead stays in the
+    /// waterfall. Default true (matches V7.3 behaviour).
+    #[serde(default = "default_true")]
+    pub enable_education_savings: bool,
+    /// When false, the Tier 9 Gift Sink December drain is disabled.
+    /// Gifts are not modeled; the JPY stays in the war chest. Default true.
+    #[serde(default = "default_true")]
+    pub enable_gift_sink: bool,
 }

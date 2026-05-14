@@ -116,6 +116,12 @@ pub struct AnnualSnapshot {
     #[serde(default)] pub dist_cap_gains_usd: f64,
     #[serde(default)] pub dist_special_usd: f64,
     #[serde(default)] pub dist_roc_usd: f64,
+
+    // ── V7.7 — Working-year Japan income tax ────────────────────────────────
+    /// Japan income tax (所得税) paid in working years (pre-retirement). Zero in
+    /// all post-retirement years. Used to verify the Japan-first pipeline.
+    #[serde(default)]
+    pub japan_income_tax_jpy: f64,
 }
 
 /// A quarterly solvency warning recorded when income < expenses for a quarter.
