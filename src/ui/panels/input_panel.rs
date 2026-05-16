@@ -146,6 +146,7 @@ impl Default for RsuRow {
 #[derive(Clone)]
 pub struct DcFundRow {
     pub fund_name:         String,
+    pub ticker:            String,  // optional Yahoo symbol (e.g. 0331418A.T) for ✨ auto-fetch
     pub units:             String,  // units held (口)
     pub price_per_10k:     String,  // NAV in ¥ per 10,000 units
     pub contrib_alloc_pct: String,  // % of total monthly contribution routed here
@@ -157,6 +158,7 @@ impl Default for DcFundRow {
     fn default() -> Self {
         Self {
             fund_name:         String::new(),
+            ticker:            String::new(),
             units:             String::new(),
             price_per_10k:     String::new(),
             contrib_alloc_pct: "100".into(),
@@ -657,6 +659,7 @@ impl InputPanelState {
             let dc_funds: Vec<DcFundRow> = if let Value::Array(arr) = &sets["dc_funds"] {
                 arr.iter().map(|f| DcFundRow {
                     fund_name: f["fund_name"].as_str().unwrap_or("").to_string(),
+                    ticker:    f["ticker"].as_str().unwrap_or("").to_string(),
                     units:     f["units"].as_f64()
                         .map(|v| if v == v.floor() { format!("{:.0}", v) } else { format!("{}", v) })
                         .unwrap_or_default(),
@@ -676,6 +679,7 @@ impl InputPanelState {
                 let name = str_val("dc_fund_name", "");
                 vec![DcFundRow {
                     fund_name: name,
+                    ticker: String::new(),
                     units: String::new(),
                     price_per_10k: String::new(),
                     contrib_alloc_pct: str_val("dc_contrib_pct", "100"),
@@ -1278,6 +1282,9 @@ impl InputPanelState {
                     let funds_arr: Vec<Value> = dc.dc_funds.iter().map(|f| {
                         let mut obj = serde_json::Map::new();
                         obj.insert("fund_name".into(), Value::String(f.fund_name.clone()));
+                        if !f.ticker.trim().is_empty() {
+                            obj.insert("ticker".into(), Value::String(f.ticker.trim().to_string()));
+                        }
                         if let Ok(u) = f.units.trim().parse::<f64>() {
                             if let Some(n) = serde_json::Number::from_f64(u) {
                                 obj.insert("units".into(), Value::Number(n));
@@ -1407,10 +1414,10 @@ impl InputPanelState {
                     }
 
                     // ── V7.6 — Asset class + (optional) detailed return profile.
-                    // Container-style tax-advantaged accounts (iDeCo / 401(k)) and
-                    // the DC Plan keep the legacy flat-growth model.
-                    let class_is_container = matches!(account.account_type.as_str(),
-                        "iDeCo" | "401(k)" | "DC Plan");
+                    // DC Plan uses a separate ¥/万口 fund table and keeps the legacy
+                    // flat-growth model. Every other account (incl. iDeCo and 401(k))
+                    // can carry per-position asset class and detailed return profile.
+                    let class_is_container = account.account_type == "DC Plan";
                     if !class_is_container {
                         let class_snake = match row.asset_class.as_str() {
                             "ETF"        => "etf",
@@ -2092,6 +2099,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         let mut toggle_mgmt:      Option<(usize, usize)> = None;
         let mut toggle_profile:   Option<(usize, usize)> = None;
         let mut auto_fill_profile: Option<(usize, usize)> = None;
+        let mut dc_auto_fill:     Option<(usize, usize)> = None;
 
         for acct_idx in 0..num_accounts {
             if acct_idx > 0 {
@@ -2205,7 +2213,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                         }
                         // ── Per-fund table (¥/万口 pricing) ──────────────────────
                         ui.add_space(6.0);
-                        ui.label(RichText::new("Fund Allocation (¥/万口 pricing, auto-fetch disabled)").strong().small());
+                        ui.label(RichText::new("Fund Allocation (¥/万口 pricing — enter a Yahoo symbol like 0331418A.T to enable ✨ auto-fetch)").strong().small());
                         {
                             let alloc_sum: f64 = state.accounts[acct_idx].dc_funds.iter()
                                 .filter_map(|f| f.contrib_alloc_pct.trim().parse::<f64>().ok())
@@ -2216,11 +2224,20 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             }
                         }
                         egui::Grid::new(egui::Id::new("g_dc_funds").with(acct_idx))
-                            .num_columns(7)
+                            .num_columns(9)
                             .striped(true)
                             .spacing([8.0, 4.0])
                             .show(ui, |ui| {
                                 ui.label(RichText::new("Fund Name").strong().small());
+                                ui.label(RichText::new("Ticker").strong().small())
+                                    .on_hover_text(
+                                        "Optional Yahoo Finance symbol for this fund. Japanese DC mutual \
+                                         funds usually use the form `XXXXXXXX.T` (e.g. 0331418A.T for the \
+                                         eMAXIS Slim 全世界株式). When set, ✨ fills Price (¥/万口) and \
+                                         Total Return % from Yahoo's chart API."
+                                    );
+                                ui.label(RichText::new("✨").strong().small())
+                                    .on_hover_text("Auto-fill Price (¥/万口) and Total Return % from Yahoo (10-year price CAGR).");
                                 ui.label(RichText::new("Units (口)").strong().small());
                                 ui.label(RichText::new("Price (¥/万口)").strong().small());
                                 ui.label(RichText::new("Alloc %").strong().small());
@@ -2240,6 +2257,15 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                     ui.add(egui::TextEdit::singleline(&mut fund.fund_name)
                                         .hint_text("e.g. Domestic Equity").desired_width(140.0)
                                         .id(egui::Id::new("fn").with(acct_idx).with(fi)));
+                                    ui.add(egui::TextEdit::singleline(&mut fund.ticker)
+                                        .hint_text("e.g. 0331418A.T").desired_width(100.0)
+                                        .id(egui::Id::new("ft").with(acct_idx).with(fi)));
+                                    if ui.small_button("✨")
+                                        .on_hover_text("Auto-fill Price (¥/万口) & Total Return % from Yahoo Finance.")
+                                        .clicked()
+                                    {
+                                        dc_auto_fill = Some((acct_idx, fi));
+                                    }
                                     ui.add(egui::TextEdit::singleline(&mut fund.units)
                                         .hint_text("e.g. 15000").desired_width(80.0)
                                         .id(egui::Id::new("fu").with(acct_idx).with(fi)));
@@ -2277,9 +2303,6 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             // Single unified 8-column grid — all rows share one ID scope so the
                             // auto-counter never resets between rows. Each TextEdit also carries an
                             // explicit id_salt for additional row-level uniqueness.
-                            // V7.6: account types where component-level return modelling does
-                            // not apply (container-style tax-advantaged accounts).
-                            let hide_asset_class = matches!(acct_type.as_str(), "iDeCo" | "401(k)");
                             egui::Grid::new(egui::Id::new("input_positions_grid").with(acct_idx))
                                 .num_columns(10)
                                 .striped(true)
@@ -2321,15 +2344,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                             }
                                         });
                                     });
-                                    if hide_asset_class {
-                                        ui.label("");
-                                        ui.label("");
-                                    } else {
-                                        ui.label(RichText::new("Asset Class").strong().small())
-                                            .on_hover_text("Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.).");
-                                        ui.label(RichText::new("Return Profile").strong().small())
-                                            .on_hover_text("Toggle a component-level total-return breakdown (capital appreciation, dividend payments, interest income, capital-gains distributions, return of capital, expense ratio).");
-                                    }
+                                    ui.label(RichText::new("Asset Class").strong().small())
+                                        .on_hover_text("Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.).");
+                                    ui.label(RichText::new("Return Profile").strong().small())
+                                        .on_hover_text("Toggle a component-level total-return breakdown (capital appreciation, dividend payments, interest income, capital-gains distributions, return of capital, expense ratio).");
                                     ui.label(RichText::new("⚙ Management").strong().small());
                                     ui.label(RichText::new("☐ Select/Delete").strong().small());
                                     ui.end_row();
@@ -2379,35 +2397,30 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                         }
 
                                         // ── V7.6 — Asset class dropdown + detailed-profile toggle ──
-                                        if hide_asset_class {
-                                            ui.label("");
-                                            ui.label("");
+                                        egui::ComboBox::from_id_salt(("ac", acct_idx, pos_idx))
+                                            .selected_text(match pos.asset_class.as_str() {
+                                                "ETF"        => "ETF",
+                                                "MutualFund" => "Mutual Fund",
+                                                "Other"      => "Other",
+                                                _            => "Stock",
+                                            })
+                                            .width(110.0)
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut pos.asset_class, "Stock".into(),       "Stock");
+                                                ui.selectable_value(&mut pos.asset_class, "ETF".into(),         "ETF");
+                                                ui.selectable_value(&mut pos.asset_class, "MutualFund".into(),  "Mutual Fund");
+                                                ui.selectable_value(&mut pos.asset_class, "Other".into(),       "Other");
+                                            });
+                                        let prof_label = if pos.use_detailed_profile {
+                                            if pos.profile_expanded { "📊 Detail ▾" } else { "📊 Detail" }
                                         } else {
-                                            egui::ComboBox::from_id_salt(("ac", acct_idx, pos_idx))
-                                                .selected_text(match pos.asset_class.as_str() {
-                                                    "ETF"        => "ETF",
-                                                    "MutualFund" => "Mutual Fund",
-                                                    "Other"      => "Other",
-                                                    _            => "Stock",
-                                                })
-                                                .width(110.0)
-                                                .show_ui(ui, |ui| {
-                                                    ui.selectable_value(&mut pos.asset_class, "Stock".into(),       "Stock");
-                                                    ui.selectable_value(&mut pos.asset_class, "ETF".into(),         "ETF");
-                                                    ui.selectable_value(&mut pos.asset_class, "MutualFund".into(),  "Mutual Fund");
-                                                    ui.selectable_value(&mut pos.asset_class, "Other".into(),       "Other");
-                                                });
-                                            let prof_label = if pos.use_detailed_profile {
-                                                if pos.profile_expanded { "📊 Detail ▾" } else { "📊 Detail" }
-                                            } else {
-                                                "Simple"
-                                            };
-                                            if ui.small_button(prof_label)
-                                                .on_hover_text("Toggle a per-component total-return breakdown (capital appreciation, dividend payments, interest income, capital-gains distributions, return of capital, expense ratio). Available components depend on asset class.")
-                                                .clicked()
-                                            {
-                                                toggle_profile = Some((acct_idx, pos_idx));
-                                            }
+                                            "Simple"
+                                        };
+                                        if ui.small_button(prof_label)
+                                            .on_hover_text("Toggle a per-component total-return breakdown (capital appreciation, dividend payments, interest income, capital-gains distributions, return of capital, expense ratio). Available components depend on asset class.")
+                                            .clicked()
+                                        {
+                                            toggle_profile = Some((acct_idx, pos_idx));
                                         }
 
                                         let mgmt_label = if pos.mgmt_expanded { "⚙▾" } else { "⚙" };
@@ -2478,7 +2491,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             }
 
                             // ── V7.6 — Detailed Return Profile sub-panels ────────────
-                            if !hide_asset_class {
+                            {
                                 for pos_idx in 0..pos_count {
                                     if !state.accounts[acct_idx].positions[pos_idx].profile_expanded {
                                         continue;
@@ -2675,6 +2688,24 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     let pos = &mut state.accounts[ai].positions[pi];
                     pos.unit_value = format!("{:.2}", price);
                     pos.growth_pct = format!("{:.1}", cagr * 100.0);
+                }
+            }
+        }
+        if let Some((ai, fi)) = dc_auto_fill {
+            if ai < state.accounts.len() && fi < state.accounts[ai].dc_funds.len() {
+                let ticker = state.accounts[ai].dc_funds[fi].ticker.trim().to_string();
+                if ticker.is_empty() {
+                    log::warn!("[DC Auto-Fetch] fund #{}: no ticker set — enter a Yahoo symbol (e.g. 0331418A.T) first.", fi + 1);
+                } else {
+                    // Yahoo's v8/chart endpoint returns prices in the security's native currency.
+                    // For Japanese mutual-fund tickers (`.T`), that means JPY per 10,000 units (基準価額),
+                    // which lines up directly with the ¥/万口 column — no conversion needed.
+                    let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
+                    let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
+                    let fund = &mut state.accounts[ai].dc_funds[fi];
+                    fund.price_per_10k = format!("{:.0}", price);
+                    fund.growth_pct    = format!("{:.1}", cagr * 100.0);
+                    log::info!("[DC Auto-Fetch] {}: price ¥{:.0}/万口, CAGR {:.2}%", ticker, price, cagr * 100.0);
                 }
             }
         }
