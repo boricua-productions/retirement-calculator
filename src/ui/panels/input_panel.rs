@@ -2035,8 +2035,8 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         ui.label(RichText::new("Investment Accounts").strong());
         ui.label(RichText::new(
             "Each account has its own type and tax jurisdiction. \
-             Click ✨ next to any ticker to auto-fill Price and Growth from Yahoo Finance. \
-             Cost Basis and Growth % are optional."
+             Click ✨ next to any ticker to auto-fill Price and Capital Appreciation from Yahoo Finance. \
+             Cost Basis and Capital Appreciation % are optional."
         ).small().color(Color32::GRAY));
         ui.add_space(4.0);
 
@@ -2054,8 +2054,8 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         if state.marco_polo_enabled {
             ui.label(
                 RichText::new(
-                    "Volatility % replaces Growth % below. \
-                     Growth % fields are read from the simulation engine; \
+                    "Volatility % replaces Capital Appreciation % below. \
+                     Capital Appreciation values are read from the simulation engine; \
                      Volatility drives stochastic path dispersion."
                 )
                 .small()
@@ -2181,7 +2181,13 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                 "Use Market Average (10%)");
                             if !state.accounts[acct_idx].dc_use_market_avg {
                                 ui.add_space(8.0);
-                                ui.label(RichText::new("Fallback Growth %:").strong());
+                                ui.label(RichText::new("Fallback Total Return %:").strong())
+                                    .on_hover_text(
+                                        "Assumed annual total return for DC funds with no per-fund rate set. \
+                                         Applied as a single flat CAGR (capital appreciation + reinvested distributions \
+                                         combined). DC accounts are tax-deferred, so dividends always compound here \
+                                         regardless of the DRIP setting elsewhere."
+                                    );
                                 ui.add(egui::TextEdit::singleline(&mut state.accounts[acct_idx].dc_growth_rate)
                                     .hint_text("e.g. 8.0").desired_width(60.0));
                             }
@@ -2218,7 +2224,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                 ui.label(RichText::new("Units (口)").strong().small());
                                 ui.label(RichText::new("Price (¥/万口)").strong().small());
                                 ui.label(RichText::new("Alloc %").strong().small());
-                                ui.label(RichText::new("Growth %").strong().small());
+                                ui.label(RichText::new("Total Return %").strong().small())
+                                    .on_hover_text(
+                                        "Assumed annual total return for this fund (capital appreciation + \
+                                         reinvested distributions combined). DC accounts are tax-deferred \
+                                         and always reinvest internally, so this single CAGR drives all growth."
+                                    );
                                 ui.label(RichText::new("Stop@Retire").strong().small());
                                 ui.label(RichText::new("Remove").strong().small());
                                 ui.end_row();
@@ -2288,10 +2299,23 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                         });
                                     });
                                     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                                        let growth_label = if marco_polo { "Volatility %" } else { "Growth %" };
+                                        let growth_label = if marco_polo { "Volatility %" } else { "Capital Appreciation %" };
                                         let growth_color = if marco_polo { Color32::from_rgb(255, 200, 80) } else { Color32::WHITE };
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new(growth_label).strong().small().color(growth_color));
+                                            ui.label(RichText::new(growth_label).strong().small().color(growth_color))
+                                                .on_hover_text(
+                                                    "Annual price-only change in market value (capital appreciation; \
+                                                     a negative value represents capital depreciation). \
+                                                     Does NOT include dividend payments, interest income, or \
+                                                     capital-gains distributions — those are tracked separately \
+                                                     under 📊 Detail.\n\n\
+                                                     DRIP does not change this number. When DRIP is on, dividend \
+                                                     payments buy additional shares, and those new shares then \
+                                                     appreciate at this same rate (compounding the total return). \
+                                                     When DRIP is off, dividends are paid out as cash instead.\n\n\
+                                                     Auto-fetch (✨) populates this from the ticker's 10-year \
+                                                     split-adjusted price CAGR (dividends NOT reinvested)."
+                                                );
                                             if !marco_polo {
                                                 ui.label(RichText::new(" (opt.)").small().color(Color32::from_rgb(120, 120, 120)));
                                             }
@@ -2304,7 +2328,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                         ui.label(RichText::new("Asset Class").strong().small())
                                             .on_hover_text("Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.).");
                                         ui.label(RichText::new("Return Profile").strong().small())
-                                            .on_hover_text("Toggle a detailed component-level return breakdown (NAV growth, dividends, interest, cap-gains distributions, ROC, expense ratio).");
+                                            .on_hover_text("Toggle a component-level total-return breakdown (capital appreciation, dividend payments, interest income, capital-gains distributions, return of capital, expense ratio).");
                                     }
                                     ui.label(RichText::new("⚙ Management").strong().small());
                                     ui.label(RichText::new("☐ Select/Delete").strong().small());
@@ -2325,7 +2349,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                             .desired_width(140.0));
 
                                         if ui.small_button("✨")
-                                            .on_hover_text("Auto-fill Price & Growth from Yahoo Finance")
+                                            .on_hover_text("Auto-fill Price & Capital Appreciation % from Yahoo Finance (10-year price CAGR, dividends NOT reinvested).")
                                             .clicked()
                                         {
                                             auto_fill = Some((acct_idx, pos_idx));
@@ -2347,7 +2371,11 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                         } else {
                                             ui.add(egui::TextEdit::singleline(&mut pos.growth_pct)
                                                 .id_salt(("growth", acct_idx, pos_idx))
-                                                .hint_text("opt. %").desired_width(60.0));
+                                                .hint_text("opt. %").desired_width(60.0))
+                                                .on_hover_text(
+                                                    "Annual capital appreciation % (price-only). Negative = capital depreciation. \
+                                                     Excludes dividends and other distributions. Blank = fall back to the global default."
+                                                );
                                         }
 
                                         // ── V7.6 — Asset class dropdown + detailed-profile toggle ──
@@ -2375,7 +2403,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                                 "Simple"
                                             };
                                             if ui.small_button(prof_label)
-                                                .on_hover_text("Toggle a per-component breakdown (NAV growth, dividends, interest, cap-gains distributions, ROC, expense ratio). Available components depend on asset class.")
+                                                .on_hover_text("Toggle a per-component total-return breakdown (capital appreciation, dividend payments, interest income, capital-gains distributions, return of capital, expense ratio). Available components depend on asset class.")
                                                 .clicked()
                                             {
                                                 toggle_profile = Some((acct_idx, pos_idx));
@@ -2467,16 +2495,16 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                                 ui.add_space(10.0);
                                                 ui.checkbox(&mut pos.use_detailed_profile,
                                                     "Use detailed return profile")
-                                                    .on_hover_text("When on, the engine drives growth/distributions from the component fields below instead of the flat Growth % column.");
+                                                    .on_hover_text("When on, the engine drives total return from the components below (capital appreciation + dividend payments + interest + cap-gains distributions + …) instead of the flat Capital Appreciation % column.");
                                                 ui.add_space(10.0);
                                                 if ui.small_button("✨ Auto-Fetch")
                                                     .on_hover_text(
                                                         "Fetch the asset-class-appropriate components from Yahoo Finance:\n\
-                                                         • Stock: Cap Growth + Dividend Yield\n\
-                                                         • ETF: Cap Growth + Dividend Yield + Cap Gains Distrib + Expense Ratio\n\
-                                                         • Mutual Fund: NAV Growth + Dividend Yield + Cap Gains Distrib + Expense Ratio\n\
+                                                         • Stock: Capital Appreciation + Dividend Payments\n\
+                                                         • ETF: Capital Appreciation + Dividend Payments + Capital-Gains Distributions + Expense Ratio\n\
+                                                         • Mutual Fund: NAV Appreciation + Dividend Payments + Capital-Gains Distributions + Expense Ratio\n\
                                                          • Other: all of the above\n\
-                                                         Interest Distrib, Special Distrib, and Return of Capital are not exposed \
+                                                         Interest Income, Special Distributions, and Return of Capital are not exposed \
                                                          by Yahoo and remain under manual control."
                                                     )
                                                     .clicked()
@@ -2517,43 +2545,43 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                                             if *cells % 2 == 0 { ui.end_row(); }
                                                         };
                                                         if show_cap_growth {
-                                                            field(ui, "Cap Growth % (price):", &mut pos.cap_growth_pct, "e.g. 5.2",
-                                                                "Annual price-only capital appreciation, excluding distributions.");
+                                                            field(ui, "Capital Appreciation %:", &mut pos.cap_growth_pct, "e.g. 5.2",
+                                                                "Annual change in the market price of the investment (price-only). A negative value represents capital depreciation. Excludes all distributions.");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if show_nav_growth {
-                                                            field(ui, "NAV Growth %:", &mut pos.nav_growth_pct, "e.g. 4.8",
-                                                                "Fund NAV growth (post-distribution). Distinct from price for ETFs that trade away from NAV.");
+                                                            field(ui, "NAV Appreciation %:", &mut pos.nav_growth_pct, "e.g. 4.8",
+                                                                "Annual change in fund net asset value, post-distribution. Distinct from market price for ETFs that trade at a premium/discount to NAV.");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if show_dividend {
-                                                            field(ui, "Dividend Yield %:", &mut pos.dividend_yield_pct, "e.g. 1.8",
-                                                                "Recurring dividend distributions (qualified or ordinary). Routed through the §904 passive basket.");
+                                                            field(ui, "Dividend Payments %:", &mut pos.dividend_yield_pct, "e.g. 1.8",
+                                                                "Cash distributions paid to shareholders from company earnings (annual yield, qualified or ordinary). DRIP on → reinvested into more shares; DRIP off → paid out as cash.");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if show_interest {
-                                                            field(ui, "Interest Distrib %:", &mut pos.interest_yield_pct, "e.g. 0.4",
-                                                                "Bond-fund / money-market interest pass-through. Ordinary income (US) and 利子所得 (JP).");
+                                                            field(ui, "Interest Income %:", &mut pos.interest_yield_pct, "e.g. 0.4",
+                                                                "Regular interest payments received from bonds, money-market holdings, or cash deposits. Taxed as ordinary income (US) / 利子所得 (JP).");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if show_cap_gains_dist {
-                                                            field(ui, "Cap Gains Distrib %:", &mut pos.cap_gains_dist_pct, "e.g. 0.6",
-                                                                "Mutual-fund / ETF year-end capital-gains pass-through. LTCG basket unless PFIC §1296 MTM applies.");
+                                                            field(ui, "Capital Gains Distributions %:", &mut pos.cap_gains_dist_pct, "e.g. 0.6",
+                                                                "Payouts made to mutual-fund or ETF investors from the fund's own asset sales (year-end pass-through). LTCG basket unless PFIC §1296 MTM applies.");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if show_special {
-                                                            field(ui, "Special Distrib %:", &mut pos.special_dist_pct, "e.g. 0.0",
-                                                                "Non-recurring distributions (e.g. one-off year-end specials).");
+                                                            field(ui, "Special Distributions %:", &mut pos.special_dist_pct, "e.g. 0.0",
+                                                                "Non-recurring payouts (e.g. one-off year-end specials).");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if show_roc {
                                                             field(ui, "Return of Capital %:", &mut pos.roc_pct, "e.g. 0.0",
-                                                                "Non-taxable in the year received. Reduces USD and JPY cost basis pro rata.");
+                                                                "Distribution treated as a return of the investor's own principal — non-taxable in the year received; reduces USD and JPY cost basis pro rata.");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if show_expense {
                                                             field(ui, "Expense Ratio %:", &mut pos.expense_ratio_pct, "e.g. 0.03",
-                                                                "Annual fund management fee. Deducted from price growth before each month's update.");
+                                                                "Annual fund management fee. Deducted from capital appreciation before each month's price update.");
                                                             wrap(ui, &mut cells);
                                                         }
                                                         if cells % 2 == 1 { ui.end_row(); }
@@ -2574,7 +2602,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                             let total_return = price_growth + distributions + f(&pos.roc_pct);
                                             ui.add_space(2.0);
                                             ui.label(RichText::new(format!(
-                                                "Total Return ≈ {:.2}% (price {:+.2}% + distributions {:.2}% + ROC {:.2}%)",
+                                                "Total Return ≈ {:.2}%  (capital appreciation {:+.2}%  +  distributions {:.2}%  +  return of capital {:.2}%)",
                                                 total_return, price_growth, distributions, f(&pos.roc_pct)
                                             )).small().color(Color32::from_rgb(140, 200, 240)));
                                         });
@@ -2655,8 +2683,6 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 let ticker    = state.accounts[ai].positions[pi].ticker.clone();
                 let class_str = state.accounts[ai].positions[pi].asset_class.clone();
                 if !ticker.is_empty() {
-                    let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker);
-                    let pos = &mut state.accounts[ai].positions[pi];
                     let (show_cap, show_nav, show_cg, show_er) = match class_str.as_str() {
                         "Stock"      => (true,  false, false, false),
                         "ETF"        => (true,  false, true,  true ),
@@ -2664,6 +2690,8 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                         "Other"      => (true,  true,  true,  true ),
                         _            => (true,  false, false, false),
                     };
+                    let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker, show_er);
+                    let pos = &mut state.accounts[ai].positions[pi];
                     pos.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
                     if show_cap { pos.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0); }
                     if show_nav { pos.nav_growth_pct     = format!("{:.3}", profile.nav_growth     * 100.0); }
@@ -3099,13 +3127,18 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     ui.label(RichText::new("Delayed Init").strong().small())
                         .on_hover_text("Delayed initial vest: first vest event is shifted to grant month + 12 months instead of the first matching calendar month.");
                     ui.label(RichText::new("✨").strong().small())
-                        .on_hover_text("Auto-fill Price & Growth from Yahoo Finance");
+                        .on_hover_text("Auto-fill Price & Capital Appreciation % from Yahoo Finance (10-year price CAGR, dividends NOT reinvested).");
                     ui.label(RichText::new("Price USD").strong().small())
                         .on_hover_text("Starter price for the underlying. Used only if this ticker is NOT held in brokerage. Once vested, the engine drives the price forward.");
-                    ui.label(RichText::new("Growth %").strong().small())
-                        .on_hover_text("Annual price growth %. Falls through to global fallback if blank.");
+                    ui.label(RichText::new("Capital Appreciation %").strong().small())
+                        .on_hover_text(
+                            "Annual price-only change in market value (negative = capital depreciation). \
+                             Excludes dividend payments and other distributions. \
+                             DRIP does not affect this number — it only decides whether dividends buy more shares. \
+                             Falls back to the global default if blank."
+                        );
                     ui.label(RichText::new("Return Profile").strong().small())
-                        .on_hover_text("Toggle a Cap Growth + Dividend Yield component breakdown for this RSU's underlying stock.");
+                        .on_hover_text("Toggle a Capital Appreciation + Dividend Payments component breakdown for this RSU's underlying stock.");
                     ui.label(""); // remove button
                     ui.end_row();
 
@@ -3130,7 +3163,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             .id(egui::Id::new("rcv").with(rsu_idx)));
                         ui.checkbox(&mut state.rsu_awards[rsu_idx].delayed_initial_vest, "");
                         if ui.small_button("✨")
-                            .on_hover_text("Auto-fill Price & Growth from Yahoo Finance")
+                            .on_hover_text("Auto-fill Price & Capital Appreciation % from Yahoo Finance (10-year price CAGR, dividends NOT reinvested).")
                             .clicked()
                         {
                             rsu_auto_fill_simple = Some(rsu_idx);
@@ -3140,14 +3173,18 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             .id(egui::Id::new("ruv").with(rsu_idx)));
                         ui.add(egui::TextEdit::singleline(&mut state.rsu_awards[rsu_idx].growth_pct)
                             .hint_text("opt. %").desired_width(60.0)
-                            .id(egui::Id::new("rgp").with(rsu_idx)));
+                            .id(egui::Id::new("rgp").with(rsu_idx)))
+                            .on_hover_text(
+                                "Annual capital appreciation % (price-only). Negative = capital depreciation. \
+                                 Excludes dividend payments and other distributions."
+                            );
                         let prof_label = if state.rsu_awards[rsu_idx].use_detailed_profile {
                             if state.rsu_awards[rsu_idx].profile_expanded { "📊 Detail ▾" } else { "📊 Detail" }
                         } else {
                             "Simple"
                         };
                         if ui.small_button(prof_label)
-                            .on_hover_text("Toggle Cap Growth + Dividend Yield component breakdown.")
+                            .on_hover_text("Toggle Capital Appreciation + Dividend Payments component breakdown.")
                             .clicked()
                         {
                             rsu_toggle_profile = Some(rsu_idx);
@@ -3178,13 +3215,13 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             )).small().strong());
                             ui.add_space(10.0);
                             ui.checkbox(&mut row.use_detailed_profile, "Use detailed return profile")
-                                .on_hover_text("When on, the engine seeds the post-vest Asset's growth and dividend yield from the component fields below.");
+                                .on_hover_text("When on, the engine seeds the post-vest Asset's capital appreciation and dividend payments from the component fields below.");
                             ui.add_space(10.0);
                             if ui.small_button("✨ Auto-Fetch")
                                 .on_hover_text(
-                                    "Fetch Cap Growth (10y price CAGR) and Dividend Yield (TTM) \
-                                     from Yahoo Finance. Single-stock RSUs do not have expense \
-                                     ratios or capital-gains distributions."
+                                    "Fetch Capital Appreciation (10y price CAGR, dividends NOT reinvested) \
+                                     and Dividend Payments (TTM yield) from Yahoo Finance. Single-stock RSUs \
+                                     do not have expense ratios or capital-gains distributions."
                                 )
                                 .clicked()
                             {
@@ -3192,9 +3229,9 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             }
                         });
                         ui.label(RichText::new(
-                            "Annual percentages. NAV growth, interest, cap-gains distributions, \
-                             expense ratio, ROC, and special distributions do not apply to \
-                             single-stock awards."
+                            "Annual percentages. NAV appreciation, interest income, capital-gains \
+                             distributions, expense ratio, return of capital, and special distributions \
+                             do not apply to single-stock awards."
                         ).small().color(Color32::GRAY));
                         let enabled = row.use_detailed_profile;
                         ui.add_enabled_ui(enabled, |ui| {
@@ -3202,13 +3239,13 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                 .num_columns(4)
                                 .spacing([16.0, 4.0])
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new("Cap Growth % (price):").small().strong())
-                                        .on_hover_text("Annual price-only capital appreciation, excluding dividends.");
+                                    ui.label(RichText::new("Capital Appreciation %:").small().strong())
+                                        .on_hover_text("Annual change in the market price of the stock (price-only). A negative value represents capital depreciation. Excludes dividend payments.");
                                     ui.add(egui::TextEdit::singleline(&mut row.cap_growth_pct)
                                         .hint_text("e.g. 12.0").desired_width(64.0)
                                         .id(egui::Id::new("rcg").with(rsu_idx)));
-                                    ui.label(RichText::new("Dividend Yield %:").small().strong())
-                                        .on_hover_text("Annual recurring dividend distributions. Routed through the §904 passive basket.");
+                                    ui.label(RichText::new("Dividend Payments %:").small().strong())
+                                        .on_hover_text("Cash distributions paid to shareholders from company earnings (annual yield). DRIP on → reinvested into more shares; DRIP off → paid out as cash.");
                                     ui.add(egui::TextEdit::singleline(&mut row.dividend_yield_pct)
                                         .hint_text("e.g. 1.2").desired_width(64.0)
                                         .id(egui::Id::new("rdy").with(rsu_idx)));
@@ -3220,7 +3257,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                         let div = f(&row.dividend_yield_pct);
                         ui.add_space(2.0);
                         ui.label(RichText::new(format!(
-                            "Total Return ≈ {:.2}% (price {:+.2}% + dividends {:.2}%)",
+                            "Total Return ≈ {:.2}%  (capital appreciation {:+.2}%  +  dividend payments {:.2}%)",
                             cg + div, cg, div
                         )).small().color(Color32::from_rgb(140, 200, 240)));
                     });
@@ -3254,7 +3291,8 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 if idx < state.rsu_awards.len() {
                     let ticker = state.rsu_awards[idx].ticker.clone();
                     if !ticker.is_empty() {
-                        let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker);
+                        // RSUs are single stocks — no expense ratio. Skip the fundProfile call.
+                        let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker, false);
                         let row = &mut state.rsu_awards[idx];
                         row.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0);
                         row.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
