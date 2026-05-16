@@ -373,7 +373,8 @@ const CSV_HEADER_LINE: &str =
      DivCoverageRatio,JapanCapGainsTax_JPY,StateCapGainsTax_USD,\
      FXPenalty_JPY,MonthsAtMin,\
      TotalGrossReturn_USD,TotalNetReturn_USD,TaxFriction_USD,\
-     Dist_Dividend_USD,Dist_Interest_USD,Dist_CapGains_USD,Dist_Special_USD,Dist_ROC_USD";
+     Dist_Dividend_USD,Dist_Interest_USD,Dist_CapGains_USD,Dist_Special_USD,Dist_ROC_USD,\
+     RSUTaxShortfall_USD";
 
 /// Formats the full annual breakdown as a CSV string.
 pub fn format_csv(results: &SimResults) -> String {
@@ -385,7 +386,7 @@ pub fn format_csv(results: &SimResults) -> String {
              {:.2},{:.0},\
              {:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.2},{:.0},{},\
              {:.2},{:.0},{:.0},{:.2},{},{:.2},{:.2},{:.2},{:.4},{:.0},{:.2},{:.0},{},\
-             {:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}\n",
+             {:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}\n",
             s.year, s.usd_jpy,
             s.brokerage_usd, s.roth_usd, s.dc_jpy,
             s.div_gross_usd, s.div_net_usd, s.fers_net_usd, s.va_net_usd, s.rsu_vest_usd,
@@ -404,6 +405,7 @@ pub fn format_csv(results: &SimResults) -> String {
             s.total_gross_return_usd, s.total_net_return_usd, s.tax_friction_usd,
             s.dist_dividend_usd, s.dist_interest_usd, s.dist_cap_gains_usd,
             s.dist_special_usd, s.dist_roc_usd,
+            s.unpaid_rsu_tax_liability_usd,
         ));
     }
     csv

@@ -32,6 +32,56 @@ fn convert_usd_to_jpy(usd: f64, fx: f64, penalty: f64) -> (f64, f64) {
     (gross_jpy - penalty_jpy, penalty_jpy)
 }
 
+/// V7.7.2 — Covers a USD tax shortfall using the ordered fallback chain:
+///   1. Bridge Fund USD (direct drain, no conversion cost)
+///   2. War Chest JPY → USD (converted with the standard FX spread `penalty`)
+///   3. Tier 8 Taxable stock liquidation (highest-JPY-basis-first)
+///
+/// Returns the portion of `deficit_usd` that could **not** be covered after
+/// exhausting all three sources. A non-zero return signals an unpaid liability.
+pub fn cover_usd_deficit_from_buffers(
+    state: &mut SimState,
+    cfg: &Config,
+    mut deficit_usd: f64,
+    penalty: f64,
+) -> f64 {
+    let fx = state.current_fx;
+
+    // ── 1. Bridge Fund USD ────────────────────────────────────────────────────
+    if deficit_usd > 0.0 && state.bridge_fund_usd > 0.0 {
+        let draw = deficit_usd.min(state.bridge_fund_usd);
+        state.bridge_fund_usd -= draw;
+        deficit_usd -= draw;
+        info!("   [RSU-STC-1] Drew ${:.2} from Bridge Fund (remaining ${:.2}).", draw, state.bridge_fund_usd);
+    }
+
+    // ── 2. War Chest JPY → USD (with FX spread penalty) ──────────────────────
+    if deficit_usd > 0.0 && state.war_chest_jpy > 0.0 {
+        let jpy_needed_gross = deficit_usd * fx / (1.0 - penalty).max(f64::EPSILON);
+        let drawn_jpy = jpy_needed_gross.min(state.war_chest_jpy);
+        let usd_net = drawn_jpy * (1.0 - penalty) / fx;
+        let pen_jpy = drawn_jpy * penalty;
+        state.war_chest_jpy -= drawn_jpy;
+        state.stats.year_wc_used += drawn_jpy;
+        state.stats.year_fx_penalty_jpy += pen_jpy;
+        deficit_usd = (deficit_usd - usd_net).max(0.0);
+        info!("   [RSU-STC-2] Drew ¥{:.0} from War Chest → ${:.2} net (FX penalty ¥{:.0}).",
+            drawn_jpy, usd_net, pen_jpy);
+    }
+
+    // ── 3. Tier 8 stock liquidation ───────────────────────────────────────────
+    if deficit_usd > 0.0 {
+        let target_jpy = deficit_usd * fx;
+        let recovered_jpy = liquidate_for_jpy_target(state, cfg, target_jpy, fx, penalty);
+        let recovered_usd = recovered_jpy / fx;
+        let covered = recovered_usd.min(deficit_usd);
+        deficit_usd = (deficit_usd - covered).max(0.0);
+        info!("   [RSU-STC-3] T8 liquidation recovered ${:.2} (¥{:.0}).", recovered_usd, recovered_jpy);
+    }
+
+    deficit_usd
+}
+
 /// Strategy dispatcher — routes to the correct waterfall based on config.
 pub fn manage_monthly_cashflow(
     state: &mut SimState,

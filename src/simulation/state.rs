@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use std::collections::HashMap;
 
 use crate::models::assets::Account;
-use crate::models::snapshot::{AnnualSnapshot, SolvencyWarning, TransitionReport};
+use crate::models::snapshot::{AnnualSnapshot, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
 use super::stats::AnnualStats;
 
 /// The complete mutable simulation state.
@@ -124,6 +124,12 @@ pub struct SimState {
     pub annual_summary: Vec<AnnualSnapshot>,
     pub gap_warnings: Vec<SolvencyWarning>,
     pub transition_report: Option<TransitionReport>,
+
+    // ── V7.7.2 — RSU Sell-to-Cover Realism ───────────────────────────────────────
+    /// Cumulative unpaid IRS tax liability from SELL_TO_COVER deficit events (USD).
+    pub unpaid_rsu_tax_liability_usd: f64,
+    /// All RSU margin-call deficit events recorded during the simulation.
+    pub rsu_sell_to_cover_warnings: Vec<RsuSellToCoverWarning>,
 }
 
 impl SimState {
@@ -170,6 +176,8 @@ impl SimState {
             annual_summary: Vec::new(),
             gap_warnings: Vec::new(),
             transition_report: None,
+            unpaid_rsu_tax_liability_usd: 0.0,
+            rsu_sell_to_cover_warnings: Vec::new(),
         }
     }
 }

@@ -687,6 +687,13 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         // ── V7.7: Master Toggle Switches ─────────────────────────────────────
         enable_education_savings: get_bool("enable_education_savings", true),
         enable_gift_sink:         get_bool("enable_gift_sink",         true),
+
+        // ── V7.7.2: RSU Sell-to-Cover Realism ────────────────────────────────
+        rsu_sell_to_cover_realism: get_bool("rsu_sell_to_cover_realism", true),
+        rsu_sell_to_cover_policy: match sets["rsu_sell_to_cover_policy"].as_str().unwrap_or("strict") {
+            "permissive" | "Permissive" => crate::models::config::RsuSellToCoverPolicy::Permissive,
+            _ => crate::models::config::RsuSellToCoverPolicy::Strict,
+        },
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────

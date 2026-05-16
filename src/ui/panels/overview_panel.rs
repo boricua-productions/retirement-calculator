@@ -74,6 +74,23 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
             }
             ui.end_row();
 
+            // V7.7.2 — RSU margin-call banner.
+            let unpaid_rsu = res.annual_summary.last()
+                .map(|s| s.unpaid_rsu_tax_liability_usd)
+                .unwrap_or(0.0);
+            if !res.rsu_sell_to_cover_warnings.is_empty() || unpaid_rsu > 0.0 {
+                ui.label(RichText::new("RSU Tax Shortfall:").strong());
+                ui.label(
+                    RichText::new(format!(
+                        "🔴 {} margin call(s) — ${:.0} unpaid IRS liability",
+                        res.rsu_sell_to_cover_warnings.len(),
+                        unpaid_rsu,
+                    ))
+                    .color(Color32::RED),
+                );
+                ui.end_row();
+            }
+
             ui.label(RichText::new("Tax Jurisdiction:").strong());
             ui.label(res.tax_jurisdiction.to_string());
             ui.end_row();
