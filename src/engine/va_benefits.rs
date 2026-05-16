@@ -1,9 +1,12 @@
 use crate::models::config::VaDependentStatus;
 
 /// Official 2026 VA disability compensation monthly rates (USD).
-/// Source: VA 2026 official rate table (effective December 1, 2025).
-/// Dependent additions at 30–90% are 2.8% COLA-adjusted from 2025 published values.
-/// Dependent additions at 100% are official published amounts ($219.59 spouse, $109.11 child).
+/// Source: https://www.va.gov/disability/compensation-rates/veteran-rates/
+/// Effective date: December 1, 2025.
+///
+/// `with_spouse_and_child` uses the under-18 dependent child add-on, NOT the
+/// over-18 schoolchild add-on (those are a separate VA category not modeled
+/// here). 10% and 20% ratings do not receive dependent additions.
 ///
 /// VA disability compensation is tax-free for US federal, US state, and
 /// Japan resident tax per the US-Japan Tax Treaty Article 19.
@@ -21,14 +24,14 @@ pub fn lookup_va_monthly_2026(rating: u32, status: VaDependentStatus) -> f64 {
     let rate = match rating {
         10  => Va2026Rate { vet_only: 180.42,   with_spouse: 180.42,   with_spouse_and_child: 180.42   },
         20  => Va2026Rate { vet_only: 356.66,   with_spouse: 356.66,   with_spouse_and_child: 356.66   },
-        30  => Va2026Rate { vet_only: 552.47,   with_spouse: 618.01,   with_spouse_and_child: 659.13   },
-        40  => Va2026Rate { vet_only: 795.84,   with_spouse: 877.57,   with_spouse_and_child: 928.46   },
-        50  => Va2026Rate { vet_only: 1_132.90, with_spouse: 1_233.13, with_spouse_and_child: 1_292.75 },
-        60  => Va2026Rate { vet_only: 1_435.02, with_spouse: 1_552.73, with_spouse_and_child: 1_620.58 },
-        70  => Va2026Rate { vet_only: 1_808.45, with_spouse: 1_943.63, with_spouse_and_child: 2_019.70 },
-        80  => Va2026Rate { vet_only: 2_102.15, with_spouse: 2_254.80, with_spouse_and_child: 2_339.10 },
-        90  => Va2026Rate { vet_only: 2_362.30, with_spouse: 2_532.43, with_spouse_and_child: 2_624.95 },
-        100 => Va2026Rate { vet_only: 3_938.58, with_spouse: 4_158.17, with_spouse_and_child: 4_267.28 },
+        30  => Va2026Rate { vet_only: 552.47,   with_spouse: 617.47,   with_spouse_and_child: 666.47   },
+        40  => Va2026Rate { vet_only: 795.84,   with_spouse: 882.84,   with_spouse_and_child: 947.84   },
+        50  => Va2026Rate { vet_only: 1_132.90, with_spouse: 1_241.90, with_spouse_and_child: 1_322.90 },
+        60  => Va2026Rate { vet_only: 1_435.02, with_spouse: 1_566.02, with_spouse_and_child: 1_663.02 },
+        70  => Va2026Rate { vet_only: 1_808.45, with_spouse: 1_961.45, with_spouse_and_child: 2_074.45 },
+        80  => Va2026Rate { vet_only: 2_102.15, with_spouse: 2_277.15, with_spouse_and_child: 2_406.15 },
+        90  => Va2026Rate { vet_only: 2_362.30, with_spouse: 2_559.30, with_spouse_and_child: 2_704.30 },
+        100 => Va2026Rate { vet_only: 3_938.58, with_spouse: 4_158.17, with_spouse_and_child: 4_318.99 },
         _   => Va2026Rate { vet_only: 0.0,      with_spouse: 0.0,      with_spouse_and_child: 0.0      },
     };
     match status {
@@ -41,9 +44,10 @@ pub fn lookup_va_monthly_2026(rating: u32, status: VaDependentStatus) -> f64 {
 /// All valid VA disability rating values (10% to 100% in steps of 10).
 pub const ALL_VA_RATINGS: &[u32] = &[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
-// ─── Special Monthly Compensation (SMC) — 2026 Estimated Rates ────────────────
+// ─── Special Monthly Compensation (SMC) — 2026 Official Rates ─────────────────
 
-/// SMC benefit level variants (2026 estimated; inflated from 2025 published rates).
+/// SMC benefit level variants. Official 2026 published rates, effective Dec 1, 2025.
+/// Source: https://www.va.gov/disability/compensation-rates/special-monthly-compensation-rates/
 /// SMC is always tax-free (same treaty treatment as base VA disability compensation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SmcVariant {
@@ -66,7 +70,7 @@ pub enum SmcVariant {
     Housebound,
 }
 
-/// Returns the 2026 estimated SMC monthly rate (USD) for the given variant.
+/// Returns the 2026 official SMC monthly rate (USD) for the given variant.
 /// For SMC-K, add the returned amount ON TOP of the base VA disability rate.
 /// All other variants replace the base rate.
 pub fn lookup_smc_monthly_2026(variant: SmcVariant) -> f64 {
@@ -75,9 +79,9 @@ pub fn lookup_smc_monthly_2026(variant: SmcVariant) -> f64 {
         SmcVariant::L          => 4_900.83,
         SmcVariant::L5         => 5_154.39,
         SmcVariant::M          => 5_408.55,
-        SmcVariant::M5         => 5_662.63,
-        SmcVariant::N          => 5_916.71,
-        SmcVariant::N5         => 6_170.79,
+        SmcVariant::M5         => 5_780.00,
+        SmcVariant::N          => 6_152.64,
+        SmcVariant::N5         => 6_514.00,
         SmcVariant::OP         => 6_876.52,
         SmcVariant::R1         => 9_826.88,
         SmcVariant::R2         => 11_271.67,
@@ -107,7 +111,7 @@ mod tests {
     #[test]
     fn test_100pct_with_spouse_and_child() {
         let rate = lookup_va_monthly_2026(100, VaDependentStatus::WithSpouseAndChild);
-        assert!((rate - 4_267.28).abs() < 0.01, "rate={}", rate);
+        assert!((rate - 4_318.99).abs() < 0.01, "rate={}", rate);
     }
 
     #[test]
@@ -125,6 +129,26 @@ mod tests {
     #[test]
     fn test_50pct_with_spouse() {
         let rate = lookup_va_monthly_2026(50, VaDependentStatus::WithSpouse);
-        assert!((rate - 1_233.13).abs() < 0.01);
+        assert!((rate - 1_241.90).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_70pct_all_dependent_columns() {
+        // Pins all three columns at a common rating to catch future regressions
+        // in both the COLA bug (with_spouse) and the schoolchild-vs-child bug
+        // (with_spouse_and_child). Source: VA published rates, eff. 2025-12-01.
+        assert!((lookup_va_monthly_2026(70, VaDependentStatus::VetOnly)            - 1_808.45).abs() < 0.01);
+        assert!((lookup_va_monthly_2026(70, VaDependentStatus::WithSpouse)         - 1_961.45).abs() < 0.01);
+        assert!((lookup_va_monthly_2026(70, VaDependentStatus::WithSpouseAndChild) - 2_074.45).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_smc_corrected_variants() {
+        // Pins variants that were previously wrong (linear-interpolation bug).
+        assert!((lookup_smc_monthly_2026(SmcVariant::M5) - 5_780.00).abs() < 0.01);
+        assert!((lookup_smc_monthly_2026(SmcVariant::N)  - 6_152.64).abs() < 0.01);
+        assert!((lookup_smc_monthly_2026(SmcVariant::N5) - 6_514.00).abs() < 0.01);
+        // SMC-K is an additive add-on, not a replacement.
+        assert!((lookup_smc_monthly_2026(SmcVariant::K)  -   139.87).abs() < 0.01);
     }
 }
