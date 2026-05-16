@@ -262,11 +262,14 @@ impl MarketDataService {
     }
 
     /// V7.7 — Fetch a five-component snapshot for the detailed return profile.
-    /// Performs three independent Yahoo Finance calls; each fails independently.
-    pub fn fetch_detailed_profile(ticker: &str) -> DetailedMarketProfile {
+    /// Performs up to three independent Yahoo Finance calls; each fails independently.
+    /// `include_expense_ratio` should be false for individual stocks (and single-stock
+    /// RSUs), which never carry an expense ratio — this avoids a pointless network
+    /// call and the noisy 401 from Yahoo's auth-gated `quoteSummary` endpoint.
+    pub fn fetch_detailed_profile(ticker: &str, include_expense_ratio: bool) -> DetailedMarketProfile {
         let price_cagr = Self::fetch_10y_price_cagr(ticker);
         let (dividend_yield, cap_gains_dist) = Self::fetch_ttm_distribution_yields(ticker);
-        let expense_ratio = Self::fetch_expense_ratio(ticker);
+        let expense_ratio = if include_expense_ratio { Self::fetch_expense_ratio(ticker) } else { 0.0 };
         DetailedMarketProfile {
             cap_growth:     price_cagr,
             nav_growth:     price_cagr,
@@ -375,7 +378,16 @@ impl MarketDataService {
         match result {
             Ok(er) => er,
             Err(e) => {
-                warn!("[MarketData] {}: expense-ratio fetch failed ({}), defaulting to 0", ticker, e);
+                let msg = e.to_string();
+                if msg.contains("401") {
+                    log::info!(
+                        "[MarketData] {}: expense ratio not available — Yahoo requires authentication for fundProfile. \
+                         Defaulting to 0; enter manually if this is a fund with a known expense ratio.",
+                        ticker
+                    );
+                } else {
+                    warn!("[MarketData] {}: expense-ratio fetch failed ({}), defaulting to 0", ticker, e);
+                }
                 0.0
             }
         }

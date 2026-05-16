@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.7 Master Toggles Edition
+# Retirement Calculator — V7.7.1 Portfolio Transition & Tax Alignment Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.7 Master Toggles Edition)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.7.1 Portfolio Transition & Tax Alignment)
 ---
 
 ## Beginner Quick Start
@@ -119,10 +119,10 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | **Jurisdiction** | Overrides tax treatment for that account: Both, US Only, Japan Only, or Tax Free. |
 | **Ticker** | Asset symbol or fund label. |
 | **Units** | Number of shares or fund units held. |
-| **Auto-Fetch** | Pulls current price and 10-year CAGR when network data is available; falls back if unavailable. |
+| **Auto-Fetch** | Pulls current price and 10-year price-only CAGR (dividends NOT reinvested) when network data is available; falls back if unavailable. |
 | **Price USD / Price JPY** | Current asset price used for market value. DC rows can use JPY pricing. |
 | **Cost Basis** | Average USD cost basis per share/unit. Used for US gain calculations and JPY-basis fallback. |
-| **Growth %** | Expected annual growth rate for deterministic simulations. |
+| **Capital Appreciation %** *(previously labelled "Growth %")* | Annual price-only change in market value. Negative values represent capital depreciation. Excludes dividend payments, interest income, and other distributions — those are tracked separately under the 📊 Detail return profile. DRIP does not change this number; it only decides whether dividends buy more shares. |
 | **Volatility %** | Expected annual volatility used by Marco Polo mode. |
 | **DRIP** | Reinvest dividends instead of routing them to cash. |
 | **Dividend Reinvest Target** | Optional ticker to receive reinvested dividends. |
@@ -132,7 +132,7 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | **Freq** | How often the scheduled purchase fires: monthly, quarterly, or annually. |
 | **Stop at Retirement** | Stops scheduled buys once retirement begins. |
 | **Asset Class** *(V7.6)* | Per-position dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.). Hidden for iDeCo and 401(k) accounts — those container-style tax-advantaged accounts keep the flat-growth model. |
-| **Return Profile** *(V7.6)* | Per-position toggle: `Simple` keeps the legacy single Growth %; `📊 Detail` exposes a component-level breakdown filtered by Asset Class (Cap Growth, NAV Growth, Dividend Yield, Interest Distrib, Cap Gains Distrib, Special Distrib, Return of Capital, Expense Ratio). A live read-only `Total Return ≈` line sums price growth + distributions + ROC. |
+| **Return Profile** *(V7.6)* | Per-position toggle: `Simple` keeps a single Capital Appreciation %; `📊 Detail` exposes a component-level breakdown filtered by Asset Class — Capital Appreciation %, NAV Appreciation %, Dividend Payments %, Interest Income %, Capital Gains Distributions %, Special Distributions %, Return of Capital %, Expense Ratio %. A live read-only `Total Return ≈ capital appreciation + distributions + return of capital` line summarises the breakdown. |
 
 #### Family Financial Planning *(Optional)*
 
@@ -150,7 +150,7 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | **Monthly Contribution (JPY)** | Monthly DC/iDeCo contribution during accumulation. |
 | **Contribution Fund** | Fund label used for DC purchases. |
 | **Allocation %** | Allocation weight for the DC fund row. |
-| **Custom Growth %** | DC fund-specific annual growth assumption. |
+| **Total Return %** *(previously labelled "Custom Growth %")* | DC fund-specific annual total-return assumption (capital appreciation + reinvested distributions combined). DC accounts are tax-deferred and always reinvest internally, so this single CAGR drives all growth regardless of the DRIP toggle elsewhere. The DC plan also exposes a **Fallback Total Return %** for funds with no per-row value set. |
 | **DC Payout Method** | `LUMP_SUM` moves DC value into taxable at payout; `ANNUITY_20YR` pays monthly over 20 years. |
 | **DC Payout Start Age** | Age when DC payout begins. |
 
@@ -333,6 +333,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V7.7.1** | Portfolio Transition & Tax Alignment — **Per-account rebalance strategy** (`Account.rebalance_strategy: Option<AccountRebalanceStrategy>`) fires independently of the global `rebalance_enabled` flag; the RSU `migrate_on_retirement: bool` triggers the Taxable account's strategy at the transition event so vested-RSU proceeds are redeployed into the post-retirement target mix. **Per-account tax-advantaged flags** (`us_tax_advantaged`, `japan_tax_advantaged`) drive the §5.1 distribution routing gate (`handlers/dividends.rs`) — each account independently opts into `apply_us_tax` / `apply_japan_tax`, so cross-jurisdiction containers (NISA, iDeCo, Roth, 401(k), DC) no longer hand-wire their own bypass. **Japan working-year income tax** (所得税) — new `JapanTaxEngine::calculate_income_tax()` with reconstruction surcharge; `salary_history` and `rsu_vest_history` carry an N−1 hand-off so the first retirement year's resident-tax base is honest. **Snapshot/CSV** gain `year_salary_jpy`, `year_rsu_vest_jpy`, `year_japan_income_tax_jpy`. FERS Article-18 routing bug fixed. 31/31 integration tests pass (106/106 overall). |
 | **V7.7** | Master Toggles — `enable_education_savings` (bool, default `true`): when `false`, Tier 2.5 Education Fund accumulation is suppressed and surplus stays in the waterfall. `enable_gift_sink` (bool, default `true`): when `false`, the Tier 9 December gift drain is disabled. Both default to `true` for full backward compatibility with V7.3/V7.5 behavior. |
 | **V7.6** | Granular Returns — **Component-Based Return Profile** on each asset (new optional `return_profile` with `cap_growth`, `nav_growth`, `dividend_yield`, `interest_yield`, `cap_gains_dist`, `special_dist`, `roc`, `expense_ratio`). **Asset Class** taxonomy (`Stock` / `Etf` / `MutualFund` / `Other`). **Return-of-Capital basis reduction** — ROC is non-taxable in the year received and reduces both USD and JPY cost basis proportionally across FIFO lots; excess above basis falls through to LTCG. **§904 basket-aware FTC** — new `calculate_liability_with_basket_ftc` actually wires the Passive/General split into the December true-up so passive credit (PFIC, dividends, cap gains) cannot leak into the General basket (FERS/SS). **Audit CSV** now exposes `TotalGrossReturn_USD`, `TotalNetReturn_USD`, `TaxFriction_USD`, and a five-column distribution breakdown (`Dist_Dividend_USD`, `Dist_Interest_USD`, `Dist_CapGains_USD`, `Dist_Special_USD`, `Dist_ROC_USD`). Pre-V7.6 scenarios with no `return_profile` produce identical numerics — fully back-compat. |
 | **V7.5** | Strategic Optimization — **PFIC §1296 MTM** ordinary-income routing (new `pfic_regime` field on assets). **Japan capital-loss carry-forward** (IT Act Art. 37-12-2): losses from V7.0 liquidations are now recorded and offset future NHI/resident-tax bases. **Tier 9 Gift Sink**: annual JPY surplus routed to 暦年贈与 recipients per-calendar-year with IRC §2503(b) Form 709 flagging. **Exit Tax Monitor** (Art. 60-2): warns when Japan-subject assets ≥ ¥100M and residency ≥ 5-of-10 years. **Ninki Keizoku** (任意継続): new `NinkiKeizoku` NHI model variant for Shakai Hoken continuation up to 24 months. **Stochastic FX** in Marco Polo: independent USD/JPY GBM path per iteration, P10/P50/P90 now also reported in JPY. **Tax-Loss Harvesting** (§1091 wash-sale aware): pre-waterfall handler fires in configurable active months. **Mode B oracle** now aware of T9 gift and education drains. |
@@ -363,7 +364,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.6)](#16-hardening--compliance-v76)
+16. [Hardening & Compliance (V7.5 → V7.7.1)](#16-hardening--compliance-v75--v771)
 
 ---
 
@@ -915,7 +916,7 @@ Profile columns are hidden for iDeCo / 401(k) accounts (container-style; flat-gr
 | **Freq** | Accumulation frequency: Monthly / Quarterly / Annual. |
 | **Stop at Retirement** | If checked, the accumulation rule fires only during the pre-retirement phase. |
 | **Asset Class** *(V7.6)* | Dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components apply and how each is taxed. |
-| **Return Profile** *(V7.6)* | When toggled on, the per-position **📊 Detail** sub-panel exposes the component fields (filtered by Asset Class): Cap Growth %, NAV Growth %, Dividend Yield %, Interest Distrib %, Cap Gains Distrib %, Special Distrib %, Return of Capital %, Expense Ratio %. A live `Total Return ≈ price + distributions + ROC` line summarises the breakdown. |
+| **Return Profile** *(V7.6)* | When toggled on, the per-position **📊 Detail** sub-panel exposes the component fields (filtered by Asset Class): Capital Appreciation %, NAV Appreciation %, Dividend Payments %, Interest Income %, Capital Gains Distributions %, Special Distributions %, Return of Capital %, Expense Ratio %. A live `Total Return ≈ capital appreciation + distributions + return of capital` line summarises the breakdown. |
 
 Management settings are persisted in the saved JSON under `simulation_settings.accumulation_rules`
 (array) and `simulation_settings.target_allocations` (object). The asset class is written as
@@ -974,7 +975,7 @@ Toggle **"🎲 Marco Polo Mode (Monte Carlo)"** in the Investment Accounts secti
 before running a simulation.
 
 **How it works:**
-- Each position row gains a **Volatility %** field (default 18% for equities, 15% for DC/index funds) that replaces the Growth % input while Marco Polo is active.
+- Each position row gains a **Volatility %** field (default 18% for equities, 15% for DC/index funds) that replaces the Capital Appreciation % input while Marco Polo is active.
 - Before spawning the simulation thread, the app computes a **weighted-average expected return** (μ) and **weighted-average volatility** (σ) across all positions by portfolio value.
 - The **Marco Polo engine** (`src/simulation/monte_carlo.rs`) runs **1,000 Geometric Brownian Motion iterations**:
   ```
@@ -1031,7 +1032,7 @@ Every ticker cell in a position row has a ✨ button. Clicking it calls the Yaho
 chart API synchronously for that ticker and populates:
 
 - **Price USD** — most recent adjusted close (5-day daily window)
-- **Growth %** — 10-year annualised CAGR (monthly interval, 10-year range)
+- **Capital Appreciation %** — 10-year split-adjusted, price-only CAGR (dividends NOT reinvested; monthly interval, 10-year range). For detailed-profile auto-fetches on funds/ETFs, the same call additionally pulls dividend yield, capital-gains distributions, and (where the issuer exposes it) the expense ratio.
 
 The fields remain freely editable after the fill, allowing custom "What-if" overrides.
 Falls back to built-in defaults on any network or parse error.
@@ -1118,6 +1119,7 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 |----------|----------|------|-------------|
 | `holdings.taxable` | JSON | Object | Taxable brokerage. Keys are ticker symbols; each entry has `qty`, `avg_cost`, and optional `avg_purchase_price_jpy`, `drip_enabled`, `dividend_reinvest_target`, `custom_growth_rate`, `category`, `dividend_months`, `dividend_currency`, `pfic_regime` *(V7.5)*, `asset_class` *(V7.6: `stock`/`etf`/`mutual_fund`/`other`)*, `return_profile` *(V7.6: nested object — see §6)* |
 | `holdings.roth_ira` / `holdings.ira` / `holdings.k401` / `holdings.nisa` / `holdings.ideco` | JSON | Object | Same per-asset schema as `taxable`. Per-component `return_profile` and `asset_class` are honoured for IRA / Roth IRA / NISA; iDeCo and 401(k) bypass the per-component model. |
+| Account-level flags *(V7.7.1)* | JSON | Per-account | Each account object accepts three optional fields driving the §5.1 distribution routing gate and the per-account rebalancer: `us_tax_advantaged: bool` (default `false`) suppresses `apply_us_tax` on dividends/interest/CGD for that container; `japan_tax_advantaged: bool` (default `false`) suppresses `apply_japan_tax`; `rebalance_strategy: { targets: [{ ticker, weight }] }` defines a per-account `AccountRebalanceStrategy` that fires independently of the global `rebalance_enabled` flag and is also triggered by any RSU award with `migrate_on_retirement: true`. |
 | `holdings.japan_dc` | JSON | Object | Japan corporate DC. Multi-fund: top-level `qty` (units) and `nav_jpy_per_10k` (NAV in ¥ per 10,000 units / 万口); the per-fund allocation is persisted in `simulation_settings.dc_funds` (array of `{fund_name, units, price_per_10k_jpy, contrib_alloc_pct, growth_rate_pct, stop_at_retirement}`). |
 | `market_prices_usd` | JSON | Object | Manual price override per ticker. Set to `0` to use fallback price |
 | `growth_rates_annual` | JSON | Object | Per-ticker annual CAGR. Ignored for any ticker when `fetch_live_growth_rates: true` |
@@ -1242,13 +1244,16 @@ the JSON is preserved on round-trip but has no effect on the simulation.
 
 ```jsonc
 {
-  "grant_date":         "2024-11-01",       // YYYY-MM-DD
-  "vesting_start_date": null,               // Optional; overrides clock origin
-  "ticker":             "PANW",
-  "total_shares":       400,
-  "vesting_years":      4,
-  "vesting_cadence":    "quarterly",        // "quarterly" | "monthly" | "annually"
-  "vesting_months":     [2, 5, 8, 11]       // Explicit months; overrides cadence default
+  "grant_date":           "2024-11-01",     // YYYY-MM-DD
+  "vesting_start_date":   null,             // Optional; overrides clock origin
+  "ticker":               "PANW",
+  "total_shares":         400,
+  "vesting_years":        4,
+  "vesting_cadence":      "quarterly",      // "quarterly" | "monthly" | "annually"
+  "vesting_months":       [2, 5, 8, 11],    // Explicit months; overrides cadence default
+  "migrate_on_retirement": false            // V7.7.1 — when true, the post-vest position is
+                                            // routed into the Taxable account's rebalance_strategy
+                                            // at the retirement transition event
 }
 ```
 
@@ -1413,16 +1418,16 @@ retirement-calculator-v2/
     │   ├── va_benefits.rs          ← 2026 VA/SMC rate tables (K through R.2 + Housebound)
     │   └── tax/
     │       ├── japan_regions.rs    ← All 47 prefectures + cities; Juminzei rate lookup
-    │       ├── japan_tax.rs        ← JapanTaxEngine: resident tax and pension deduction
+    │       ├── japan_tax.rs        ← JapanTaxEngine: resident tax + pension deduction + V7.7.1 working-year income tax (所得税 with reconstruction surcharge)
     │       ├── nhi.rs              ← NhiEngine: municipal-rate NHI, caps, manual override
     │       ├── pfic.rs             ← V7.5 §1296 MTM aggregation (per-asset & portfolio-wide)
     │       └── us_tax.rs           ← TaxEngine: LTCG, NIIT, FTC, FEIE, V7.6 §904 basket-aware FTC
     ├── handlers/
     │   ├── cashflow_manager.rs     ← Post-retirement monthly cash-flow orchestration
     │   ├── contributions.rs        ← Pre-retirement Roth / DC / VA-buffer contributions
-    │   ├── dividends.rs            ← V7.6 component-aware distribution events (Dividend / Interest / CGD / Special / ROC); DRIP and withholding
-    │   ├── rebalancing.rs          ← Target-state rebalancing: overweight sells, underweight buys
-    │   ├── retirement_transition.rs ← Rebalance event, war chest, bridge fund, transition tax
+    │   ├── dividends.rs            ← V7.6 component-aware distribution events (Dividend / Interest / CGD / Special / ROC); DRIP and withholding; V7.7.1 §5.1 routing gate (per-account `apply_us_tax` / `apply_japan_tax`)
+    │   ├── rebalancing.rs          ← Target-state rebalancing: overweight sells, underweight buys; V7.7.1 `execute_account_rebalance_strategy` for per-account strategies
+    │   ├── retirement_transition.rs ← Rebalance event, war chest, bridge fund, transition tax; V7.7.1 RSU `migrate_on_retirement` fires Taxable rebalance_strategy
     │   ├── roth_rebalancer.rs      ← Optional Roth rebalance at age 59.5
     │   ├── rsu_vesting.rs          ← RSU vest events, SELL_TO_COVER / SALARY logic
     │   └── tax_loss_harvesting.rs  ← TLH pre-waterfall handler (§1091 wash-sale guard, configurable active months)
@@ -1432,12 +1437,13 @@ retirement-calculator-v2/
     │   ├── constants.rs            ← SimConstants (legacy NHI compatibility, embedded NHI baseline, etc.)
     │   ├── expense.rs              ← ExpenseRule (NHI, Nenkin, ResTax installments)
     │   ├── rsu.rs                  ← RsuAward schema
-    │   └── snapshot.rs             ← AnnualSnapshot (44 CSV columns inc. V7.6 dual-field + dist breakdown), SimResults, TransitionReport
+    │   └── snapshot.rs             ← AnnualSnapshot (V7.6 dual-field + distribution breakdown; V7.7.1 adds `japan_income_tax_jpy`), SimResults, TransitionReport
     ├── reporter.rs                 ← Text report, CSV, and clipboard formatters
     ├── simulation/
-    │   ├── controller.rs           ← SimulationController: month loop, tax true-up
-    │   ├── state.rs                ← SimState: all mutable simulation state
-    │   └── stats.rs                ← AnnualStats: year-to-date accumulators
+    │   ├── controller.rs           ← SimulationController: month loop, tax true-up, V7.7.1 per-account rebalance & Japan income tax
+    │   ├── monte_carlo.rs          ← Marco Polo GBM engine (1,000 iterations; P10/P50/P90)
+    │   ├── state.rs                ← SimState: all mutable simulation state (V7.7.1 salary_history, rsu_vest_history)
+    │   └── stats.rs                ← AnnualStats: year-to-date accumulators (V7.7.1 year_salary_jpy, year_rsu_vest_jpy, year_japan_income_tax_jpy)
     └── ui/
         ├── app.rs                  ← eframe App, toolbar, tab routing, background thread
         └── panels/
@@ -1617,11 +1623,13 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.6)
+## 16. Hardening & Compliance (V7.5 → V7.7.1)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
-through the correct §904 basket and §1296 check.
+through the correct §904 basket and §1296 check; V7.7.1 finishes the tax-pipeline work by making
+each container account self-declare its US/Japan tax exposure rather than relying on hardcoded
+bypass lists.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income
@@ -1653,6 +1661,19 @@ Pre-V7.6 scenarios (no `return_profile`) produce identical numerics — the acce
 `Asset` route through the legacy flat-yield path. The Audit CSV exposes the per-component split via
 the new `Dist_*_USD`, `TotalGrossReturn_USD`, `TotalNetReturn_USD`, and `TaxFriction_USD` columns
 so users can compare regimes without naming the underlying tax categories.
+
+### Fix 5 — Per-Account Tax Routing & Portfolio Transition *(V7.7.1)*
+Each `Account` now carries `us_tax_advantaged` and `japan_tax_advantaged` flags that drive the
+§5.1 distribution routing gate in `handlers/dividends.rs`. Tax-advantaged containers (NISA, iDeCo,
+Roth, 401(k), DC) opt out per jurisdiction instead of being hardcoded into bypass lists, so
+cross-jurisdiction edge cases (e.g. a US person's NISA dividends) are now configurable rather
+than implicit. The companion `Account.rebalance_strategy: Option<AccountRebalanceStrategy>` lets
+an account run its own target-allocation loop independently of the global `rebalance_enabled`
+flag; RSU awards with `migrate_on_retirement: true` fire the Taxable account's strategy at the
+transition event so vested-RSU proceeds flow into the post-retirement target mix. The Japan side
+also gained `JapanTaxEngine::calculate_income_tax()` for working-year 所得税 (with reconstruction
+surcharge), fed by the new N−1 `salary_history` / `rsu_vest_history` so the first-year
+resident-tax base is honest.
 
 ---
 
