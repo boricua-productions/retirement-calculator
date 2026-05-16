@@ -131,7 +131,7 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | **Accum $/mo** | Scheduled monthly purchase amount during accumulation. |
 | **Freq** | How often the scheduled purchase fires: monthly, quarterly, or annually. |
 | **Stop at Retirement** | Stops scheduled buys once retirement begins. |
-| **Asset Class** *(V7.6)* | Per-position dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.). Hidden for iDeCo and 401(k) accounts — those container-style tax-advantaged accounts keep the flat-growth model. |
+| **Asset Class** *(V7.6)* | Per-position dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.). Available on every account type that uses the positions table (Taxable, IRA, Roth IRA, 401(k), NISA, iDeCo); the DC Plan uses a separate ¥/万口 fund table and keeps the flat-growth model. |
 | **Return Profile** *(V7.6)* | Per-position toggle: `Simple` keeps a single Capital Appreciation %; `📊 Detail` exposes a component-level breakdown filtered by Asset Class — Capital Appreciation %, NAV Appreciation %, Dividend Payments %, Interest Income %, Capital Gains Distributions %, Special Distributions %, Return of Capital %, Expense Ratio %. A live read-only `Total Return ≈ capital appreciation + distributions + return of capital` line summarises the breakdown. |
 
 #### Family Financial Planning *(Optional)*
@@ -149,6 +149,8 @@ Both channels are off by default and only emit JSON when the corresponding switc
 |-------|----------------|
 | **Monthly Contribution (JPY)** | Monthly DC/iDeCo contribution during accumulation. |
 | **Contribution Fund** | Fund label used for DC purchases. |
+| **Ticker** *(optional)* | Yahoo Finance symbol for the fund (e.g. `0331418A.T`). When set, the row's **✨** button fills Price (¥/万口) and Total Return % from Yahoo; leave blank to keep the row fully manual. |
+| **✨ Auto-Fetch** *(per fund)* | Calls Yahoo's chart API for the row's Ticker. For `.T` mutual-fund symbols, Yahoo returns 基準価額 in JPY per 10,000 units, so the value drops straight into Price (¥/万口). Total Return % is filled from the 10-year price CAGR. |
 | **Allocation %** | Allocation weight for the DC fund row. |
 | **Total Return %** *(previously labelled "Custom Growth %")* | DC fund-specific annual total-return assumption (capital appreciation + reinvested distributions combined). DC accounts are tax-deferred and always reinvest internally, so this single CAGR drives all growth regardless of the DRIP toggle elsewhere. The DC plan also exposes a **Fallback Total Return %** for funds with no per-row value set. |
 | **DC Payout Method** | `LUMP_SUM` moves DC value into taxable at payout; `ANNUITY_20YR` pays monthly over 20 years. |
@@ -791,9 +793,9 @@ within an `Account` keyed by account name.
 | `taxable` | USD | Capital gains + dividends taxed under `tax_jurisdiction` |
 | `ira` | USD | Traditional IRA — US-deferred; Japan resident tax applies to distributions |
 | `roth_ira` | USD | US tax-free on gains; Japan resident tax may apply to distributions |
-| `k401` | USD | 401(k) — container-style; flat-growth model (no per-component breakdown) |
+| `k401` | USD | 401(k) — US-side tax-advantaged shelter; positions table supports Asset Class + detailed `return_profile` |
 | `nisa` | JPY | NISA — JP-side tax-advantaged shelter |
-| `ideco` | JPY | iDeCo — container-style; flat-growth model (no per-component breakdown) |
+| `ideco` | JPY | iDeCo — JP-side tax-advantaged shelter; positions table supports Asset Class + detailed `return_profile` |
 | `japan_dc` | JPY | Japan corporate DC — uses the `DcFundRow` per-fund allocation schema; payout at `dc_payout_start_age` |
 
 Additional named brokerage accounts may be defined under `brokerage_accounts` in the JSON,
@@ -906,7 +908,8 @@ Input Config, and **🔀 Compare**.
 Each position row in the Investment Accounts grid carries a **⚙** button (management settings)
 and a **📊 / Simple** button (V7.6 detailed return profile). The grid uses 10 columns; expanded
 sub-panels render below the grid so the account table stays readable. The Asset Class and Return
-Profile columns are hidden for iDeCo / 401(k) accounts (container-style; flat-growth model).
+Profile columns are available on every account type that uses the positions table (Taxable, IRA,
+Roth IRA, 401(k), NISA, iDeCo); the DC Plan renders its own ¥/万口 fund table instead.
 
 | Field | Description |
 |-------|-------------|
@@ -1118,9 +1121,9 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 | JSON key | Location | Type | Description |
 |----------|----------|------|-------------|
 | `holdings.taxable` | JSON | Object | Taxable brokerage. Keys are ticker symbols; each entry has `qty`, `avg_cost`, and optional `avg_purchase_price_jpy`, `drip_enabled`, `dividend_reinvest_target`, `custom_growth_rate`, `category`, `dividend_months`, `dividend_currency`, `pfic_regime` *(V7.5)*, `asset_class` *(V7.6: `stock`/`etf`/`mutual_fund`/`other`)*, `return_profile` *(V7.6: nested object — see §6)* |
-| `holdings.roth_ira` / `holdings.ira` / `holdings.k401` / `holdings.nisa` / `holdings.ideco` | JSON | Object | Same per-asset schema as `taxable`. Per-component `return_profile` and `asset_class` are honoured for IRA / Roth IRA / NISA; iDeCo and 401(k) bypass the per-component model. |
+| `holdings.roth_ira` / `holdings.ira` / `holdings.k401` / `holdings.nisa` / `holdings.ideco` | JSON | Object | Same per-asset schema as `taxable`. Per-component `return_profile` and `asset_class` are honoured for every positions-table account (IRA, Roth IRA, 401(k), NISA, iDeCo). Only `holdings.japan_dc` keeps the flat-growth model — see the DC schema row below. |
 | Account-level flags *(V7.7.1)* | JSON | Per-account | Each account object accepts three optional fields driving the §5.1 distribution routing gate and the per-account rebalancer: `us_tax_advantaged: bool` (default `false`) suppresses `apply_us_tax` on dividends/interest/CGD for that container; `japan_tax_advantaged: bool` (default `false`) suppresses `apply_japan_tax`; `rebalance_strategy: { targets: [{ ticker, weight }] }` defines a per-account `AccountRebalanceStrategy` that fires independently of the global `rebalance_enabled` flag and is also triggered by any RSU award with `migrate_on_retirement: true`. |
-| `holdings.japan_dc` | JSON | Object | Japan corporate DC. Multi-fund: top-level `qty` (units) and `nav_jpy_per_10k` (NAV in ¥ per 10,000 units / 万口); the per-fund allocation is persisted in `simulation_settings.dc_funds` (array of `{fund_name, units, price_per_10k_jpy, contrib_alloc_pct, growth_rate_pct, stop_at_retirement}`). |
+| `holdings.japan_dc` | JSON | Object | Japan corporate DC. Multi-fund: top-level `qty` (units) and `nav_jpy_per_10k` (NAV in ¥ per 10,000 units / 万口); the per-fund allocation is persisted in `simulation_settings.dc_funds` (array of `{fund_name, ticker?, units, price_per_10k_jpy, contrib_alloc_pct, growth_rate_pct, stop_at_retirement}`). The optional `ticker` field is a Yahoo symbol (e.g. `0331418A.T`) and powers the per-fund ✨ auto-fetch in the UI; omitted when blank. |
 | `market_prices_usd` | JSON | Object | Manual price override per ticker. Set to `0` to use fallback price |
 | `growth_rates_annual` | JSON | Object | Per-ticker annual CAGR. Ignored for any ticker when `fetch_live_growth_rates: true` |
 | `fetch_live_growth_rates` | Input Config | `bool` | `false` | When `true`, fetches 10-year CAGR from Yahoo Finance; falls back to 7% on failure |
