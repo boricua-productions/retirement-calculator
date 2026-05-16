@@ -333,7 +333,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
-| **V7.7.1** | Portfolio Transition & Tax Alignment — **Per-account rebalance strategy** (`Account.rebalance_strategy: Option<AccountRebalanceStrategy>`) fires independently of the global `rebalance_enabled` flag; the RSU `migrate_on_retirement: bool` triggers the Taxable account's strategy at the transition event so vested-RSU proceeds are redeployed into the post-retirement target mix. **Per-account tax-advantaged flags** (`us_tax_advantaged`, `japan_tax_advantaged`) drive the §5.1 distribution routing gate (`handlers/dividends.rs`) — each account independently opts into `apply_us_tax` / `apply_japan_tax`, so cross-jurisdiction containers (NISA, iDeCo, Roth, 401(k), DC) no longer hand-wire their own bypass. **Japan working-year income tax** (所得税) — new `JapanTaxEngine::calculate_income_tax()` with reconstruction surcharge; `salary_history` and `rsu_vest_history` carry an N−1 hand-off so the first retirement year's resident-tax base is honest. **Snapshot/CSV** gain `year_salary_jpy`, `year_rsu_vest_jpy`, `year_japan_income_tax_jpy`. FERS Article-18 routing bug fixed. 31/31 integration tests pass (106/106 overall). |
+| **V7.7.1** | Portfolio Transition & Tax Alignment — **Per-account rebalance strategy** (`Account.rebalance_strategy: Option<AccountRebalanceStrategy>`) fires independently of the global `rebalance_enabled` flag; the RSU `migrate_on_retirement: bool` triggers the Taxable account's strategy at the transition event so vested-RSU proceeds are redeployed into the post-retirement target mix. **Per-account tax-advantaged flags** (`us_tax_advantaged`, `japan_tax_advantaged`) drive the §5.1 distribution routing gate (`handlers/dividends.rs`) — each account independently opts into `apply_us_tax` / `apply_japan_tax`, so cross-jurisdiction containers (NISA, iDeCo, Roth, 401(k), DC) no longer hand-wire their own bypass. **Japan working-year income tax** (所得税) — new `JapanTaxEngine::calculate_income_tax()` with reconstruction surcharge; `salary_history` and `rsu_vest_history` carry an N−1 hand-off so the first retirement year's resident-tax base is honest. **Snapshot/CSV** gain `year_salary_jpy`, `year_rsu_vest_jpy`, `year_japan_income_tax_jpy`. FERS Article-18 routing bug fixed. 31/31 integration tests pass (119/119 overall). |
 | **V7.7** | Master Toggles — `enable_education_savings` (bool, default `true`): when `false`, Tier 2.5 Education Fund accumulation is suppressed and surplus stays in the waterfall. `enable_gift_sink` (bool, default `true`): when `false`, the Tier 9 December gift drain is disabled. Both default to `true` for full backward compatibility with V7.3/V7.5 behavior. |
 | **V7.6** | Granular Returns — **Component-Based Return Profile** on each asset (new optional `return_profile` with `cap_growth`, `nav_growth`, `dividend_yield`, `interest_yield`, `cap_gains_dist`, `special_dist`, `roc`, `expense_ratio`). **Asset Class** taxonomy (`Stock` / `Etf` / `MutualFund` / `Other`). **Return-of-Capital basis reduction** — ROC is non-taxable in the year received and reduces both USD and JPY cost basis proportionally across FIFO lots; excess above basis falls through to LTCG. **§904 basket-aware FTC** — new `calculate_liability_with_basket_ftc` actually wires the Passive/General split into the December true-up so passive credit (PFIC, dividends, cap gains) cannot leak into the General basket (FERS/SS). **Audit CSV** now exposes `TotalGrossReturn_USD`, `TotalNetReturn_USD`, `TaxFriction_USD`, and a five-column distribution breakdown (`Dist_Dividend_USD`, `Dist_Interest_USD`, `Dist_CapGains_USD`, `Dist_Special_USD`, `Dist_ROC_USD`). Pre-V7.6 scenarios with no `return_profile` produce identical numerics — fully back-compat. |
 | **V7.5** | Strategic Optimization — **PFIC §1296 MTM** ordinary-income routing (new `pfic_regime` field on assets). **Japan capital-loss carry-forward** (IT Act Art. 37-12-2): losses from V7.0 liquidations are now recorded and offset future NHI/resident-tax bases. **Tier 9 Gift Sink**: annual JPY surplus routed to 暦年贈与 recipients per-calendar-year with IRC §2503(b) Form 709 flagging. **Exit Tax Monitor** (Art. 60-2): warns when Japan-subject assets ≥ ¥100M and residency ≥ 5-of-10 years. **Ninki Keizoku** (任意継続): new `NinkiKeizoku` NHI model variant for Shakai Hoken continuation up to 24 months. **Stochastic FX** in Marco Polo: independent USD/JPY GBM path per iteration, P10/P50/P90 now also reported in JPY. **Tax-Loss Harvesting** (§1091 wash-sale aware): pre-waterfall handler fires in configurable active months. **Mode B oracle** now aware of T9 gift and education drains. |
@@ -1032,7 +1032,7 @@ Every ticker cell in a position row has a ✨ button. Clicking it calls the Yaho
 chart API synchronously for that ticker and populates:
 
 - **Price USD** — most recent adjusted close (5-day daily window)
-- **Capital Appreciation %** — 10-year split-adjusted, price-only CAGR (dividends NOT reinvested; monthly interval, 10-year range). For detailed-profile auto-fetches on funds/ETFs, the same call additionally pulls dividend yield, capital-gains distributions, and (where the issuer exposes it) the expense ratio.
+- **Capital Appreciation %** — 10-year split-adjusted, price-only CAGR (dividends NOT reinvested; monthly interval, 10-year range). For detailed-profile auto-fetches on funds/ETFs, the same Yahoo call additionally pulls dividend yield and capital-gains distributions. The **expense ratio** resolves via a separate per-issuer pipeline (`engine/market_data/expense_ratio.rs`): Vanguard and Invesco have live adapters; Schwab/iShares/SSGA tickers fall through to a hardcoded fallback table covering 47 common ETFs (VOO, VTI, SCHD, QQQ, QQQM, SPY, IVV, AGG, …). Each value is range-validated to [0.01%, 5%]; a failed fetch with no fallback preserves the user's existing value rather than overwriting it with 0%. The applied source is logged per ticker (e.g. `[ExpenseRatio] VOO: applied 0.030% (fetched: Vanguard)`).
 
 The fields remain freely editable after the fill, allowing custom "What-if" overrides.
 Falls back to built-in defaults on any network or parse error.
@@ -1376,7 +1376,7 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**106/106 tests** across all modules:
+**119/119 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -1393,6 +1393,7 @@ cargo test
 | `tests/v7_tax_and_liquidation_test.rs` | 3 | Highest-basis-first liquidation, state-tax gross-up, dividend-only no-sell |
 | `tests/v7_6_distributions.rs` *(V7.6)* | 5 | ROC proportional reduction, ROC excess → LTCG, PFIC §1296 CGD routing, expense-ratio drag, basket-FTC no-leak |
 | `tests/v7_7_full_transition_test.rs` *(V7.7)* | 15 | Education savings toggle, gift sink toggle, FERS/SS/Nenkin jurisdiction routing (6 cases), CSV headers compliance, resident tax first-year spike, account rebalance strategy field, migration deserialization |
+| `tests/expense_ratio_test.rs` | 13 | Range validator guards (zero/NaN/infinity/out-of-range), fallback table coverage and self-consistency, dispatch + provenance source on Schwab/SSGA/iShares fallthrough, NotApplicable on stocks, Unavailable on unknown tickers, distinct source labels. Two live-network tests (Vanguard VOO, Invesco QQQM) are `#[ignore]`d. |
 
 ---
 
@@ -1413,7 +1414,13 @@ retirement-calculator-v2/
     ├── engine/
     │   ├── mod.rs
     │   ├── cashflow_engine.rs      ← Monthly income/expense calculations
-    │   ├── market_data.rs          ← Fallback prices, yields, FX, Yahoo Finance CAGR; calculate_account_value
+    │   ├── market_data/
+    │   │   ├── mod.rs              ← Fallback prices, yields, FX, Yahoo Finance CAGR; calculate_account_value; DetailedMarketProfile
+    │   │   ├── expense_ratio.rs    ← Per-issuer expense-ratio resolver: dispatch → adapter → hardcoded fallback (47 ETFs) → Unavailable; range validator [0.01%, 5%]; ExpenseRatioSource provenance
+    │   │   └── adapters/
+    │   │       ├── mod.rs
+    │   │       ├── vanguard.rs     ← investor.vanguard.com profile JSON (fundProfile.expenseRatio)
+    │   │       └── invesco.rs      ← invesco.com product-detail HTML scanner (netExpenseRatio.value)
     │   ├── rsu_engine.rs           ← Multi-award vesting schedule generator
     │   ├── va_benefits.rs          ← 2026 VA/SMC rate tables (K through R.2 + Housebound)
     │   └── tax/
@@ -1604,7 +1611,7 @@ baseline and comparison branches), wrap it with `ui.push_id("unique_scope", ...)
 | `chrono` | 0.4 | Date arithmetic (`NaiveDate`, `Datelike`, `Months`) |
 | `serde` + `serde_json` | 1 | JSON scenario serialisation / deserialisation |
 | `rfd` | 0.15 | Native OS file-open dialog |
-| `ureq` | 2.10 | HTTP client for Yahoo Finance CAGR fetch |
+| `ureq` | 2.10 | HTTP client for Yahoo Finance CAGR fetch and per-issuer expense-ratio endpoints (Vanguard, Invesco) |
 | `log` + `env_logger` | 0.4 / 0.11 | Structured simulation trace logging |
 | `rust_decimal` | 1.41 | Exact decimal arithmetic for monetary rounding |
 

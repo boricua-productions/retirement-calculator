@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use log::warn;
 use crate::models::config::Position;
 
+pub mod expense_ratio;
+mod adapters;
+
+pub use expense_ratio::{resolve_expense_ratio, ExpenseRatioSource, Issuer};
+
 /// Global market average CAGR fallback when live data is unavailable (7%).
 pub const GLOBAL_MARKET_FALLBACK_GROWTH: f64 = 0.07;
 
@@ -13,13 +18,19 @@ pub const GLOBAL_MARKET_FALLBACK_GROWTH: f64 = 0.07;
 /// `cap_growth` and `nav_growth` carry the same underlying value (10y CAGR of
 /// unadjusted `close`). They are split so the UI can route to whichever field
 /// is visible for the row's class without knowing the helper internals.
+///
+/// `expense_ratio_source` records where `expense_ratio` came from (live
+/// adapter, hardcoded fallback, n/a, or unavailable). Callers must inspect
+/// it: on `Unavailable` the field's existing user value must be preserved
+/// rather than overwritten with 0.0.
 #[derive(Debug, Clone, Default)]
 pub struct DetailedMarketProfile {
-    pub cap_growth:     f64,
-    pub nav_growth:     f64,
-    pub dividend_yield: f64,
-    pub cap_gains_dist: f64,
-    pub expense_ratio:  f64,
+    pub cap_growth:           f64,
+    pub nav_growth:           f64,
+    pub dividend_yield:       f64,
+    pub cap_gains_dist:       f64,
+    pub expense_ratio:        f64,
+    pub expense_ratio_source: ExpenseRatioSource,
 }
 
 /// Provides fallback market data and live 10-year CAGR fetching.
@@ -262,20 +273,21 @@ impl MarketDataService {
     }
 
     /// V7.7 — Fetch a five-component snapshot for the detailed return profile.
-    /// Performs up to three independent Yahoo Finance calls; each fails independently.
-    /// `include_expense_ratio` should be false for individual stocks (and single-stock
-    /// RSUs), which never carry an expense ratio — this avoids a pointless network
-    /// call and the noisy 401 from Yahoo's auth-gated `quoteSummary` endpoint.
+    /// Performs independent Yahoo Finance calls for price/yield plus the
+    /// per-issuer `resolve_expense_ratio` pipeline for the fund fee.
+    /// `include_expense_ratio` should be false for individual stocks (and
+    /// single-stock RSUs), which never carry an expense ratio.
     pub fn fetch_detailed_profile(ticker: &str, include_expense_ratio: bool) -> DetailedMarketProfile {
         let price_cagr = Self::fetch_10y_price_cagr(ticker);
         let (dividend_yield, cap_gains_dist) = Self::fetch_ttm_distribution_yields(ticker);
-        let expense_ratio = if include_expense_ratio { Self::fetch_expense_ratio(ticker) } else { 0.0 };
+        let (expense_ratio, expense_ratio_source) = resolve_expense_ratio(ticker, include_expense_ratio);
         DetailedMarketProfile {
             cap_growth:     price_cagr,
             nav_growth:     price_cagr,
             dividend_yield,
             cap_gains_dist,
             expense_ratio,
+            expense_ratio_source,
         }
     }
 
@@ -355,41 +367,4 @@ impl MarketDataService {
         }
     }
 
-    /// Annual fund expense ratio from Yahoo quoteSummary. Returns 0.0 for
-    /// individual stocks (no fundProfile) and on any network/parse error.
-    fn fetch_expense_ratio(ticker: &str) -> f64 {
-        let url = format!(
-            "https://query1.finance.yahoo.com/v10/finance/quoteSummary/{}?modules=fundProfile",
-            ticker
-        );
-        let result = (|| -> Result<f64, Box<dyn std::error::Error>> {
-            let resp = ureq::get(&url)
-                .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
-                .call()?;
-            let body = resp.into_string()?;
-            let json: serde_json::Value = serde_json::from_str(&body)?;
-            let er = json["quoteSummary"]["result"][0]["fundProfile"]
-                ["feesExpensesInvestment"]["annualReportExpenseRatio"]["raw"]
-                .as_f64()
-                .ok_or("missing annualReportExpenseRatio")?;
-            if er < 0.0 || er > 0.10 { return Err("expense ratio out of range".into()); }
-            Ok(er)
-        })();
-        match result {
-            Ok(er) => er,
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("401") {
-                    log::info!(
-                        "[MarketData] {}: expense ratio not available — Yahoo requires authentication for fundProfile. \
-                         Defaulting to 0; enter manually if this is a fund with a known expense ratio.",
-                        ticker
-                    );
-                } else {
-                    warn!("[MarketData] {}: expense-ratio fetch failed ({}), defaulting to 0", ticker, e);
-                }
-                0.0
-            }
-        }
-    }
 }
