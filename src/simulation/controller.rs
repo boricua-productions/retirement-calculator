@@ -82,6 +82,7 @@ impl SimulationController {
             investment_location: self.cfg.investment_location,
             prefecture: self.cfg.prefecture.clone(),
             city: self.cfg.city.clone(),
+            rsu_sell_to_cover_warnings: self.state.rsu_sell_to_cover_warnings,
         }
     }
 
@@ -855,6 +856,7 @@ impl SimulationController {
             dist_special_usd: s.year_dist_special_usd,
             dist_roc_usd: s.year_dist_roc_usd,
             japan_income_tax_jpy: s.year_japan_income_tax_jpy,
+            unpaid_rsu_tax_liability_usd: self.state.unpaid_rsu_tax_liability_usd,
         });
     }
 

@@ -122,6 +122,13 @@ pub struct AnnualSnapshot {
     /// all post-retirement years. Used to verify the Japan-first pipeline.
     #[serde(default)]
     pub japan_income_tax_jpy: f64,
+
+    // ── V7.7.2 — RSU Sell-to-Cover Realism ──────────────────────────────────
+    /// Cumulative unpaid IRS tax liability arising from SELL_TO_COVER deficit
+    /// events that could not be fully covered by the fallback cascade (USD).
+    /// Resets to 0 only if the simulation is run with realism disabled.
+    #[serde(default)]
+    pub unpaid_rsu_tax_liability_usd: f64,
 }
 
 /// A quarterly solvency warning recorded when income < expenses for a quarter.
@@ -194,6 +201,23 @@ pub struct TransitionReport {
     pub allocation: TransitionAllocation,
 }
 
+/// V7.7.2 — RSU SELL_TO_COVER margin-call event record.
+/// Emitted whenever the vest price (post-recession) cannot fully fund the
+/// combined US + Japan tax bill and the fallback cascade still leaves a deficit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RsuSellToCoverWarning {
+    pub date: String,
+    pub ticker: String,
+    /// Gross USD value of the vest event.
+    pub vest_value_usd: f64,
+    /// Combined US + Japan tax liability (USD) at the time of the vest.
+    pub combined_tax_usd: f64,
+    /// Shortfall between vest proceeds and combined tax (vest_value < combined_tax).
+    pub deficit_usd: f64,
+    /// Residual that could NOT be covered after exhausting Bridge + War Chest + T8.
+    pub uncovered_usd: f64,
+}
+
 /// All results produced by a complete simulation run.
 #[derive(Debug, Clone)]
 pub struct SimResults {
@@ -206,4 +230,6 @@ pub struct SimResults {
     pub prefecture: String,
     /// City of residence used for Japan resident tax rate lookup.
     pub city: String,
+    /// V7.7.2 — RSU margin-call deficit events (non-empty only when realism on).
+    pub rsu_sell_to_cover_warnings: Vec<RsuSellToCoverWarning>,
 }

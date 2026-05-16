@@ -422,6 +422,9 @@ mod tests {
             // V7.7 defaults
             enable_education_savings: true,
             enable_gift_sink: true,
+            // V7.7.2 defaults
+            rsu_sell_to_cover_realism: true,
+            rsu_sell_to_cover_policy: crate::models::config::RsuSellToCoverPolicy::Strict,
         }
     }
 

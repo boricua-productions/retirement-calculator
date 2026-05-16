@@ -233,6 +233,8 @@ pub struct InputPanelState {
     pub us_tax_strategy:  UsTaxStrategy,
     // ── RSU tax handling ─────────────────────────────────────────────────────
     pub rsu_tax_handling: String,
+    /// V7.7.2 — When true, model RSU tax-liability margin calls (realism on).
+    pub rsu_sell_to_cover_realism: bool,
     // ── Family demographics (V6.6) ───────────────────────────────────────────
     pub user_birth_date:   String,
     pub is_married:        bool,
@@ -366,6 +368,7 @@ impl Default for InputPanelState {
             us_state_code:       "None".into(),
             us_tax_strategy:     UsTaxStrategy::FtcOnly,
             rsu_tax_handling:    "SALARY".into(),
+            rsu_sell_to_cover_realism: true,
             user_birth_date:        String::new(),
             is_married:             false,
             spouse_birth_date:      String::new(),
@@ -876,6 +879,7 @@ impl InputPanelState {
             us_state_code: str_val("us_state_code", "None"),
             us_tax_strategy,
             rsu_tax_handling: str_val("rsu_tax_handling", "SALARY"),
+            rsu_sell_to_cover_realism: sets["rsu_sell_to_cover_realism"].as_bool().unwrap_or(true),
             user_birth_date:   str_val("birth_date",        ""),
             is_married:        sets["is_married"].as_bool()
                                   .unwrap_or_else(|| sets["spouse_birth_date"].is_string()),
@@ -1087,6 +1091,7 @@ impl InputPanelState {
             set_f64!("min_monthly_expenses_jpy",  self.min_expense_jpy);
             set_f64!("nhi_spike_monthly_jpy", self.nhi_first_year_monthly_jpy);
             set_str!("rsu_tax_handling", self.rsu_tax_handling);
+            set_bool!("rsu_sell_to_cover_realism", self.rsu_sell_to_cover_realism);
             set_f64_or_na!("fers_monthly_payment_usd", self.fers_monthly_usd);
             set_u64!("fers_start_age",   self.fers_start_age);
             set_f64!("bridge_fund_months_target", self.bridge_months);
@@ -3146,6 +3151,20 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 state.rsu_tax_handling = "SELL_TO_COVER".into();
             }
         });
+        if state.rsu_tax_handling == "SELL_TO_COVER" {
+            ui.add_space(4.0);
+            let tooltip = "When a scheduled recession drops the share price below the combined \
+                US + Japan tax owed at vest, your broker can't collect the tax from the vest \
+                alone (margin call). The simulator will sell more shares, drain the Bridge Fund \
+                and War Chest, and flag an unpaid IRS liability instead of silently zeroing the \
+                bill. Disable to keep the legacy \"best case\" behaviour.";
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut state.rsu_sell_to_cover_realism,
+                    "☑ Model RSU Tax-Liability Margin Calls (Recommended)")
+                    .on_hover_text(tooltip);
+            });
+            ui.add_space(4.0);
+        }
         ui.add_space(8.0);
 
         ui.label(RichText::new("RSU Awards").strong());

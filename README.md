@@ -219,6 +219,7 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | Field | What it is for |
 |-------|----------------|
 | **RSU Tax Handling** | `SALARY` pays tax externally; `SELL_TO_COVER` sells vested shares to cover tax. |
+| **Model RSU Tax-Liability Margin Calls** | *(visible when SELL_TO_COVER is selected)* When enabled (default), a scheduled recession that drops the share price below the combined US + Japan tax bill at vest triggers a cascade: Bridge Fund → War Chest → Tier 8 liquidation. Any uncoverable remainder is logged as an unpaid IRS liability (visible on the Overview tab as a red banner). Disable to restore the legacy "best-case" behaviour where any shortfall is silently zeroed. Corresponds to `rsu_sell_to_cover_realism: bool` in JSON config. |
 | **Ticker** | Stock symbol for the RSU award. |
 | **Grant Date** | Award grant date. |
 | **Unvested** | Total shares still scheduled to vest. |
@@ -335,6 +336,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V7.7.2** | RSU Sell-to-Cover Death Spiral — **`rsu_sell_to_cover_realism: bool`** (default `true`) models the scenario where a scheduled recession drops the RSU share price below the combined US + Japan tax bill at vest. When a deficit occurs, the simulator executes a three-tier cascade: (1) Bridge Fund USD, (2) War Chest JPY with 0.5% FX spread penalty, (3) Tier 8 taxable stock liquidation (highest-JPY-basis-first). Any remainder that cannot be covered is accumulated in **`unpaid_rsu_tax_liability_usd`** and surfaced as a 🔴 red banner on the Overview tab. A new **`RSUTaxShortfall_USD`** column is written to the audit CSV. **`RsuSellToCoverWarning`** structs record the per-vest ticker, vest value, combined tax, deficit, and uncovered amount. `RsuSellToCoverPolicy` enum (`strict` / `permissive`) is added for future modes. UI checkbox in RSU Settings with tooltip explains the margin-call mechanics. 3 new integration tests. |
 | **V7.7.1** | Portfolio Transition & Tax Alignment — **Per-account rebalance strategy** (`Account.rebalance_strategy: Option<AccountRebalanceStrategy>`) fires independently of the global `rebalance_enabled` flag; the RSU `migrate_on_retirement: bool` triggers the Taxable account's strategy at the transition event so vested-RSU proceeds are redeployed into the post-retirement target mix. **Per-account tax-advantaged flags** (`us_tax_advantaged`, `japan_tax_advantaged`) drive the §5.1 distribution routing gate (`handlers/dividends.rs`) — each account independently opts into `apply_us_tax` / `apply_japan_tax`, so cross-jurisdiction containers (NISA, iDeCo, Roth, 401(k), DC) no longer hand-wire their own bypass. **Japan working-year income tax** (所得税) — new `JapanTaxEngine::calculate_income_tax()` with reconstruction surcharge; `salary_history` and `rsu_vest_history` carry an N−1 hand-off so the first retirement year's resident-tax base is honest. **Snapshot/CSV** gain `year_salary_jpy`, `year_rsu_vest_jpy`, `year_japan_income_tax_jpy`. FERS Article-18 routing bug fixed. 31/31 integration tests pass (119/119 overall). |
 | **V7.7** | Master Toggles — `enable_education_savings` (bool, default `true`): when `false`, Tier 2.5 Education Fund accumulation is suppressed and surplus stays in the waterfall. `enable_gift_sink` (bool, default `true`): when `false`, the Tier 9 December gift drain is disabled. Both default to `true` for full backward compatibility with V7.3/V7.5 behavior. |
 | **V7.6** | Granular Returns — **Component-Based Return Profile** on each asset (new optional `return_profile` with `cap_growth`, `nav_growth`, `dividend_yield`, `interest_yield`, `cap_gains_dist`, `special_dist`, `roc`, `expense_ratio`). **Asset Class** taxonomy (`Stock` / `Etf` / `MutualFund` / `Other`). **Return-of-Capital basis reduction** — ROC is non-taxable in the year received and reduces both USD and JPY cost basis proportionally across FIFO lots; excess above basis falls through to LTCG. **§904 basket-aware FTC** — new `calculate_liability_with_basket_ftc` actually wires the Passive/General split into the December true-up so passive credit (PFIC, dividends, cap gains) cannot leak into the General basket (FERS/SS). **Audit CSV** now exposes `TotalGrossReturn_USD`, `TotalNetReturn_USD`, `TaxFriction_USD`, and a five-column distribution breakdown (`Dist_Dividend_USD`, `Dist_Interest_USD`, `Dist_CapGains_USD`, `Dist_Special_USD`, `Dist_ROC_USD`). Pre-V7.6 scenarios with no `return_profile` produce identical numerics — fully back-compat. |
@@ -1280,7 +1282,7 @@ a user-selected audit CSV, defaulting to the filename `simulation_audit.csv`.
 Each button displays a **green** confirmation or **red** error (e.g., file locked in Excel)
 that auto-clears after 5 seconds.
 
-### Audit CSV column reference (44 columns)
+### Audit CSV column reference (45 columns)
 
 | Column | Unit | Description |
 |--------|------|-------------|
@@ -1328,6 +1330,7 @@ that auto-clears after 5 seconds.
 | `Dist_CapGains_USD` *(V7.6)* | USD | Capital-gains distribution component (mutual-fund pass-through; PFIC-routed when MTM-flagged) |
 | `Dist_Special_USD` *(V7.6)* | USD | Non-recurring distribution component |
 | `Dist_ROC_USD` *(V7.6)* | USD | Return-of-Capital cash received (non-taxable; basis-reducing) |
+| `RSUTaxShortfall_USD` *(V7.7.2)* | USD | Cumulative unpaid IRS/Japan RSU tax liability when sell-to-cover proceeds + all buffer fallbacks were insufficient to cover the combined tax bill |
 
 ### `Retirement_Summary.txt` — section layout
 
@@ -1379,7 +1382,7 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**119/119 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
+**122/122 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -1396,6 +1399,7 @@ cargo test
 | `tests/v7_tax_and_liquidation_test.rs` | 3 | Highest-basis-first liquidation, state-tax gross-up, dividend-only no-sell |
 | `tests/v7_6_distributions.rs` *(V7.6)* | 5 | ROC proportional reduction, ROC excess → LTCG, PFIC §1296 CGD routing, expense-ratio drag, basket-FTC no-leak |
 | `tests/v7_7_full_transition_test.rs` *(V7.7)* | 15 | Education savings toggle, gift sink toggle, FERS/SS/Nenkin jurisdiction routing (6 cases), CSV headers compliance, resident tax first-year spike, account rebalance strategy field, migration deserialization |
+| `tests/v7_7_2_rsu_sell_to_cover_realism.rs` *(V7.7.2)* | 3 | Sell-to-cover deficit cascade (Bridge → War Chest → Tier 8), `unpaid_rsu_tax_liability_usd` accumulation when buffers exhausted, `RsuSellToCoverPolicy::Permissive` legacy-zeroing parity |
 | `tests/expense_ratio_test.rs` | 13 | Range validator guards (zero/NaN/infinity/out-of-range), fallback table coverage and self-consistency, dispatch + provenance source on Schwab/SSGA/iShares fallthrough, NotApplicable on stocks, Unavailable on unknown tickers, distinct source labels. Two live-network tests (Vanguard VOO, Invesco QQQM) are `#[ignore]`d. |
 
 ---

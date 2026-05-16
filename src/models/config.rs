@@ -11,6 +11,20 @@ fn default_true() -> bool { true }
 fn default_us_gift_exclusion() -> f64 { 19_000.0 }
 fn default_tlh_months() -> Vec<u32> { vec![11, 12] }
 fn default_tlh_threshold() -> f64 { 500.0 }
+fn default_rsu_realism() -> bool { true }
+
+/// V7.7.2 — Controls how aggressive the SELL_TO_COVER deficit cascade is.
+///
+/// `Strict` (default): drains Bridge Fund → War Chest → Tier 8 liquidation,
+/// then records any residual as an unpaid IRS liability.
+/// `Permissive`: legacy behaviour — floors `net` at zero and silently drops the deficit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RsuSellToCoverPolicy {
+    #[default]
+    Strict,
+    Permissive,
+}
 
 // ─── Japan NHI model ─────────────────────────────────────────────────────────
 
@@ -777,4 +791,17 @@ pub struct Config {
     /// Gifts are not modeled; the JPY stays in the war chest. Default true.
     #[serde(default = "default_true")]
     pub enable_gift_sink: bool,
+
+    // ── V7.7.2 — RSU Sell-to-Cover Realism Layer ─────────────────────────────
+    /// Master on/off switch for the RSU margin-call realism layer.
+    /// When true and `rsu_tax_handling = "SELL_TO_COVER"`, the engine models
+    /// the case where a recession pushes the vest price below the combined
+    /// US + Japan tax bill. Default true — existing scenario files become
+    /// "realistic" automatically (see CHANGELOG V7.7.2).
+    #[serde(default = "default_rsu_realism")]
+    pub rsu_sell_to_cover_realism: bool,
+    /// Selects how aggressively the deficit cascade operates.
+    /// `Strict` drains buffers and logs unpaid liability; `Permissive` is legacy.
+    #[serde(default)]
+    pub rsu_sell_to_cover_policy: RsuSellToCoverPolicy,
 }

@@ -1,4 +1,5 @@
 # --- Rust/Build ---
+/instructions
 /target
 Cargo.lock
 # (Note: Some keep Cargo.lock for apps, but for a "clean" engine release, 
