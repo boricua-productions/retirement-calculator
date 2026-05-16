@@ -7,7 +7,7 @@ use std::fs;
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::us_tax::state_tax_rate;
 use crate::models::assets::{Account, AccountJurisdiction, AccountLocation, Asset, AssetCategory, AssetClass, Currency, DetailedReturnProfile, DividendCurrency};
-use crate::models::config::{AccumulationRule, Config, Dependent, FamilyUnit, FXShockEvent, InvestmentLocation, MilitaryRetiredConfig, NhiCalculatedRates, NhiModel, RecessionEvent, TaxProtocol, TaxRules, UsTaxStrategy, VaDependentStatus, VaRates, WaterfallStrategy, WithdrawalStrategy};
+use crate::models::config::{AccumulationRule, Config, Dependent, FamilyUnit, FXShockEvent, InvestmentLocation, MilitaryRetiredConfig, NhiCalculatedRates, NhiModel, RecessionEvent, SpouseProfile, TaxProtocol, TaxRules, UsTaxStrategy, VaDependentStatus, VaRates, WaterfallStrategy, WithdrawalStrategy};
 use crate::models::expense::ExpenseRule;
 use crate::models::rsu::{RsuAward, VestingCadence};
 
@@ -495,6 +495,18 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         }
     };
 
+    // ── Spouse profile (Stage 02) ─────────────────────────────────────────────
+    let spouse_profile: SpouseProfile = match sets["spouse_profile"].as_str().unwrap_or("us_person") {
+        "nra_elected_to_be_treated_as_resident" | "nra_elected_mfj" =>
+            SpouseProfile::NraElectedToBeTreatedAsResident,
+        "nra_mfs" => SpouseProfile::NraMfs,
+        "nra_head_of_household_eligible" | "nra_hoh" =>
+            SpouseProfile::NraHeadOfHouseholdEligible,
+        _ => SpouseProfile::UsPerson,
+    };
+    let spouse_japan_salary_jpy      = get_f64("spouse_japan_salary_jpy",      0.0);
+    let spouse_japan_misc_income_jpy = get_f64("spouse_japan_misc_income_jpy", 0.0);
+
     // ── Tax rules: filing status + state ─────────────────────────────────────
     let filing_status = get_str("us_filing_status", "Married Filing Jointly");
     let us_state_code  = get_str("us_state_code",    "None");
@@ -503,11 +515,20 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         if explicit >= 0.0 { explicit } else { state_tax_rate(&us_state_code) }
     };
 
+    // NRA spouse profiles override the effective filing status for bracket selection.
+    // Per-source jurisdiction overrides still apply on top (see controller).
+    let effective_filing_status: &str = match spouse_profile {
+        SpouseProfile::NraMfs                          => "Married Filing Separately",
+        SpouseProfile::NraHeadOfHouseholdEligible      => "Head of Household",
+        SpouseProfile::UsPerson |
+        SpouseProfile::NraElectedToBeTreatedAsResident => &filing_status,
+    };
+
     let tax_rules = TaxRules {
-        filing_status: filing_status.clone(),
+        filing_status: effective_filing_status.into(),
         us_state_code: us_state_code.clone(),
         us_state_rate,
-        ..TaxRules::for_filing_status(&filing_status)
+        ..TaxRules::for_filing_status(effective_filing_status)
     };
 
     // ── Build Config ──────────────────────────────────────────────────────────
@@ -592,6 +613,10 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         spouse_nenkin_monthly_jpy:   get_f64("spouse_nenkin_monthly_jpy",   0.0),
         spouse_nenkin_start_age:     get_u32("spouse_nenkin_start_age",      65),
         spouse_nenkin_jurisdiction:  parse_protocol("spouse_nenkin_jurisdiction"),
+        // Stage 02: NRA spouse profile
+        spouse_profile,
+        spouse_japan_salary_jpy,
+        spouse_japan_misc_income_jpy,
         family_unit,
         nenkin_income_monthly_jpy,
         nenkin_income_start_age,

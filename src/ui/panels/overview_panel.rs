@@ -62,6 +62,12 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
                 ui.end_row();
             }
 
+            // Stage 02 — Show effective filing status so user can confirm NRA profile was applied.
+            ui.label(RichText::new("Effective Filing Status:").strong());
+            ui.label(RichText::new(&res.effective_filing_status)
+                .color(Color32::from_rgb(180, 220, 255)));
+            ui.end_row();
+
             let gap_warnings = res.gap_warnings.len();
             ui.label(RichText::new("Solvency Warnings:").strong());
             if gap_warnings == 0 {

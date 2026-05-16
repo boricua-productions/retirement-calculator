@@ -346,6 +346,45 @@ pub struct MilitaryRetiredConfig {
     pub jurisdiction: TaxProtocol,
 }
 
+/// NRA spouse tax profile — controls how a Japanese-citizen spouse without a Green Card
+/// affects the US tax computation.
+///
+/// Selecting the right profile is critical: MFJ under §6013(g) drags the NRA spouse's
+/// global income into the US tax base, while MFS halves the standard deduction and
+/// eliminates Roth IRA eligibility for most working professionals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SpouseProfile {
+    /// Both spouses are US citizens or Lawful Permanent Residents (default).
+    /// Filing status and deductions follow the normal MFJ / Single path.
+    #[default]
+    UsPerson,
+    /// Japanese-citizen spouse with no Green Card; §6013(g) election filed to treat
+    /// the NRA spouse as a US resident for tax purposes.
+    /// Consequence: all of the NRA spouse's global income (Japan salary, Nenkin, etc.)
+    /// is added to the US return. Higher std deduction; bigger FTC pool.
+    NraElectedToBeTreatedAsResident,
+    /// Japanese-citizen spouse; Married Filing Separately.
+    /// The NRA spouse's Japan income stays outside the US tax base.
+    /// Consequence: standard deduction halves; Roth IRA phase-out drops to $0–$10k
+    /// (effectively eliminating contributions for working professionals).
+    NraMfs,
+    /// Japanese-citizen spouse; Head of Household eligible (qualifying US-citizen child
+    /// lives with the filer). HoH brackets and deductions apply.
+    NraHeadOfHouseholdEligible,
+}
+
+impl std::fmt::Display for SpouseProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpouseProfile::UsPerson                        => write!(f, "US Person (default)"),
+            SpouseProfile::NraElectedToBeTreatedAsResident => write!(f, "NRA — Elected MFJ (§6013(g))"),
+            SpouseProfile::NraMfs                          => write!(f, "NRA — Married Filing Separately"),
+            SpouseProfile::NraHeadOfHouseholdEligible      => write!(f, "NRA — Head of Household eligible"),
+        }
+    }
+}
+
 /// Where the primary investment activity is domiciled.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -697,6 +736,21 @@ pub struct Config {
     pub spouse_nenkin_start_age: u32,
     #[serde(default)]
     pub spouse_nenkin_jurisdiction: TaxProtocol,
+
+    // ── NRA Spouse Tax Profile (Stage 02) ─────────────────────────────────────────
+    /// Spouse's tax residency profile. Determines effective filing status and which
+    /// spouse income streams enter the US tax base.
+    /// Default `UsPerson` preserves pre-Stage-02 behaviour.
+    #[serde(default)]
+    pub spouse_profile: SpouseProfile,
+    /// Annual Japan salary earned by the NRA spouse (JPY).
+    /// Only applied to the US return when `spouse_profile == NraElectedToBeTreatedAsResident`.
+    #[serde(default)]
+    pub spouse_japan_salary_jpy: f64,
+    /// Annual Japan miscellaneous income earned by the NRA spouse (JPY).
+    /// Included in the US §6013(g) pooled income alongside `spouse_japan_salary_jpy`.
+    #[serde(default)]
+    pub spouse_japan_misc_income_jpy: f64,
 
     // ── Social Security ────────────────────────────────────────────────────────────
     /// Monthly SS benefit estimate in USD (0 = not applicable).

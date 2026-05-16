@@ -14,7 +14,7 @@ use crate::engine::tax::japan_regions::{lookup_resident_tax_rates, ResidentTaxRa
 use crate::engine::tax::japan_tax::JapanTaxEngine;
 use crate::engine::tax::nhi::NhiEngine;
 use crate::engine::tax::us_tax::{ssdi_combined_income_taxable_portion, TaxEngine};
-use crate::handlers::cashflow_manager::manage_monthly_cashflow;
+use crate::handlers::cashflow_manager::{effective_spouse_nenkin_jurisdiction, manage_monthly_cashflow};
 use crate::handlers::contributions::handle_contributions;
 use crate::handlers::dividends::handle_dividends;
 use crate::handlers::rebalancing::{execute_account_rebalance_strategy, handle_rebalancing, is_rebalance_month};
@@ -22,7 +22,7 @@ use crate::handlers::retirement_transition::handle_transition;
 use crate::handlers::roth_rebalancer::{execute_roth_rebalance, roth_rebalance_trigger_date};
 use crate::handlers::rsu_vesting::handle_rsu_vesting;
 use crate::models::assets::Account;
-use crate::models::config::{Config, TaxJurisdiction, UsTaxStrategy};
+use crate::models::config::{Config, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy};
 use crate::models::expense::ExpenseRule;
 use crate::models::snapshot::{AnnualSnapshot, SimResults};
 use super::state::SimState;
@@ -83,6 +83,7 @@ impl SimulationController {
             prefecture: self.cfg.prefecture.clone(),
             city: self.cfg.city.clone(),
             rsu_sell_to_cover_warnings: self.state.rsu_sell_to_cover_warnings,
+            effective_filing_status: self.cfg.tax_rules.filing_status.clone(),
         }
     }
 
@@ -624,15 +625,38 @@ impl SimulationController {
         );
         self.state.stats.year_pfic_mtm_income_usd = pfic_mtm_usd;
 
+        // Stage 02 — §6013(g) NRA spouse income pooling.
+        // When the NRA spouse elected to be treated as a US resident, all of their
+        // Japan income is added to the US return as ordinary income (general basket).
+        // The Japan resident tax paid on that spousal income also enters the FTC pool.
+        let (spouse_income_usd, spouse_japan_tax_usd) =
+            if self.cfg.spouse_profile == SpouseProfile::NraElectedToBeTreatedAsResident {
+                let japan_income_jpy = self.cfg.spouse_japan_salary_jpy
+                    + self.cfg.spouse_japan_misc_income_jpy;
+                let fx = self.state.current_fx;
+                let usd = if fx > 0.0 { japan_income_jpy / fx } else { 0.0 };
+                // Compute approximate Japan resident tax on the spouse's income.
+                let spouse_age = yr - self.cfg.spouse_birth_date.year();
+                let tax_jpy = JapanTaxEngine::calculate_resident_tax(
+                    japan_income_jpy, 0.0, 0.0, spouse_age, 0,
+                    self.japan_tax_rates.income_rate,
+                    self.japan_tax_rates.per_capita_jpy,
+                );
+                let tax_usd = if fx > 0.0 { tax_jpy / fx } else { 0.0 };
+                (usd, tax_usd)
+            } else {
+                (0.0, 0.0)
+            };
+
         // V7.6 — §904 basket split. Passive-basket ordinary income includes:
         //   • PFIC §1296 MTM (already accumulated above)
         //   • PFIC-flagged cap-gains distributions (year_pfic_ord_income_usd)
         //   • Interest + special distributions (year_passive_ord_income_usd)
-        // General-basket ordinary income: FERS, SS, taxable SSDI.
+        // General-basket ordinary income: FERS, SS, taxable SSDI, §6013(g) spouse income.
         let passive_ord = pfic_mtm_usd
             + self.state.stats.year_pfic_ord_income_usd
             + self.state.stats.year_passive_ord_income_usd;
-        let general_ord = base_ord + ssdi_taxable;
+        let general_ord = base_ord + ssdi_taxable + spouse_income_usd;
 
         // Keep total_ord for back-compat / FEIE path (which lumps the two).
         let total_ord    = general_ord + passive_ord;
@@ -683,6 +707,9 @@ impl SimulationController {
             } else {
                 (0.0, 0.0)
             };
+
+        // Stage 02: §6013(g) — Japan tax on spouse's income joins the general FTC basket.
+        let japan_tax_general_usd = japan_tax_general_usd + spouse_japan_tax_usd;
 
         // IRC §904(c) per-basket carryover: prior-year unused credits stay in their
         // source basket so passive credit can never absorb general-basket liability.
@@ -908,7 +935,13 @@ impl SimulationController {
         if self.cfg.spouse_nenkin_monthly_jpy > 0.0
             && spouse_age >= self.cfg.spouse_nenkin_start_age as i32
         {
-            self.state.stats.year_nenkin_income_jpy += self.cfg.spouse_nenkin_monthly_jpy;
+            // NRA-MFS / HoH: spouse Nenkin is outside the user's US tax base and
+            // the NRA spouse files individually in Japan. Only include it in the
+            // user's stats when the effective jurisdiction is Both (US + Japan).
+            let nenkin_jur = effective_spouse_nenkin_jurisdiction(&self.cfg);
+            if nenkin_jur != TaxProtocol::JapanOnly {
+                self.state.stats.year_nenkin_income_jpy += self.cfg.spouse_nenkin_monthly_jpy;
+            }
         }
     }
 
