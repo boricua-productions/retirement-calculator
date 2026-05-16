@@ -2696,7 +2696,25 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     if show_cap { pos.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0); }
                     if show_nav { pos.nav_growth_pct     = format!("{:.3}", profile.nav_growth     * 100.0); }
                     if show_cg  { pos.cap_gains_dist_pct = format!("{:.3}", profile.cap_gains_dist * 100.0); }
-                    if show_er  { pos.expense_ratio_pct  = format!("{:.3}", profile.expense_ratio  * 100.0); }
+                    if show_er {
+                        use crate::engine::market_data::ExpenseRatioSource;
+                        match profile.expense_ratio_source {
+                            ExpenseRatioSource::Unavailable => {
+                                log::warn!(
+                                    "[ExpenseRatio] {}: no live source and no fallback — kept your existing value '{}'.",
+                                    ticker, pos.expense_ratio_pct,
+                                );
+                            }
+                            _ => {
+                                pos.expense_ratio_pct = format!("{:.3}", profile.expense_ratio * 100.0);
+                                log::info!(
+                                    "[ExpenseRatio] {}: applied {:.3}% ({})",
+                                    ticker, profile.expense_ratio * 100.0,
+                                    profile.expense_ratio_source.label(),
+                                );
+                            }
+                        }
+                    }
                     if matches!(class_str.as_str(), "MutualFund" | "Other") {
                         log::warn!(
                             "[MarketData] {}: Yahoo does not expose interest_yield, special_dist, \
