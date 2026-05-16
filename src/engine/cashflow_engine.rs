@@ -472,11 +472,11 @@ mod tests {
         let cfg = minimal_cfg();
         let engine = CashFlowEngine::new(cfg);
         // Rating 100, WithSpouseAndChild. Child cutoff 2036-09-18; date 2028-06-01 is eligible.
-        // 2026 base = $4,267.28; inflated 2 years at 2.8%.
+        // 2026 base = $4,318.99; inflated 2 years at 2.8%.
         let date = NaiveDate::from_ymd_opt(2028, 6, 1).unwrap();
         let income = engine.get_incomes_usd(date);
         let factor = (1.028_f64).powi(2);
-        let expected_va = 4_267.28 * factor;
+        let expected_va = 4_318.99 * factor;
         assert!((income.va_usd - expected_va).abs() < 0.01, "va={} expected={}", income.va_usd, expected_va);
     }
 

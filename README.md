@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.6 Granular Returns Edition
+# Retirement Calculator — V7.7 Master Toggles Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.6 Granular Returns Edition)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.7 Master Toggles Edition)
 ---
 
 ## Beginner Quick Start
@@ -333,6 +333,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V7.7** | Master Toggles — `enable_education_savings` (bool, default `true`): when `false`, Tier 2.5 Education Fund accumulation is suppressed and surplus stays in the waterfall. `enable_gift_sink` (bool, default `true`): when `false`, the Tier 9 December gift drain is disabled. Both default to `true` for full backward compatibility with V7.3/V7.5 behavior. |
 | **V7.6** | Granular Returns — **Component-Based Return Profile** on each asset (new optional `return_profile` with `cap_growth`, `nav_growth`, `dividend_yield`, `interest_yield`, `cap_gains_dist`, `special_dist`, `roc`, `expense_ratio`). **Asset Class** taxonomy (`Stock` / `Etf` / `MutualFund` / `Other`). **Return-of-Capital basis reduction** — ROC is non-taxable in the year received and reduces both USD and JPY cost basis proportionally across FIFO lots; excess above basis falls through to LTCG. **§904 basket-aware FTC** — new `calculate_liability_with_basket_ftc` actually wires the Passive/General split into the December true-up so passive credit (PFIC, dividends, cap gains) cannot leak into the General basket (FERS/SS). **Audit CSV** now exposes `TotalGrossReturn_USD`, `TotalNetReturn_USD`, `TaxFriction_USD`, and a five-column distribution breakdown (`Dist_Dividend_USD`, `Dist_Interest_USD`, `Dist_CapGains_USD`, `Dist_Special_USD`, `Dist_ROC_USD`). Pre-V7.6 scenarios with no `return_profile` produce identical numerics — fully back-compat. |
 | **V7.5** | Strategic Optimization — **PFIC §1296 MTM** ordinary-income routing (new `pfic_regime` field on assets). **Japan capital-loss carry-forward** (IT Act Art. 37-12-2): losses from V7.0 liquidations are now recorded and offset future NHI/resident-tax bases. **Tier 9 Gift Sink**: annual JPY surplus routed to 暦年贈与 recipients per-calendar-year with IRC §2503(b) Form 709 flagging. **Exit Tax Monitor** (Art. 60-2): warns when Japan-subject assets ≥ ¥100M and residency ≥ 5-of-10 years. **Ninki Keizoku** (任意継続): new `NinkiKeizoku` NHI model variant for Shakai Hoken continuation up to 24 months. **Stochastic FX** in Marco Polo: independent USD/JPY GBM path per iteration, P10/P50/P90 now also reported in JPY. **Tax-Loss Harvesting** (§1091 wash-sale aware): pre-waterfall handler fires in configurable active months. **Mode B oracle** now aware of T9 gift and education drains. |
 | **V7.4** | Logic Hardening — Resolved Jido Teate accrual drift (¥0 drift) and implemented 4-month preemptive buffer restocking for Mode B. |
@@ -594,12 +595,12 @@ inflates by `inflation_cola` each year from 2026 onward.
 
 | Rating | Vet Only | With Spouse | With Spouse + Child |
 |--------|----------|-------------|---------------------|
-| 10% | $175.51 | $175.51 | $175.51 |
-| 30% | $537.42 | $601.17 | $641.17 |
-| 50% | $1,102.04 | $1,233.13 | $1,291.13 |
-| 70% | $1,759.19 | $1,890.69 | $1,964.69 |
-| 90% | $2,297.96 | $2,463.46 | $2,553.46 |
-| **100%** | **$3,938.58** | **$4,158.17** | **$4,267.28** |
+| 10% | $180.42 | $180.42 | $180.42 |
+| 30% | $552.47 | $617.47 | $666.47 |
+| 50% | $1,132.90 | $1,241.90 | $1,322.90 |
+| 70% | $1,808.45 | $1,961.45 | $2,074.45 |
+| 90% | $2,362.30 | $2,559.30 | $2,704.30 |
+| **100%** | **$3,938.58** | **$4,158.17** | **$4,318.99** |
 
 Full table (all ratings 10–100 in steps of 10) lives in `src/engine/va_benefits.rs`.
 
@@ -1370,22 +1371,23 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**89/89 tests** across all modules:
+**106/106 tests** across all modules:
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
-| `engine::tax::us_tax` | 14 | LTCG brackets, NIIT, FTC, state tax, filing status, bracket inflation, ordinary income at brackets, SSDI combined income (5 tests: zero, below $32K, 50% tier, 85% taxable, 85% cap) |
+| `engine::tax::us_tax` | 15 | LTCG brackets, NIIT, FTC, state tax, filing status, bracket inflation, ordinary income at brackets, SSDI combined income (5 tests: zero, below $32K, 50% tier, 85% taxable, 85% cap) |
 | `engine::tax::japan_tax` | 10 | Employment deduction tiers, pension deduction age thresholds, resident tax formula, legacy NHI compatibility tests |
 | `engine::tax::japan_regions` | 3 | Nagoya 9.7% < Tokyo 10.0%, rate delta = 0.3% of taxable base, city standard rates |
-| `engine::cashflow_engine` | 7 | FERS COLA tiers, FERS start gate, VA inflation, VA child cutoff, college-student extension |
-| `engine::rsu_engine` | 7 | Date alignment, monthly cadence, retirement cutoff, vesting_start_date, share accounting |
-| `engine::va_benefits` | 4 | 100% VetOnly ($3,938.58), 100% WithSpouseAndChild ($4,267.28), 50% WithSpouse ($1,233.13), SMC-K through R.2 2026 rates, override logic |
-| `engine::tax::nhi` | 10 | Medical/support/nursing components, caps, ManualOverride dispatch, investment income flag |
-| `simulation::controller` | 2 | crash_2030 stress scenario, FX shock 2032 |
-| `handlers::*` (V7.3/V7.5) | 16 | Jido Teate, education routing, lumpy dividends, tax-loss harvesting wash-sale, et al. |
+| `engine::cashflow_engine` | 9 | FERS COLA tiers, FERS start gate, VA inflation, VA child cutoff, college-student extension, all-pensions-disabled guard |
+| `engine::rsu_engine` | 10 | Date alignment, monthly cadence, retirement cutoff, vesting_start_date, share accounting, cliff accumulation (3-month and 14-month) |
+| `engine::va_benefits` | 6 | 100% VetOnly ($3,938.58), 100% WithSpouseAndChild ($4,318.99), 50% WithSpouse ($1,241.90), 70% all-dependent columns, SMC-K through R.2 2026 rates, unknown-rating zero guard |
+| `engine::tax::nhi` | 9 | Medical/support/nursing components, caps, ManualOverride dispatch, investment income flag |
+| `simulation::controller` | 6 | crash_2030 stress scenario, FX shock 2032, FX cadence fires on multiples, calendar-aware month delta, per-position rebalance date, spouse SS activates at start age |
+| `handlers::cashflow_manager` + `handlers::tax_loss_harvesting` | 7 | Jido Teate paid/disabled/age-3-rate/age-18 cutoff, education breakdown field, lumpy dividend months, TLH wash-sale window boundary |
 | `tests/logic_audit.rs` | 8 | Property + scenario invariants (Shielded/Dynamic regimes, restocking, education routing) |
 | `tests/v7_tax_and_liquidation_test.rs` | 3 | Highest-basis-first liquidation, state-tax gross-up, dividend-only no-sell |
 | `tests/v7_6_distributions.rs` *(V7.6)* | 5 | ROC proportional reduction, ROC excess → LTCG, PFIC §1296 CGD routing, expense-ratio drag, basket-FTC no-leak |
+| `tests/v7_7_full_transition_test.rs` *(V7.7)* | 15 | Education savings toggle, gift sink toggle, FERS/SS/Nenkin jurisdiction routing (6 cases), CSV headers compliance, resident tax first-year spike, account rebalance strategy field, migration deserialization |
 
 ---
 
@@ -1419,9 +1421,11 @@ retirement-calculator-v2/
     │   ├── cashflow_manager.rs     ← Post-retirement monthly cash-flow orchestration
     │   ├── contributions.rs        ← Pre-retirement Roth / DC / VA-buffer contributions
     │   ├── dividends.rs            ← V7.6 component-aware distribution events (Dividend / Interest / CGD / Special / ROC); DRIP and withholding
+    │   ├── rebalancing.rs          ← Target-state rebalancing: overweight sells, underweight buys
     │   ├── retirement_transition.rs ← Rebalance event, war chest, bridge fund, transition tax
     │   ├── roth_rebalancer.rs      ← Optional Roth rebalance at age 59.5
-    │   └── rsu_vesting.rs          ← RSU vest events, SELL_TO_COVER / SALARY logic
+    │   ├── rsu_vesting.rs          ← RSU vest events, SELL_TO_COVER / SALARY logic
+    │   └── tax_loss_harvesting.rs  ← TLH pre-waterfall handler (§1091 wash-sale guard, configurable active months)
     ├── models/
     │   ├── assets.rs               ← Account, Holding, FIFO lot tracking
     │   ├── config.rs               ← Config; TaxProtocol; Position; MilitaryRetiredConfig; all enums
@@ -1438,6 +1442,7 @@ retirement-calculator-v2/
         ├── app.rs                  ← eframe App, toolbar, tab routing, background thread
         └── panels/
             ├── chart_panel.rs
+            ├── comparison_panel.rs ← 🔀 Compare tab: Marco Polo P10/P50/P90 table and side-by-side scenario grid
             ├── config_panel.rs
             ├── input_panel.rs      ← Input Config tab; Vec<InvestmentAccountRow>/PositionRow; Asset Class + Return Profile (V7.6); Family Financial Planning toggles (V7.3 edu / V7.5 gift); VA/SMC overrides
             ├── overview_panel.rs
@@ -1459,6 +1464,7 @@ estimation and post-retirement insurance bridges.
 
 ### NhiModel enum (src/models/config.rs)
 
+```rust
 NhiModel::Calculated(NhiCalculatedRates)   — full municipal rate-schedule
 NhiModel::NinkiKeizoku { ... }              — V7.5: 24-month Shakai Hoken continuation bridge
 NhiModel::ManualOverride { spike, ongoing } — static annual totals
