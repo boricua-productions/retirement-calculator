@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.7.2 RSU Sell-to-Cover Realism Edition
+# Retirement Calculator — V7.8 NRA Spouse Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.7.2 RSU Sell-to-Cover Realism)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.8 NRA Spouse)
 ---
 
 ## Beginner Quick Start
@@ -336,6 +336,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V7.8** | NRA Spouse Tax Complexities — **`SpouseProfile`** enum (`us_person` / `nra_elected_to_be_treated_as_resident` / `nra_mfs` / `nra_head_of_household_eligible`) drives effective IRS filing status. **NRA-MFS Roth phase-out**: when `spouse_profile == nra_mfs` and MAGI > $10,000, the Roth contribution is suppressed and a `RothMfsPhaseOutExceeded` SolvencyWarning is emitted (IRC §408A(c)(3)(B)(ii)). **§6013(g) income pooling**: `nra_elected_to_be_treated_as_resident` adds the NRA spouse's Japan salary + misc income to US `gross_ord` and adds the Japan resident tax on that income to the FTC general basket. **HoH fallback**: `nra_head_of_household_eligible` applies intermediate Head-of-Household brackets when a qualifying child is present. **UI**: Spouse Profile dropdown (visible when married) + conditional Japan income fields. **Overview tab**: displays effective filing status. 4 new acceptance tests; 128/128 tests passing. |
 | **V7.7.2** | RSU Sell-to-Cover Death Spiral — **`rsu_sell_to_cover_realism: bool`** (default `true`) models the scenario where a scheduled recession drops the RSU share price below the combined US + Japan tax bill at vest. When a deficit occurs, the simulator executes a three-tier cascade: (1) Bridge Fund USD, (2) War Chest JPY with 0.5% FX spread penalty, (3) Tier 8 taxable stock liquidation (highest-JPY-basis-first). Any remainder that cannot be covered is accumulated in **`unpaid_rsu_tax_liability_usd`** and surfaced as a 🔴 red banner on the Overview tab. A new **`RSUTaxShortfall_USD`** column is written to the audit CSV. **`RsuSellToCoverWarning`** structs record the per-vest ticker, vest value, combined tax, deficit, and uncovered amount. `RsuSellToCoverPolicy` enum (`strict` / `permissive`) is added for future modes. UI checkbox in RSU Settings with tooltip explains the margin-call mechanics. 3 new integration tests. |
 | **V7.7.1** | Portfolio Transition & Tax Alignment — **Per-account rebalance strategy** (`Account.rebalance_strategy: Option<AccountRebalanceStrategy>`) fires independently of the global `rebalance_enabled` flag; the RSU `migrate_on_retirement: bool` triggers the Taxable account's strategy at the transition event so vested-RSU proceeds are redeployed into the post-retirement target mix. **Per-account tax-advantaged flags** (`us_tax_advantaged`, `japan_tax_advantaged`) drive the §5.1 distribution routing gate (`handlers/dividends.rs`) — each account independently opts into `apply_us_tax` / `apply_japan_tax`, so cross-jurisdiction containers (NISA, iDeCo, Roth, 401(k), DC) no longer hand-wire their own bypass. **Japan working-year income tax** (所得税) — new `JapanTaxEngine::calculate_income_tax()` with reconstruction surcharge; `salary_history` and `rsu_vest_history` carry an N−1 hand-off so the first retirement year's resident-tax base is honest. **Snapshot/CSV** gain `year_salary_jpy`, `year_rsu_vest_jpy`, `year_japan_income_tax_jpy`. FERS Article-18 routing bug fixed. 31/31 integration tests pass (119/119 overall). |
 | **V7.7** | Master Toggles — `enable_education_savings` (bool, default `true`): when `false`, Tier 2.5 Education Fund accumulation is suppressed and surplus stays in the waterfall. `enable_gift_sink` (bool, default `true`): when `false`, the Tier 9 December gift drain is disabled. Both default to `true` for full backward compatibility with V7.3/V7.5 behavior. |
@@ -368,7 +369,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V7.7.2)](#16-hardening--compliance-v75--v772)
+16. [Hardening & Compliance (V7.5 → V7.8)](#16-hardening--compliance-v75--v78)
 
 ---
 
@@ -575,6 +576,32 @@ future years' COLA inflation of the base standard deduction.
 
 `"Married Filing Jointly"` *(default)*, `"Single"`, `"Married Filing Separately"`,
 `"Head of Household"`. Brackets, standard deduction, and LTCG thresholds differ per status.
+
+### NRA Spouse Profile (V7.8)
+
+When the spouse is a Non-Resident Alien (NRA) — a Japanese citizen without a Green Card — the
+**Spouse Profile** dropdown (shown in the Filing Status / Family section whenever "Married" is
+selected) overrides the effective IRS filing status used by the engine:
+
+| Profile | Effective Filing Status | Key Behavior |
+|---------|------------------------|--------------|
+| **US Person** *(default)* | Married Filing Jointly | Standard MFJ brackets; spouse treated as US person. No change from prior behavior. |
+| **NRA — §6013(g) MFJ** | Married Filing Jointly | NRA spouse irrevocably elected to be treated as a US resident (IRC §6013(g)). Spouse's Japan salary and misc income are added to US `gross_ord`; Japan resident tax on that income is added to the FTC general basket. |
+| **NRA — MFS** | Married Filing Separately | Narrower MFS brackets and halved standard deduction apply. Roth IRA contributions are phased out at MAGI > $10,000 (IRC §408A(c)(3)(B)(ii)); a `RothMfsPhaseOutExceeded` warning is emitted if MAGI exceeds the ceiling. Spouse's Japan income is excluded from the US tax base. |
+| **NRA — Head of Household** | Head of Household | Intermediate HoH brackets; elected when a qualifying US-citizen child is present and the NRA spouse is not §6013(g)-elected. |
+
+**Roth IRA phase-out under NRA-MFS:** The IRS Roth phase-out window for MFS is compressed to
+$0–$10,000 MAGI. When `spouse_profile == NraMfs` and `total_annual_compensation_usd > $10,000`,
+the engine skips the annual Roth contribution and emits a `SolvencyWarning` with
+`absorbed_by = "RothMfsPhaseOutExceeded"`.
+
+**§6013(g) income pooling:** When `spouse_profile == NraElectedToBeTreatedAsResident`, the
+engine adds `spouse_japan_salary_jpy + spouse_japan_misc_income_jpy` (converted at the
+simulation FX rate) to US `gross_ord`. The Japan resident tax on that income is added to the
+FTC general basket, partially offsetting the higher US tax bill from the pooled income.
+
+The effective filing status actually used by the simulation engine is displayed on the Overview
+tab as **Effective Filing Status**.
 
 ### State income tax
 
@@ -1165,7 +1192,10 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 | `tax_jurisdiction` | Tax Jurisdiction | enum | `both` | `both` / `us_only` / `japan_only`. `us_only` bypasses all Japan calculations |
 | `account_type` | Account Type | string | `Taxable Brokerage` | Primary account classification for tax routing. One of: `Taxable Brokerage`, `IRA (Traditional)`, `Roth IRA`, `401(k) / DC Plan`, `NISA`, `iDeCo`. On save, `investment_location` is auto-derived (`japan` for NISA/iDeCo, `us` otherwise) |
 | `investment_location` | — (legacy) | enum | `us` | Auto-derived from `account_type`; preserved for backward compatibility |
-| `us_filing_status` | Filing Status | string | `Married Filing Jointly` | IRS filing status; determines brackets and std deduction |
+| `us_filing_status` | Filing Status | string | `Married Filing Jointly` | IRS filing status; determines brackets and std deduction. When `spouse_profile` is set, the engine derives the effective filing status automatically — this field is the base input. |
+| `spouse_profile` | Spouse Profile | enum | `us_person` | *(V7.8)* NRA spouse treatment. `us_person` (default) / `nra_elected_to_be_treated_as_resident` (§6013(g) MFJ) / `nra_mfs` (MFS, Roth capped at $10k MAGI) / `nra_head_of_household_eligible` (HoH). See §3 NRA Spouse Profile. |
+| `spouse_japan_salary_jpy` | Spouse Japan Salary (JPY) | `f64` | `0.0` | *(V7.8)* Annual Japan employment income for an NRA spouse under §6013(g). Added to US `gross_ord` and FTC general basket. Only active when `spouse_profile == nra_elected_to_be_treated_as_resident`. |
+| `spouse_japan_misc_income_jpy` | Spouse Japan Misc Income (JPY) | `f64` | `0.0` | *(V7.8)* Annual Japan miscellaneous income for an NRA spouse under §6013(g). Pooled with `spouse_japan_salary_jpy` for US and FTC purposes. |
 | `us_state_code` | US State Residency | string | `FL` | Two-letter postal code; `FL` / `TX` / `WA` and others = no state income tax |
 | `us_state_tax_rate` | — | `f64` | `0.0` | Auto-derived from `us_state_code`; manual override possible |
 | `inflation_us_cpi` | US Inflation (CPI) | `f64` | `0.028` | Annual US CPI; inflates tax brackets, FERS COLA, SS COLA, RSU bracket floor |
@@ -1382,11 +1412,11 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**122/122 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
+**128/128 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
-| `engine::tax::us_tax` | 15 | LTCG brackets, NIIT, FTC, state tax, filing status, bracket inflation, ordinary income at brackets, SSDI combined income (5 tests: zero, below $32K, 50% tier, 85% taxable, 85% cap) |
+| `engine::tax::us_tax` | 17 | LTCG brackets, NIIT, FTC, state tax, filing status, bracket inflation, ordinary income at brackets, SSDI combined income (5 tests: zero, below $32K, 50% tier, 85% taxable, 85% cap), MFS std deduction < MFJ, MFS LTCG threshold < MFJ |
 | `engine::tax::japan_tax` | 10 | Employment deduction tiers, pension deduction age thresholds, resident tax formula, legacy NHI compatibility tests |
 | `engine::tax::japan_regions` | 3 | Nagoya 9.7% < Tokyo 10.0%, rate delta = 0.3% of taxable base, city standard rates |
 | `engine::cashflow_engine` | 9 | FERS COLA tiers, FERS start gate, VA inflation, VA child cutoff, college-student extension, all-pensions-disabled guard |
@@ -1401,6 +1431,7 @@ cargo test
 | `tests/v7_7_full_transition_test.rs` *(V7.7)* | 15 | Education savings toggle, gift sink toggle, FERS/SS/Nenkin jurisdiction routing (6 cases), CSV headers compliance, resident tax first-year spike, account rebalance strategy field, migration deserialization |
 | `tests/v7_7_2_rsu_sell_to_cover_realism.rs` *(V7.7.2)* | 3 | Sell-to-cover deficit cascade (Bridge → War Chest → Tier 8), `unpaid_rsu_tax_liability_usd` accumulation when buffers exhausted, `RsuSellToCoverPolicy::Permissive` legacy-zeroing parity |
 | `tests/expense_ratio_test.rs` | 13 | Range validator guards (zero/NaN/infinity/out-of-range), fallback table coverage and self-consistency, dispatch + provenance source on Schwab/SSGA/iShares fallthrough, NotApplicable on stocks, Unavailable on unknown tickers, distinct source labels. Two live-network tests (Vanguard VOO, Invesco QQQM) are `#[ignore]`d. |
+| `tests/v7_8_nra_spouse.rs` *(V7.8)* | 4 | MFJ vs MFS vs HoH produce distinct US tax (acceptance A), NRA-MFS Roth suppressed when MAGI > $10k + `RothMfsPhaseOutExceeded` warning (acceptance B), NRA-MFS Roth allowed when MAGI = $0 (acceptance B-inverse), §6013(g) spouse income increases US gross ord and FTC partial offset (acceptance C) |
 
 ---
 
@@ -1637,7 +1668,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V7.7.2)
+## 16. Hardening & Compliance (V7.5 → V7.8)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
@@ -1645,7 +1676,9 @@ through the correct §904 basket and §1296 check; V7.7.1 finishes the tax-pipel
 each container account self-declare its US/Japan tax exposure rather than relying on hardcoded
 bypass lists; V7.7.2 closes the RSU edge case where a recession at vest drops the share price
 below the combined US + Japan tax bill, by cascading the shortfall through Bridge → War Chest →
-Tier 8 and surfacing any uncovered remainder as an audited liability rather than silently zeroing it.
+Tier 8 and surfacing any uncovered remainder as an audited liability rather than silently zeroing it;
+V7.8 adds NRA spouse tax handling — effective filing status derived from `SpouseProfile`, §6013(g)
+income pooling, NRA-MFS Roth phase-out enforcement, and HoH fallback.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income

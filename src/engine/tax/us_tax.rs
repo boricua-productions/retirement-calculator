@@ -584,6 +584,28 @@ mod tests {
         assert!(single.std_deduction < mfj.std_deduction);
     }
 
+    /// NRA-MFS: MFS and Single share the same std_deduction (both ~$14,600 in 2024).
+    /// MFJ ($35,000) is more than double MFS ($14,600), confirming the halving effect.
+    #[test]
+    fn test_mfs_std_deduction_less_than_mfj() {
+        let mfs = TaxRules::for_filing_status("Married Filing Separately");
+        let mfj = TaxRules::for_filing_status("Married Filing Jointly");
+        assert!(mfs.std_deduction < mfj.std_deduction,
+            "MFS std_deduction ({}) should be less than MFJ ({})",
+            mfs.std_deduction, mfj.std_deduction);
+        assert_eq!(mfs.filing_status, "Married Filing Separately");
+    }
+
+    /// NRA-MFS: LTCG-0 threshold under MFS is much lower than MFJ.
+    #[test]
+    fn test_mfs_ltcg_threshold_lower_than_mfj() {
+        let mfs = TaxRules::for_filing_status("Married Filing Separately");
+        let mfj = TaxRules::for_filing_status("Married Filing Jointly");
+        assert!(mfs.ltcg_0_limit < mfj.ltcg_0_limit,
+            "MFS ltcg_0_limit ({}) should be less than MFJ ({})",
+            mfs.ltcg_0_limit, mfj.ltcg_0_limit);
+    }
+
     #[test]
     fn test_no_income_tax_states() {
         for code in &["FL", "TX", "WA", "NV"] {

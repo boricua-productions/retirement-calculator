@@ -4,7 +4,7 @@ use log::{info, warn};
 use crate::engine::cashflow_engine::CashFlowEngine;
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::japan_tax::JapanTaxEngine;
-use crate::models::config::{Config, TaxProtocol, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy};
+use crate::models::config::{Config, SpouseProfile, TaxProtocol, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy};
 use crate::models::constants::SimConstants;
 use crate::models::snapshot::SolvencyWarning;
 use crate::simulation::state::SimState;
@@ -22,6 +22,25 @@ pub const DEFAULT_FX_SPREAD_PENALTY: f64 = 0.005;
 /// fires a Tier-8 sale to restore both buffers to full target.
 pub const MODE_B_LOOKAHEAD_MONTHS: u32 = 4;
 pub const MODE_B_PREEMPT_FLOOR:    f64 = 0.50;
+
+/// Infer the effective jurisdiction for spouse Nenkin income based on `spouse_profile`.
+///
+/// Per-source `spouse_nenkin_jurisdiction` overrides take precedence when explicitly set
+/// away from the default `Both`. Otherwise the profile inference applies:
+///   - `NraElectedToBeTreatedAsResident` → Both (pooled on the US return)
+///   - all other NRA profiles             → JapanOnly (outside the US tax base)
+///   - `UsPerson`                          → Both (US citizen / LPR; no change)
+pub fn effective_spouse_nenkin_jurisdiction(cfg: &Config) -> TaxProtocol {
+    if cfg.spouse_nenkin_jurisdiction != TaxProtocol::Both {
+        return cfg.spouse_nenkin_jurisdiction;
+    }
+    match cfg.spouse_profile {
+        SpouseProfile::NraMfs | SpouseProfile::NraHeadOfHouseholdEligible =>
+            TaxProtocol::JapanOnly,
+        SpouseProfile::UsPerson | SpouseProfile::NraElectedToBeTreatedAsResident =>
+            TaxProtocol::Both,
+    }
+}
 
 /// Convert USD to JPY applying the configured spread penalty.
 /// Returns (jpy_after_penalty, penalty_jpy_lost).

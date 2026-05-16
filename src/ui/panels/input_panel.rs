@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::engine::tax::japan_regions::{ALL_PREFECTURES, cities_for_prefecture, city_rate_annotation};
 use crate::engine::tax::us_tax::{state_tax_rate, state_display_name, ALL_STATE_CODES, ALL_FILING_STATUSES};
 use crate::engine::va_benefits::{lookup_va_monthly_2026, lookup_smc_monthly_2026, ALL_VA_RATINGS, ALL_SMC_VARIANTS};
-use crate::models::config::{NhiCalculatedRates, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus};
+use crate::models::config::{NhiCalculatedRates, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus};
 
 const SAVE_STATUS_ID: &str = "input_panel_save_status";
 const SAVE_STATUS_TTL: Duration = Duration::from_secs(5);
@@ -239,6 +239,10 @@ pub struct InputPanelState {
     pub user_birth_date:   String,
     pub is_married:        bool,
     pub spouse_birth_date: String,
+    // ── NRA Spouse Tax Profile (Stage 02) ────────────────────────────────────
+    pub spouse_profile:               SpouseProfile,
+    pub spouse_japan_salary_jpy:      String,
+    pub spouse_japan_misc_income_jpy: String,
     // ── Spouse SS (V6.6) ─────────────────────────────────────────────────────
     pub spouse_ss_enabled:      bool,
     pub spouse_ss_monthly_usd:  String,
@@ -372,6 +376,9 @@ impl Default for InputPanelState {
             user_birth_date:        String::new(),
             is_married:             false,
             spouse_birth_date:      String::new(),
+            spouse_profile:               SpouseProfile::UsPerson,
+            spouse_japan_salary_jpy:      "0".into(),
+            spouse_japan_misc_income_jpy: "0".into(),
             spouse_ss_enabled:      false,
             spouse_ss_monthly_usd:  "0".into(),
             spouse_ss_start_age:    "67".into(),
@@ -884,6 +891,16 @@ impl InputPanelState {
             is_married:        sets["is_married"].as_bool()
                                   .unwrap_or_else(|| sets["spouse_birth_date"].is_string()),
             spouse_birth_date: str_val("spouse_birth_date", ""),
+            spouse_profile: match sets["spouse_profile"].as_str().unwrap_or("us_person") {
+                "nra_elected_to_be_treated_as_resident" | "nra_elected_mfj" =>
+                    SpouseProfile::NraElectedToBeTreatedAsResident,
+                "nra_mfs"  => SpouseProfile::NraMfs,
+                "nra_head_of_household_eligible" | "nra_hoh" =>
+                    SpouseProfile::NraHeadOfHouseholdEligible,
+                _ => SpouseProfile::UsPerson,
+            },
+            spouse_japan_salary_jpy:      num_str("spouse_japan_salary_jpy",      "0"),
+            spouse_japan_misc_income_jpy: num_str("spouse_japan_misc_income_jpy", "0"),
             spouse_ss_enabled:      sets["spouse_ss_monthly_usd"].as_f64().unwrap_or(0.0) > 0.0,
             spouse_ss_monthly_usd:  num_str("spouse_ss_monthly_usd", "0"),
             spouse_ss_start_age:    num_str("spouse_ss_start_age",   "67"),
@@ -1140,6 +1157,32 @@ impl InputPanelState {
                 settings.insert("spouse_birth_date".into(), Value::String(self.spouse_birth_date.clone()));
             } else {
                 settings.remove("spouse_birth_date");
+            }
+            // Stage 02: persist spouse profile and Japan income fields.
+            if self.is_married {
+                settings.insert("spouse_profile".into(), Value::String(
+                    match self.spouse_profile {
+                        SpouseProfile::UsPerson =>
+                            "us_person".into(),
+                        SpouseProfile::NraElectedToBeTreatedAsResident =>
+                            "nra_elected_to_be_treated_as_resident".into(),
+                        SpouseProfile::NraMfs =>
+                            "nra_mfs".into(),
+                        SpouseProfile::NraHeadOfHouseholdEligible =>
+                            "nra_head_of_household_eligible".into(),
+                    }
+                ));
+                if self.spouse_profile == SpouseProfile::NraElectedToBeTreatedAsResident {
+                    set_f64!("spouse_japan_salary_jpy",      self.spouse_japan_salary_jpy);
+                    set_f64!("spouse_japan_misc_income_jpy", self.spouse_japan_misc_income_jpy);
+                } else {
+                    settings.remove("spouse_japan_salary_jpy");
+                    settings.remove("spouse_japan_misc_income_jpy");
+                }
+            } else {
+                settings.remove("spouse_profile");
+                settings.remove("spouse_japan_salary_jpy");
+                settings.remove("spouse_japan_misc_income_jpy");
             }
             if self.is_married && self.spouse_ss_enabled {
                 set_f64_or_na!("spouse_ss_monthly_usd", self.spouse_ss_monthly_usd);
@@ -2788,6 +2831,96 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 vfield_tt(ui, "Spouse Birthday", &mut state.spouse_birth_date, "YYYY-MM-DD", true,
                     "Spouse's full birth date. Triggers second senior std-deduction add-on at 65 and gates Spouse SS / Nenkin start ages.");
             });
+
+            // ── Stage 02: Spouse Tax Profile ─────────────────────────────────────
+            ui.add_space(4.0);
+            ui.label(RichText::new("Spouse Tax Profile").strong())
+                .on_hover_text(
+                    "Stage 02: NRA Spouse Profiles\n\n\
+                     If your spouse is a Japanese citizen without a Green Card (a Non-Resident Alien \
+                     or NRA under IRS rules), selecting the right profile can change your US tax bill \
+                     by tens of thousands of dollars.\n\n\
+                     US Person: both spouses are US citizens or Lawful Permanent Residents.\n\
+                     NRA Elected MFJ (§6013(g)): pools the NRA spouse's global Japan income onto the \
+                     US return — higher std deduction and larger FTC pool, but Japan salary / Nenkin \
+                     become US-taxable.\n\
+                     NRA Married Filing Separately: keeps the spouse's Japan income out of the US \
+                     return. Lower std deduction; Roth IRA contributions are effectively disallowed \
+                     (MAGI phase-out $0–$10k).\n\
+                     NRA Head of Household: available when a qualifying US-citizen child lives with \
+                     you. Uses HoH brackets and deduction."
+                );
+            let profile_label = format!("{}", state.spouse_profile);
+            egui::ComboBox::from_id_salt("spouse_profile_combo")
+                .selected_text(&profile_label)
+                .show_ui(ui, |ui| {
+                    let profiles = [
+                        (SpouseProfile::UsPerson,
+                         "US Person (default) — both spouses are US citizens or LPRs.",
+                         ""),
+                        (SpouseProfile::NraElectedToBeTreatedAsResident,
+                         "NRA — Elected MFJ (§6013(g)) — Japanese-citizen spouse; global incomes pooled.",
+                         "Higher std deduction and FTC pool. Japan salary & Nenkin become US-taxable."),
+                        (SpouseProfile::NraMfs,
+                         "NRA — Married Filing Separately — Japan income out of US return.",
+                         "Lower std deduction; Roth IRA disallowed (MAGI phase-out $0–$10k)."),
+                        (SpouseProfile::NraHeadOfHouseholdEligible,
+                         "NRA — Head of Household eligible (qualifying US-citizen child present).",
+                         "HoH brackets and deduction; spouse's Japan income excluded from US return."),
+                    ];
+                    for (profile, label, note) in &profiles {
+                        let selected = state.spouse_profile == *profile;
+                        let resp = ui.selectable_label(selected, *label);
+                        let clicked = resp.clicked();
+                        if !note.is_empty() {
+                            resp.on_hover_text(*note);
+                        }
+                        if clicked {
+                            state.spouse_profile = *profile;
+                        }
+                    }
+                });
+
+            // Why this matters expander
+            egui::CollapsingHeader::new("Why this matters")
+                .id_salt("nra_spouse_why")
+                .show(ui, |ui| {
+                    ui.label(RichText::new(
+                        "IRS §6013(g) Election (NRA Elected MFJ):\n\
+                         Filing jointly with an NRA spouse is allowed but triggers a \
+                         one-time election that brings all of the NRA spouse's worldwide income \
+                         into the US return — including Japan salary, Nenkin, and rental income. \
+                         This increases the FTC pool (more Japan tax to credit) but can also push \
+                         you into a higher bracket if the NRA spouse earns significant yen income.\n\n\
+                         Married Filing Separately (NRA-MFS):\n\
+                         Keeps the NRA spouse's Japan income completely outside the US return. \
+                         However, the standard deduction is halved ($14,600 vs $35,000 for MFJ) \
+                         and the Roth IRA contribution phase-out drops from $236k–$246k to \
+                         $0–$10k, effectively eliminating Roth contributions for any working \
+                         professional."
+                    ).small().color(Color32::GRAY));
+                });
+
+            // Spouse Japan income fields (only for §6013(g) path)
+            if state.spouse_profile == SpouseProfile::NraElectedToBeTreatedAsResident {
+                ui.add_space(4.0);
+                ui.label(RichText::new(
+                    "Enter the NRA spouse's Japan income below. \
+                     These amounts are added to the US return as ordinary income and the \
+                     Japan resident tax paid on them is credited via the FTC."
+                ).small().color(Color32::from_rgb(255, 220, 100)));
+                grid(ui, "g_spouse_japan", |ui| {
+                    vfield_tt(ui, "Spouse Japan Salary (JPY/yr)",
+                        &mut state.spouse_japan_salary_jpy, "e.g. 8000000", true,
+                        "Annual Japan employment income earned by the NRA spouse (yen). \
+                         Converted to USD at the simulation FX rate and added to gross ordinary income.");
+                    vfield_tt(ui, "Spouse Japan Misc Income (JPY/yr)",
+                        &mut state.spouse_japan_misc_income_jpy, "e.g. 0", false,
+                        "Other Japan-source income (freelance, rental, etc.) earned by the NRA spouse. \
+                         Pooled with spouse salary on the US §6013(g) return.");
+                });
+            }
+            ui.add_space(4.0);
         }
         ui.add_space(6.0);
 

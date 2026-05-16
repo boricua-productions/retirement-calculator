@@ -169,6 +169,10 @@ fn minimal_cfg() -> Config {
         // V7.7.2 defaults
         rsu_sell_to_cover_realism: true,
         rsu_sell_to_cover_policy: retirement_calculator::models::config::RsuSellToCoverPolicy::Strict,
+        // Stage 02 defaults
+        spouse_profile: retirement_calculator::models::config::SpouseProfile::UsPerson,
+        spouse_japan_salary_jpy: 0.0,
+        spouse_japan_misc_income_jpy: 0.0,
     }
 }
 

@@ -232,4 +232,8 @@ pub struct SimResults {
     pub city: String,
     /// V7.7.2 — RSU margin-call deficit events (non-empty only when realism on).
     pub rsu_sell_to_cover_warnings: Vec<RsuSellToCoverWarning>,
+    /// Stage 02 — Effective US filing status the engine actually used.
+    /// Derived from `spouse_profile` (e.g. NraMfs → "Married Filing Separately")
+    /// and surfaced in the Overview tab so the user can confirm the right path ran.
+    pub effective_filing_status: String,
 }

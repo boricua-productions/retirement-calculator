@@ -26,7 +26,7 @@ use retirement_calculator::models::assets::{
     Account, AccountJurisdiction, AccountLocation, Asset, AssetCategory, Currency, DividendCurrency,
 };
 use retirement_calculator::models::config::{
-    Config, FamilyUnit, NhiModel, RsuSellToCoverPolicy, TaxProtocol, TaxRules,
+    Config, FamilyUnit, NhiModel, RsuSellToCoverPolicy, SpouseProfile, TaxProtocol, TaxRules,
     VaDependentStatus, WithdrawalRegime, WithdrawalStrategy, WaterfallStrategy, UsTaxStrategy,
     InvestmentLocation,
 };
@@ -165,6 +165,10 @@ fn stc_config(realism: bool) -> Config {
         enable_gift_sink: false,
         rsu_sell_to_cover_realism: realism,
         rsu_sell_to_cover_policy: RsuSellToCoverPolicy::Strict,
+        // Stage 02 defaults
+        spouse_profile: SpouseProfile::UsPerson,
+        spouse_japan_salary_jpy: 0.0,
+        spouse_japan_misc_income_jpy: 0.0,
     }
 }
 

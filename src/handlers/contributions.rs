@@ -3,7 +3,8 @@ use log::info;
 
 use crate::engine::cashflow_engine::CashFlowEngine;
 use crate::engine::market_data::MarketDataService;
-use crate::models::config::Config;
+use crate::models::config::{Config, SpouseProfile};
+use crate::models::snapshot::SolvencyWarning;
 use crate::simulation::state::SimState;
 
 /// Processes all pre-retirement contributions for the current month:
@@ -46,34 +47,62 @@ pub fn handle_contributions(
     }
 
     // ── 2. Roth IRA contribution ───────────────────────────────────────────────
+    // NRA-MFS Roth phase-out: MAGI $0–$10k window (IRC §408A(c)(3)(B)(ii)).
+    // A working professional filing MFS almost always exceeds the $10k ceiling,
+    // so Roth contributions are suppressed. Warn once per year (January).
+    let nra_mfs_roth_blocked = cfg.spouse_profile == SpouseProfile::NraMfs
+        && cfg.total_annual_compensation_usd > 10_000.0;
+    if nra_mfs_roth_blocked && mo == 1 {
+        info!(
+            "   [NRA-MFS] Roth contribution skipped {}: MAGI ${:.0} > $10k MFS ceiling (IRC §408A).",
+            yr, cfg.total_annual_compensation_usd
+        );
+        state.gap_warnings.push(SolvencyWarning {
+            date:  format!("{}-01-01", yr),
+            fx_rate: state.current_fx,
+            qtr_income_jpy:   0.0,
+            qtr_expenses_jpy: 0.0,
+            gap_jpy:          0.0,
+            bridge_fund_left_usd: state.bridge_fund_usd,
+            absorbed_by: "RothMfsPhaseOutExceeded".into(),
+            notes: format!(
+                "NRA-MFS: Roth IRA skipped. Estimated MAGI ${:.0} exceeds $10,000 MFS \
+                 phase-out ceiling (IRC §408A(c)(3)(B)(ii)). Consider backdoor Roth.",
+                cfg.total_annual_compensation_usd
+            ),
+        });
+    }
+
     let target = &cfg.monthly_contribution_ticker;
     let roth_fallback_p = MarketDataService::fallback_price(target);
     let roth_fallback_g = cfg.growth_rates_annual.get(target.as_str())
         .copied()
         .unwrap_or_else(|| MarketDataService::fallback_growth(target));
 
-    if yr == cfg.start_date.year() {
-        // First year of simulation: contribute remaining limit in the first month.
-        if mo == cfg.start_date.month() {
-            let remaining = if cfg.roth_contribution_made_this_year {
-                0.0
-            } else {
-                (state.ira_limit - cfg.roth_contribution_so_far).max(0.0)
-            };
-            if remaining > 0.0 {
-                info!(
-                    "   [INFO] Roth IRA remainder for {}: ${:.2} (limit ${:.0} - so far ${:.0})",
-                    yr, remaining, state.ira_limit, cfg.roth_contribution_so_far
-                );
-                if let Some(roth) = state.accounts.get_mut("Roth") {
-                    roth.buy(target, remaining, current_date, roth_fallback_p, roth_fallback_g);
+    if !nra_mfs_roth_blocked {
+        if yr == cfg.start_date.year() {
+            // First year of simulation: contribute remaining limit in the first month.
+            if mo == cfg.start_date.month() {
+                let remaining = if cfg.roth_contribution_made_this_year {
+                    0.0
+                } else {
+                    (state.ira_limit - cfg.roth_contribution_so_far).max(0.0)
+                };
+                if remaining > 0.0 {
+                    info!(
+                        "   [INFO] Roth IRA remainder for {}: ${:.2} (limit ${:.0} - so far ${:.0})",
+                        yr, remaining, state.ira_limit, cfg.roth_contribution_so_far
+                    );
+                    if let Some(roth) = state.accounts.get_mut("Roth") {
+                        roth.buy(target, remaining, current_date, roth_fallback_p, roth_fallback_g);
+                    }
                 }
             }
-        }
-    } else if mo == 1 {
-        // Subsequent years: contribute full limit in January.
-        if let Some(roth) = state.accounts.get_mut("Roth") {
-            roth.buy(target, state.ira_limit, current_date, roth_fallback_p, roth_fallback_g);
+        } else if mo == 1 {
+            // Subsequent years: contribute full limit in January.
+            if let Some(roth) = state.accounts.get_mut("Roth") {
+                roth.buy(target, state.ira_limit, current_date, roth_fallback_p, roth_fallback_g);
+            }
         }
     }
 
