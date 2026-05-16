@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.7.1 Portfolio Transition & Tax Alignment Edition
+# Retirement Calculator — V7.7.2 RSU Sell-to-Cover Realism Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.7.1 Portfolio Transition & Tax Alignment)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.7.2 RSU Sell-to-Cover Realism)
 ---
 
 ## Beginner Quick Start
@@ -368,7 +368,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V7.7.1)](#16-hardening--compliance-v75--v771)
+16. [Hardening & Compliance (V7.5 → V7.7.2)](#16-hardening--compliance-v75--v772)
 
 ---
 
@@ -1637,13 +1637,15 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V7.7.1)
+## 16. Hardening & Compliance (V7.5 → V7.7.2)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
 through the correct §904 basket and §1296 check; V7.7.1 finishes the tax-pipeline work by making
 each container account self-declare its US/Japan tax exposure rather than relying on hardcoded
-bypass lists.
+bypass lists; V7.7.2 closes the RSU edge case where a recession at vest drops the share price
+below the combined US + Japan tax bill, by cascading the shortfall through Bridge → War Chest →
+Tier 8 and surfacing any uncovered remainder as an audited liability rather than silently zeroing it.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income
@@ -1688,6 +1690,17 @@ transition event so vested-RSU proceeds flow into the post-retirement target mix
 also gained `JapanTaxEngine::calculate_income_tax()` for working-year 所得税 (with reconstruction
 surcharge), fed by the new N−1 `salary_history` / `rsu_vest_history` so the first-year
 resident-tax base is honest.
+
+### Fix 6 — RSU Sell-to-Cover Death Spiral *(V7.7.2)*
+The legacy SELL_TO_COVER path silently zeroed any tax shortfall when a recession dropped the vest
+price below the combined US + Japan tax bill — an unrealistic best-case that hid a real liquidity
+risk. With `rsu_sell_to_cover_realism: true` (default), a deficit at vest now cascades through
+(1) Bridge Fund USD, (2) War Chest JPY with the standard 0.5% FX spread penalty, and
+(3) Tier 8 taxable liquidation (highest-JPY-basis-first). Anything still uncovered accumulates
+in `unpaid_rsu_tax_liability_usd`, is exposed via the new `RSUTaxShortfall_USD` CSV column, and
+surfaces as a red banner on the Overview tab. Per-vest details (ticker, vest value, combined tax,
+deficit, uncovered amount) are captured as `RsuSellToCoverWarning` records. The
+`RsuSellToCoverPolicy::Permissive` mode preserves the legacy zeroing behaviour for parity tests.
 
 ---
 
