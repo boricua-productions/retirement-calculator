@@ -719,6 +719,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             "permissive" | "Permissive" => crate::models::config::RsuSellToCoverPolicy::Permissive,
             _ => crate::models::config::RsuSellToCoverPolicy::Strict,
         },
+
+        // ── Stage 03: Monthly Dependent Precision ─────────────────────────────
+        monthly_dependent_precision: get_bool("monthly_dependent_precision", true),
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────
