@@ -743,6 +743,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
         spouse_death_date: sets["spouse_death_date"].as_str()
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
+
+        // ── Stage 09: Cryptocurrency / Web3 Asset Handling ────────────────────
+        crypto_tax_enabled: get_bool("crypto_tax_enabled", true),
         heirs: {
             let mut h: Vec<crate::models::config::Heir> = vec![];
             if let Value::Array(arr) = &sets["heirs"] {
@@ -919,6 +922,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     pfic_qef_election_year: info["pfic_qef_election_year"].as_i64().map(|y| y as i32),
                     asset_class: parse_asset_class(info),
                     return_profile: parse_return_profile(info),
+                    crypto_staking_apr: info["crypto_staking_apr"].as_f64().unwrap_or(0.0),
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);
@@ -1003,6 +1007,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                             pfic_qef_election_year: info["pfic_qef_election_year"].as_i64().map(|y| y as i32),
                             asset_class: parse_asset_class(info),
                             return_profile: parse_return_profile(info),
+                            crypto_staking_apr: info["crypto_staking_apr"].as_f64().unwrap_or(0.0),
                             lots: Vec::new(),
                         };
                         asset.add_lot(start_date, qty, basis);
@@ -1065,6 +1070,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     pfic_qef_election_year: None,
                     asset_class: parse_asset_class(info),
                     return_profile: parse_return_profile(info),
+                    crypto_staking_apr: info["crypto_staking_apr"].as_f64().unwrap_or(0.0),
                     lots: Vec::new(),
                 };
                 asset.add_lot(start_date, qty, basis);
@@ -1100,6 +1106,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             pfic_qef_election_year: None,
             asset_class: crate::models::assets::AssetClass::default(),
             return_profile: None,
+            crypto_staking_apr: 0.0,
             lots: Vec::new(),
         };
         tawara.add_lot(start_date, dc_qty, dc_qty * dc_nav);

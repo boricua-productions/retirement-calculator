@@ -174,6 +174,8 @@ fn scenario_cfg() -> Config {
         // Stage 08 defaults
         mc_use_correlated_paths: false,
         mc_correlation_matrix: std::collections::HashMap::new(),
+        // Stage 09 defaults
+        crypto_tax_enabled: true,
     }
 }
 

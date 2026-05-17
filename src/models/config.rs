@@ -937,6 +937,13 @@ pub struct Config {
     #[serde(default)]
     pub shock_ordering: ShockOrdering,
 
+    // ── Stage 09 — Cryptocurrency / Web3 Asset Handling ──────────────────────
+    /// When true, assets marked as Crypto are taxed under Japan's miscellaneous
+    /// income regime (up to 55%) instead of the standard 20.315% cap-gains rate.
+    /// The US side continues to use LTCG/STCG treatment. Default true.
+    #[serde(default = "default_true")]
+    pub crypto_tax_enabled: bool,
+
     // ── Stage 05 — PFIC Basis Drift Monitor ──────────────────────────────────
     /// When true (default), the engine cross-checks USD vs JPY MTM basis each year
     /// and emits a PficDriftWarning + self-heals if the two reference values diverge

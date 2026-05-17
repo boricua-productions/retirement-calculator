@@ -190,6 +190,8 @@ fn minimal_cfg() -> Config {
         // Stage 08 defaults
         mc_use_correlated_paths: false,
         mc_correlation_matrix: std::collections::HashMap::new(),
+        // Stage 09 defaults
+        crypto_tax_enabled: true,
     }
 }
 
@@ -222,6 +224,7 @@ fn taxable_with_inventory(qty: f64) -> Account {
         pfic_qef_election_year: None,
         asset_class: retirement_calculator::models::assets::AssetClass::default(),
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: vec![],
     };
     asset.add_lot(iso(2020, 1, 1), qty, qty * SHARE_PRICE * 0.5);

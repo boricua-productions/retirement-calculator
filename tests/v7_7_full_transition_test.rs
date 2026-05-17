@@ -48,6 +48,7 @@ fn base_asset_with_yield(ticker: &str, yield_rate: f64) -> Asset {
         pfic_qef_election_year: None,
         asset_class: retirement_calculator::models::assets::AssetClass::default(),
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: Vec::new(),
     };
     a.add_lot(iso(2020, 1, 1), 100.0, 10_000.0);

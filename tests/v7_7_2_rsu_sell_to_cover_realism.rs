@@ -186,6 +186,8 @@ fn stc_config(realism: bool) -> Config {
         // Stage 08 defaults
         mc_use_correlated_paths: false,
         mc_correlation_matrix: std::collections::HashMap::new(),
+        // Stage 09 defaults
+        crypto_tax_enabled: true,
     }
 }
 
@@ -370,6 +372,7 @@ fn cover_usd_deficit_drains_bridge_then_warchest() {
         pfic_qef_election_year: None,
         asset_class: retirement_calculator::models::assets::AssetClass::default(),
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: Vec::new(),
     };
     vti.add_lot(iso(2025, 1, 1), 5.0, 750.0); // 5 shares at $150 avg cost

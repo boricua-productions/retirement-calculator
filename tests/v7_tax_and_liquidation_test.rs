@@ -54,6 +54,7 @@ fn build_two_ticker_taxable(price_usd: f64, qty: f64, high_jpy: f64, low_jpy: f6
         pfic_qef_election_year: None,
         asset_class: retirement_calculator::models::assets::AssetClass::default(),
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: Vec::new(),
     };
     high.add_lot(lot_date, qty, qty * (high_jpy / 150.0));
@@ -79,6 +80,7 @@ fn build_two_ticker_taxable(price_usd: f64, qty: f64, high_jpy: f64, low_jpy: f6
         pfic_qef_election_year: None,
         asset_class: retirement_calculator::models::assets::AssetClass::default(),
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: Vec::new(),
     };
     low.add_lot(lot_date, qty, qty * (low_jpy / 150.0));

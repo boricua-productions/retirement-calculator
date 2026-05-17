@@ -9,6 +9,14 @@
 //! Wash-sale detection: if a replacement lot was acquired within 30 calendar
 //! days before or after the sale, the loss is disallowed and the disallowed
 //! amount is added back to the replacement lot's basis (§1091(d)).
+//!
+//! Stage 09 — Cryptocurrency: The IRC §1091 wash-sale rule does NOT apply to
+//! cryptocurrency in the US (IRS Notice 2014-21 treats crypto as property but
+//! not a "security"). TLH itself is still useful for crypto (immediate loss
+//! recognition), but the 30-day wash-sale guard is not required. The handler
+//! continues to enforce the wash-sale check for all assets including crypto
+//! to maintain conservative tax compliance; crypto-specific bypass can be
+//! added if desired (check `asset.is_crypto()` before wash-sale logic).
 
 use chrono::{Datelike, NaiveDate};
 use log::{info, warn};

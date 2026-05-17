@@ -107,6 +107,7 @@ pub enum PficRegime {
 
 /// V7.6 — Asset class drives distribution routing and PFIC defaults.
 /// Funds domiciled outside the US flow through the PFIC check; stocks bypass it.
+/// Stage 09 — Crypto variant added for cryptocurrency / web3 asset handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetClass {
@@ -115,6 +116,9 @@ pub enum AssetClass {
     Etf,
     MutualFund,
     Other,
+    /// Stage 09 — Cryptocurrency. Japan taxes gains as miscellaneous income (up to 55%);
+    /// US taxes using standard cap-gains (LTCG/STCG). Wash-sale rule does NOT apply.
+    Crypto,
 }
 
 /// V7.6 — Component-based return profile. Decomposes a flat yield into
@@ -235,6 +239,10 @@ pub struct Asset {
     /// When `None`, the legacy single-yield model is used (back-compat).
     #[serde(default)]
     pub return_profile: Option<DetailedReturnProfile>,
+    /// Stage 09 — Annual staking yield % for crypto assets (treated as ordinary income).
+    /// Zero for non-crypto assets. Example: 0.05 = 5% annual staking rewards.
+    #[serde(default)]
+    pub crypto_staking_apr: f64,
     /// All tax lots, maintained in FIFO (purchase date ascending) order.
     pub lots: Vec<AssetLot>,
 }
@@ -261,8 +269,14 @@ impl Asset {
             pfic_qef_election_year: None,
             asset_class: AssetClass::Stock,
             return_profile: None,
+            crypto_staking_apr: 0.0,
             lots: Vec::new(),
         }
+    }
+
+    /// Stage 09 — Returns true if this asset is cryptocurrency.
+    pub fn is_crypto(&self) -> bool {
+        matches!(self.asset_class, AssetClass::Crypto)
     }
 
     /// JPY basis per share, falling back to USD-basis × `fx_fallback` when unset.
