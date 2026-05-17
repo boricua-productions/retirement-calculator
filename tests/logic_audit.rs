@@ -181,6 +181,12 @@ fn minimal_cfg() -> Config {
         track_pfic_basis_drift: true,
         real_estate: vec![],
         enable_heloc_tier: false,
+        enable_estate_planning: false,
+        death_date: None,
+        spouse_death_date: None,
+        heirs: vec![],
+        estate_planning_jurisdiction: retirement_calculator::models::config::TaxProtocol::Both,
+        enable_gifting_optimiser: false,
     }
 }
 

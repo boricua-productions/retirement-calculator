@@ -174,6 +174,40 @@ pub struct AnnualSnapshot {
     /// Annual real-estate fixed costs (PI + property tax) in JPY.
     #[serde(default)]
     pub real_estate_exp_jpy: f64,
+
+    // ── Stage 07 — Estate Planning ────────────────────────────────────────────
+    /// Estate summary populated only on the final simulated snapshot (all other
+    /// years have `None`).  Non-None only when `cfg.enable_estate_planning` is true.
+    #[serde(default)]
+    pub estate_summary: Option<EstateSummary>,
+}
+
+/// Stage 07 — End-of-life wealth-transfer tax summary.
+/// Computed once at the end of the simulation horizon.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EstateSummary {
+    /// Calendar year of the estate event.
+    pub year: i32,
+    /// Gross estate value in JPY (all assets converted at final FX rate).
+    pub total_estate_jpy: f64,
+    /// Gross estate value in USD.
+    pub total_estate_usd: f64,
+    /// Japan Sōzoku-zei (相続税) due in JPY (after spousal deduction when applicable).
+    pub japan_sozoku_zei_jpy: f64,
+    /// Japan Sōzoku-zei as a percentage of the gross estate.
+    pub japan_sozoku_zei_pct: f64,
+    /// US federal estate tax due in USD (before treaty credit).
+    pub us_estate_tax_usd: f64,
+    /// US federal estate tax as a percentage of the gross estate.
+    pub us_estate_tax_pct: f64,
+    /// US-Japan treaty credit applied against the US estate tax (USD).
+    pub treaty_credit_usd: f64,
+    /// Net US estate tax after treaty credit (USD).
+    pub net_us_estate_tax_usd: f64,
+    /// Net estate transferred to heirs in JPY (gross − all estate taxes).
+    pub net_to_heirs_jpy: f64,
+    /// Net estate transferred to heirs in USD.
+    pub net_to_heirs_usd: f64,
 }
 
 /// Stage 05 — Emitted when the USD×FX vs JPY MTM basis diverges by > 1%.
@@ -295,4 +329,7 @@ pub struct SimResults {
     /// Non-empty only when `track_pfic_basis_drift` is true and drift > 1% occurred;
     /// the engine self-heals immediately, so a non-zero count flags precision loss.
     pub pfic_basis_drift_warnings: Vec<PficDriftWarning>,
+    /// Stage 07 — Estate tax summary computed at end of horizon.
+    /// `None` when `enable_estate_planning` is false.
+    pub estate_summary: Option<EstateSummary>,
 }

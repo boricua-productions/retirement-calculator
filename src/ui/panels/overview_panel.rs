@@ -213,6 +213,71 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
             }
         });
 
+    // ── Stage 07 — Wealth Transferred to Heirs ───────────────────────────────
+    if let Some(summary) = &res.estate_summary {
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        ui.label(RichText::new("Wealth Transferred to Heirs").strong().size(16.0));
+        ui.add_space(4.0);
+
+        egui::Grid::new("estate_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Gross Estate (JPY):").strong());
+                ui.label(fmt_jpy(summary.total_estate_jpy));
+                ui.end_row();
+
+                ui.label(RichText::new("Gross Estate (USD):").strong());
+                ui.label(fmt_usd(summary.total_estate_usd));
+                ui.end_row();
+
+                ui.label(RichText::new("Japan Sōzoku-zei (相続税):").strong());
+                ui.label(RichText::new(format!(
+                    "{} ({:.1}% of estate)",
+                    fmt_jpy(summary.japan_sozoku_zei_jpy),
+                    summary.japan_sozoku_zei_pct,
+                )).color(Color32::from_rgb(255, 140, 60)));
+                ui.end_row();
+
+                ui.label(RichText::new("US Estate Tax (gross):").strong());
+                ui.label(RichText::new(format!(
+                    "{} ({:.1}% of estate)",
+                    fmt_usd(summary.us_estate_tax_usd),
+                    summary.us_estate_tax_pct,
+                )).color(Color32::from_rgb(255, 140, 60)));
+                ui.end_row();
+
+                if summary.treaty_credit_usd > 0.0 {
+                    ui.label(RichText::new("US-Japan Treaty Credit:").strong());
+                    ui.label(RichText::new(format!(
+                        "−{} (credit applied)",
+                        fmt_usd(summary.treaty_credit_usd),
+                    )).color(Color32::from_rgb(100, 200, 120)));
+                    ui.end_row();
+
+                    ui.label(RichText::new("Net US Estate Tax:").strong());
+                    ui.label(RichText::new(fmt_usd(summary.net_us_estate_tax_usd))
+                        .color(Color32::from_rgb(255, 140, 60)));
+                    ui.end_row();
+                }
+
+                ui.separator();
+                ui.separator();
+                ui.end_row();
+
+                ui.label(RichText::new("Net to Heirs (JPY):").strong());
+                ui.label(RichText::new(fmt_jpy(summary.net_to_heirs_jpy)).color(Color32::GREEN));
+                ui.end_row();
+
+                ui.label(RichText::new("Net to Heirs (USD):").strong());
+                ui.label(RichText::new(fmt_usd(summary.net_to_heirs_usd)).color(Color32::GREEN));
+                ui.end_row();
+            });
+    }
+
     ui.add_space(14.0);
     ui.separator();
     ui.add_space(8.0);

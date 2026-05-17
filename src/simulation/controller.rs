@@ -38,7 +38,8 @@ use crate::handlers::rsu_vesting::handle_rsu_vesting;
 use crate::models::assets::Account;
 use crate::models::config::{Config, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy};
 use crate::models::expense::ExpenseRule;
-use crate::models::snapshot::{AnnualSnapshot, SimResults};
+use crate::engine::tax::estate_tax::EstatePlanningEngine;
+use crate::models::snapshot::{AnnualSnapshot, EstateSummary, SimResults};
 use super::state::SimState;
 
 /// The main simulation orchestrator.
@@ -88,6 +89,42 @@ impl SimulationController {
                 .expect("date overflow past end of simulation");
         }
 
+        // ── Stage 07 — Estate Planning projection ─────────────────────────────
+        let estate_summary: Option<EstateSummary> = if self.cfg.enable_estate_planning {
+            if let Some(last) = self.state.annual_summary.last() {
+                let death_year = self.cfg.death_date
+                    .unwrap_or(self.cfg.end_date)
+                    .year();
+                let summary = EstatePlanningEngine::project_at_death(
+                    last.brokerage_usd,
+                    last.roth_usd,
+                    last.dc_jpy,
+                    last.real_estate_equity_jpy,
+                    last.real_estate_equity_usd,
+                    last.usd_jpy,
+                    death_year,
+                    &self.cfg,
+                );
+                Some(summary)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Attach the estate summary to the final annual snapshot.
+        if let Some(summary) = estate_summary.clone() {
+            if let Some(last) = self.state.annual_summary.last_mut() {
+                last.estate_summary = Some(summary);
+            }
+        }
+
+        // Extract before moving annual_summary into SimResults.
+        let final_estate_summary = self.state.annual_summary
+            .last()
+            .and_then(|s| s.estate_summary.clone());
+
         SimResults {
             annual_summary: self.state.annual_summary,
             gap_warnings: self.state.gap_warnings,
@@ -99,6 +136,7 @@ impl SimulationController {
             rsu_sell_to_cover_warnings: self.state.rsu_sell_to_cover_warnings,
             effective_filing_status: self.cfg.tax_rules.filing_status.clone(),
             pfic_basis_drift_warnings: self.state.pfic_basis_drift_warnings,
+            estate_summary: final_estate_summary,
         }
     }
 
@@ -1084,6 +1122,9 @@ impl SimulationController {
             rental_income_jpy: s.year_rental_income_jpy,
             rental_income_usd: s.year_rental_income_usd,
             real_estate_exp_jpy: s.year_real_estate_exp_jpy,
+
+            // Stage 07 — populated after the loop; None during the simulation run.
+            estate_summary: None,
         });
     }
 

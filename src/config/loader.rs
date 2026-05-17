@@ -736,6 +736,39 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         // ── Stage 06: Real Estate Module ─────────────────────────────────────
         enable_heloc_tier: get_bool("enable_heloc_tier", false),
         real_estate: parse_real_estate(&data),
+
+        // ── Stage 07: Estate Planning ─────────────────────────────────────────
+        enable_estate_planning: get_bool("enable_estate_planning", false),
+        death_date: sets["death_date"].as_str()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
+        spouse_death_date: sets["spouse_death_date"].as_str()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
+        heirs: {
+            let mut h: Vec<crate::models::config::Heir> = vec![];
+            if let Value::Array(arr) = &sets["heirs"] {
+                for item in arr {
+                    if !item.is_object() { continue; }
+                    let name = item["name"].as_str().unwrap_or("").to_string();
+                    let birth_date = item["birth_date"].as_str()
+                        .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+                    let relationship = match item["relationship"].as_str().unwrap_or("child") {
+                        "spouse" | "Spouse" => crate::models::config::HeirRelationship::Spouse,
+                        "other"  | "Other"  => crate::models::config::HeirRelationship::Other,
+                        _                   => crate::models::config::HeirRelationship::Child,
+                    };
+                    h.push(crate::models::config::Heir { name, birth_date, relationship });
+                }
+            }
+            h
+        },
+        estate_planning_jurisdiction: match sets["estate_planning_jurisdiction"]
+            .as_str().unwrap_or("both")
+        {
+            "us_only"    => TaxProtocol::UsOnly,
+            "japan_only" => TaxProtocol::JapanOnly,
+            _            => TaxProtocol::Both,
+        },
+        enable_gifting_optimiser: get_bool("enable_gifting_optimiser", false),
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────
