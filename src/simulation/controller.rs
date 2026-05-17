@@ -1123,6 +1123,10 @@ impl SimulationController {
             rental_income_usd: s.year_rental_income_usd,
             real_estate_exp_jpy: s.year_real_estate_exp_jpy,
 
+            // Stage 10 — Long-Term Care Insurance (Kaigo Hoken) annual totals.
+            kaigo_hoken_premium_jpy: s.year_kaigo_premium_jpy,
+            kaigo_out_of_pocket_jpy: s.year_kaigo_care_jpy,
+
             // Stage 07 — populated after the loop; None during the simulation run.
             estate_summary: None,
         });

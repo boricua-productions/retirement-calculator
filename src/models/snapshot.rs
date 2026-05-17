@@ -175,6 +175,16 @@ pub struct AnnualSnapshot {
     #[serde(default)]
     pub real_estate_exp_jpy: f64,
 
+    // ── Stage 10 — Long-Term Care Insurance (介護保険 / Kaigo Hoken) ─────────
+    /// Annual age-65+ Kaigo Hoken premium paid this year (JPY).
+    /// Ages 40-64: zero (bundled into NHI). Ages <40 or disabled: zero.
+    #[serde(default)]
+    pub kaigo_hoken_premium_jpy: f64,
+    /// Annual projected out-of-pocket care costs (JPY) based on CareScenario.
+    /// Zero when `kaigo_care_scenario = None` (premium-only mode).
+    #[serde(default)]
+    pub kaigo_out_of_pocket_jpy: f64,
+
     // ── Stage 07 — Estate Planning ────────────────────────────────────────────
     /// Estate summary populated only on the final simulated snapshot (all other
     /// years have `None`).  Non-None only when `cfg.enable_estate_planning` is true.

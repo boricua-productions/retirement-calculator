@@ -791,6 +791,37 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             }
             matrix
         },
+
+        // ── Stage 10 — Long-Term Care Insurance (Kaigo Hoken) ────────────────────
+        kaigo_hoken_enabled: get_bool("kaigo_hoken_enabled", true),
+        kaigo_hoken_brackets: {
+            // If user provides custom brackets, parse them; otherwise None → use defaults
+            if let Value::Array(arr) = &sets["kaigo_hoken_brackets"] {
+                let mut brackets = Vec::new();
+                for item in arr {
+                    if let Value::Array(pair) = item {
+                        if pair.len() == 2 {
+                            if let (Some(upper), Some(premium)) = (pair[0].as_f64(), pair[1].as_f64()) {
+                                brackets.push((upper, premium));
+                            }
+                        }
+                    }
+                }
+                if !brackets.is_empty() {
+                    Some(crate::engine::tax::kaigo_hoken::KaigoHokenBrackets { brackets })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        },
+        kaigo_care_scenario: match sets["kaigo_care_scenario"].as_str().unwrap_or("none") {
+            "low"    => crate::engine::tax::kaigo_hoken::CareScenario::Low,
+            "medium" => crate::engine::tax::kaigo_hoken::CareScenario::Medium,
+            "high"   => crate::engine::tax::kaigo_hoken::CareScenario::High,
+            _        => crate::engine::tax::kaigo_hoken::CareScenario::None,
+        },
     };
 
     // ── Stage 08: Validate correlation matrix if correlated paths are enabled ────
