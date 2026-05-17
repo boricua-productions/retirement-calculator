@@ -73,13 +73,21 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
 
             let wc_sym = if alloc.wc_currency == "USD" { "$" } else { "¥" };
             ui.label("USE: War Chest Fill");
-            ui.label(format!("-${}  (Target: {}{})",
-                c2(alloc.wc_paid_from_portfolio_usd), wc_sym, c(alloc.wc_target)));
+            if alloc.wc_paid_from_portfolio_usd == 0.0 && alloc.wc_target == 0.0 {
+                ui.label("$0 (disabled)");
+            } else {
+                ui.label(format!("-${}  (Target: {}{})",
+                    c2(alloc.wc_paid_from_portfolio_usd), wc_sym, c(alloc.wc_target)));
+            }
             ui.end_row();
 
             ui.label("USE: Bridge Fund Fill");
-            ui.label(format!("-${}  (Total needed: ¥{})",
-                c2(alloc.bridge_pull_usd), c(alloc.bridge_total_jpy)));
+            if alloc.bridge_pull_usd == 0.0 && alloc.bridge_total_jpy == 0.0 {
+                ui.label("$0 (disabled)");
+            } else {
+                ui.label(format!("-${}  (Total needed: ¥{})",
+                    c2(alloc.bridge_pull_usd), c(alloc.bridge_total_jpy)));
+            }
             ui.end_row();
 
             ui.label("USE: Reinvestment");

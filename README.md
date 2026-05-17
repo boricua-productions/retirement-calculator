@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.10: Long-Term Care Insurance (介護保険) Edition
+# Retirement Calculator — V7.10.1: Buffer Funding Selection Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.10 — Long-Term Care Insurance)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.10.1 — Buffer Funding Selection)
 ---
 
 ## Beginner Quick Start
@@ -285,15 +285,19 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | **Spouse Nenkin Monthly / Start Age** | Spouse Nenkin amount and age gate. |
 | **Tax Jurisdiction** | Per-source override for FERS, military retired pay, Social Security, and Nenkin. |
 
-#### Financial Buffers
+#### Financial Buffers *(V7.10.1 — Buffer Selection)*
 
 | Field | What it is for |
 |-------|----------------|
-| **War Chest Target (JPY)** | Target JPY emergency reserve. The defensive waterfall taps this before USD bridge cash. |
+| **Enable War Chest** *(V7.10.1)* | Master toggle for JPY emergency reserve funding. When disabled, retirement transition skips war chest funding entirely and post-retirement waterfall Tier 3 is bypassed. Default: enabled. |
+| **War Chest Target (JPY)** | Target JPY emergency reserve. The defensive waterfall taps this at Tier 3 before USD bridge cash. Only active when War Chest is enabled. |
+| **Already Set Aside (JPY)** *(V7.10.1)* | JPY already earmarked for the war chest (savings account, envelope, etc.). The model liquidates portfolio shares only to cover the gap: Target minus this amount. |
 | **War Chest Target (USD)** | Legacy USD target retained for compatibility. V7.2 treats the active war chest as JPY. |
-| **Bridge Fund Months** | Target months of expenses to keep in USD bridge cash. |
-| **Pre-Funded War Chest (JPY)** | Starting JPY reserve balance. |
-| **Pre-Funded Bridge (USD/JPY)** | Starting bridge cash balance. USD bridge is the active V7.2 operating reserve. |
+| **Enable Bridge Fund** *(V7.10.1)* | Master toggle for USD operating liquidity buffer. When disabled, retirement transition skips bridge fund funding and post-retirement waterfall Tier 6 is bypassed. Default: enabled. |
+| **Bridge Fund Months** | Target months of expense shortfall to hold in USD cash. The model calculates the dollar target based on expenses minus guaranteed income. Only active when Bridge Fund is enabled. |
+| **Already Set Aside (USD)** *(V7.10.1)* | USD already earmarked for the bridge fund. The model liquidates shares only to cover the gap. |
+| **Pre-Funded War Chest (JPY)** | *(Deprecated in favor of "Already Set Aside (JPY)" UI field — both map to the same config value for backward compatibility.)* |
+| **Pre-Funded Bridge (USD/JPY)** | *(Deprecated in favor of "Already Set Aside (USD)" UI field — USD bridge is the active V7.2 operating reserve.)* |
 | **Pre-Funded Japan Tax / US Tax** | Cash reserved at the start for known tax bills. |
 
 #### Market Simulation
@@ -427,6 +431,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V7.10.1** | Buffer Funding Selection (Stage 11A) — **Master toggles for cash buffers**: `war_chest_enabled` and `bridge_fund_enabled` (both default `true`) allow users to disable buffer funding at retirement when they already hold sufficient cash outside the model or when guaranteed income covers expenses from day one. **Pre-funded amount exposure**: New "Already Set Aside" UI fields expose `pre_funded_war_chest_jpy` and `pre_funded_bridge_usd` so users don't need to hand-edit JSON; the model liquidates portfolio shares only to cover the gap (Target − Pre-funded). **Waterfall respect**: When disabled, Tier 3 (War Chest) and Tier 6 (Bridge Fund) are bypassed in post-retirement cashflow; Dynamic regime (Mode B) buffer-gap calculations skip disabled buffers. **Transition Panel clarity**: Shows "$0 (disabled)" when a buffer is disabled instead of silently omitting the row. **Backward compatible**: Missing fields default to `true` (enabled) so existing scenarios fund both buffers as before. 2 new integration tests + all 108 unit tests passing. JSON round-trip verified. |
 | **V7.10** | Long-Term Care Insurance (介護保険 / Kaigo Hoken) — **Mandatory age-65+ premium**: Models the separate municipal premium (typically ¥30k–¥150k/year based on pension income) that replaces the NHI nursing-care component at age 65. **Smooth transition**: NHI nursing-care (¥12.6k/year per-capita, ages 40–64) automatically drops at age 65, and the bracket-based Kaigo Hoken premium appears as a separate expense line with no double-counting. **9-tier income brackets**: Sagamihara 2026 and Nagoya 2026 defaults included; user-overridable for any municipality. **Care scenarios**: Optional out-of-pocket cost projections beyond premium — `None` (premium only), `Low` (~¥20k/mo from age 75), `Medium` (~¥40k/mo from age 75), `High` (~¥80k/mo from age 80, stress-test). **Master toggle**: `kaigo_hoken_enabled: bool` (default `true`) reverts to legacy behavior when disabled. **UI**: Full section in Input Panel with care scenario selector and tooltips; Overview Panel shows lifetime "Long-Term Care Cost" with premium/care breakdown. **AnnualSnapshot** gains `kaigo_hoken_premium_jpy` and `kaigo_out_of_pocket_jpy`. 6 new integration tests; all 139 tests passing. Addresses the ¥30k–¥150k/year expense understatement in retirement projections for Japan residents age 65+. |
 | **V7.9.9** | Cryptocurrency Tax Engine — **Japan miscellaneous-income treatment**: Crypto gains taxed at marginal ordinary-income rate (up to 55% including resident tax) instead of the standard 20.315% capital-gains rate. **US property treatment**: Standard LTCG/STCG based on holding period (>12 months = LTCG at 0/15/20%; ≤12 months = ordinary rates). **Marginal rate estimation**: Dynamic calculation from year-to-date income (FERS + Nenkin) to determine Japan tax bracket. **Asset classification**: New `Crypto` variant in `AssetClass` enum; `is_crypto()` helper method. **Toggle**: `crypto_tax_enabled: bool` (default `true`) enables/disables the crypto tax engine; when disabled, reverts to legacy cap-gains treatment. **TLH documentation**: IRC §1091 wash-sale rule does NOT apply to cryptocurrency (IRS Notice 2014-21), but handler conservatively enforces check. 4 new unit tests; all 31 existing tests passing. |
 | **V7.9.8** | Correlated Monte Carlo — **Historical safe-haven yen effect**: Models negative correlation (ρ = -0.40) between US equity and USD/JPY to accurately capture how JPY-resident retirees experience equity crashes. **Cholesky decomposition** transforms independent normal draws into correlated multivariate draws across US equity, Japan equity, USD/JPY, and US bonds using historical 2000-2024 correlation matrix. **Narrower JPY confidence bands**: Correlated paths produce ~28% narrower p10-p90 bands than independent paths (¥14.1B vs ¥19.6B in 40-year test), eliminating systematic overstatement of downside risk. **Matrix validation**: `CorrelationMatrix::validate()` checks symmetry and PSD; nearest-PSD correction applies when user matrix fails. **Configuration**: `mc_use_correlated_paths: bool` + `mc_correlation_matrix: HashMap<String, HashMap<String, f64>>` in JSON. **Backward compatible**: when disabled or empty, falls back to V7.5 independent-paths baseline. 9 new acceptance tests; 109 total tests passing. |
@@ -1358,11 +1363,13 @@ values.
 | `min_monthly_expenses_jpy` | Minimum Monthly | `f64` | `600,000` | Floor spending if income is insufficient to cover desired |
 | `nhi_spike_monthly_jpy` | Legacy NHI Spike Monthly | `f64` | `73,333` | Backward-compatible legacy field. V6.5 uses `nhi_model` for active NHI calculation. |
 | `nenkin_monthly_household_jpy` | — | `f64` | `35,020` | Household Nenkin *contribution* expense embedded in base; only the excess over `nenkin_baseline_annual_jpy` is a separate charge |
-| `bridge_fund_months_target` | Bridge Fund Months | `u32` | `12` | Target months of base expenses kept liquid in the bridge fund |
+| `war_chest_enabled` *(V7.10.1)* | Enable War Chest | `bool` | `true` | Master toggle for JPY emergency reserve. When `false`, retirement transition skips war chest funding and Tier 3 is bypassed in post-retirement cashflow. |
 | `war_chest_target_jpy` | War Chest Target (JPY) | `f64` | `7,000,000` | Emergency reserve target in JPY (when `war_chest_currency = "JPY"`) |
 | `war_chest_target_usd` | — | `f64` | `50,000` | Emergency reserve target in USD (when `war_chest_currency = "USD"`) |
-| `pre_funded_war_chest_jpy` | — | `f64` | `0` | War chest balance at simulation start |
-| `pre_funded_bridge_usd` | — | `f64` | `0` | Bridge fund balance at simulation start (USD) |
+| `pre_funded_war_chest_jpy` | Already Set Aside (JPY) *(V7.10.1 UI)* | `f64` | `0` | JPY already earmarked for war chest. Model liquidates shares to cover gap (Target − this). |
+| `bridge_fund_enabled` *(V7.10.1)* | Enable Bridge Fund | `bool` | `true` | Master toggle for USD operating liquidity buffer. When `false`, retirement transition skips bridge fund funding and Tier 6 is bypassed. |
+| `bridge_fund_months_target` | Bridge Fund Months | `u32` | `12` | Target months of expense shortfall to keep in USD bridge cash. Only active when `bridge_fund_enabled = true`. |
+| `pre_funded_bridge_usd` | Already Set Aside (USD) *(V7.10.1 UI)* | `f64` | `0` | USD already earmarked for bridge fund. Model liquidates shares to cover gap. |
 | `pre_funded_japan_tax_jpy` | — | `f64` | `0` | Pre-reserved Japan tax cash at simulation start |
 | `pre_funded_us_tax_usd` | — | `f64` | `0` | Pre-reserved US tax cash at simulation start |
 | `dc_payout_method` | — | string | `ANNUITY_20YR` | `LUMP_SUM` (invested to Taxable) or `ANNUITY_20YR` (240 monthly draws) |
@@ -1561,6 +1568,8 @@ cargo test
 | `tests/real_estate_test.rs` *(V7.9 Stage 06)* | 9 | Analytical mortgage amortization P&I correctness (A), empty portfolio no-op (B), rental income routing JPY/USD (C), HELOC availability gated by `enable_heloc_tier` (D) |
 | `tests/stage_08_correlated_mc.rs` *(V7.9.8)* | 9 | Cholesky decomposition identity matrix (A), 2×2 known reference (B), non-symmetric rejection (C), wrong-diagonal rejection (D), historical 2000-2024 matrix validation (E), correlated vs independent JPY bands — safe-haven yen effect produces ~28% narrower confidence band (F), 4-asset correlated smoke test (G), invalid matrix fallback (H), nearest-PSD correction (I) |
 | `tests/stage_09_crypto_test.rs` *(V7.9.9)* | 4 | Crypto Japan misc-income tax vs legacy cap-gains (¥502k vs ¥305k for $10k gain at 33% marginal) (A), US STCG/LTCG treatment for crypto (B), Asset `is_crypto()` identification (C), Marginal rate estimation at various income brackets (15% / 30% / 44% / 56%) (D) |
+| `tests/stage_10_kaigo_hoken.rs` *(V7.10)* | 6 | Sagamihara brackets typical retiree (¥60k at ¥1.44M pension), Nagoya vs Sagamihara mid-tier comparison, Care scenario None returns zero, Low starts at age 75 (¥20k/mo), High starts at age 80 (¥80k/mo), High-income hits Tier 9 ceiling (¥150k at ¥6M pension) |
+| `tests/stage_11a_buffer_selection.rs` *(V7.10.1)* | 2 | Compile-time field existence check (war_chest_enabled / bridge_fund_enabled), backward-compatibility documentation (missing fields default to true via loader) |
 
 ---
 

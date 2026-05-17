@@ -67,7 +67,7 @@ pub fn cover_usd_deficit_from_buffers(
     let fx = state.current_fx;
 
     // ── 1. Bridge Fund USD ────────────────────────────────────────────────────
-    if deficit_usd > 0.0 && state.bridge_fund_usd > 0.0 {
+    if cfg.bridge_fund_enabled && deficit_usd > 0.0 && state.bridge_fund_usd > 0.0 {
         let draw = deficit_usd.min(state.bridge_fund_usd);
         state.bridge_fund_usd -= draw;
         deficit_usd -= draw;
@@ -75,7 +75,7 @@ pub fn cover_usd_deficit_from_buffers(
     }
 
     // ── 2. War Chest JPY → USD (with FX spread penalty) ──────────────────────
-    if deficit_usd > 0.0 && state.war_chest_jpy > 0.0 {
+    if cfg.war_chest_enabled && deficit_usd > 0.0 && state.war_chest_jpy > 0.0 {
         let jpy_needed_gross = deficit_usd * fx / (1.0 - penalty).max(f64::EPSILON);
         let drawn_jpy = jpy_needed_gross.min(state.war_chest_jpy);
         let usd_net = drawn_jpy * (1.0 - penalty) / fx;
@@ -244,7 +244,7 @@ fn manage_monthly_cashflow_defensive(
     // Tier 2: reserved.
 
     // ── Tier 3: JPY War Chest ─────────────────────────────────────────────────
-    if gap > 0.0 {
+    if gap > 0.0 && cfg.war_chest_enabled {
         let draw = state.war_chest_jpy.min(gap);
         state.war_chest_jpy -= draw;
         gap -= draw;
@@ -282,7 +282,7 @@ fn manage_monthly_cashflow_defensive(
     }
 
     // ── Tier 6: USD Bridge Fund → JPY with FX penalty ─────────────────────────
-    if gap > 0.0 && state.bridge_fund_usd > 0.0 {
+    if gap > 0.0 && cfg.bridge_fund_enabled && state.bridge_fund_usd > 0.0 {
         let needed_usd = gap / (fx * (1.0 - penalty));
         let spent_usd  = needed_usd.min(state.bridge_fund_usd);
         let (jpy_in, pen_jpy) = convert_usd_to_jpy(spent_usd, fx, penalty);
@@ -362,13 +362,21 @@ fn manage_monthly_cashflow_defensive(
             //     an imminent inflow.
             //   - The accompanying fix to `liquidate_for_jpy_target` guarantees
             //     the sale actually executes regardless of current bridge state.
-            let wc_gap_jpy     = (cfg.war_chest_target_jpy - state.war_chest_jpy).max(0.0);
+            let wc_gap_jpy = if cfg.war_chest_enabled {
+                (cfg.war_chest_target_jpy - state.war_chest_jpy).max(0.0)
+            } else { 0.0 };
             let bridge_target_usd = target_base_jpy * cfg.bridge_months_target as f64 / fx;
-            let bridge_gap_usd = (bridge_target_usd - state.bridge_fund_usd).max(0.0);
+            let bridge_gap_usd = if cfg.bridge_fund_enabled {
+                (bridge_target_usd - state.bridge_fund_usd).max(0.0)
+            } else { 0.0 };
             let bridge_gap_jpy = bridge_gap_usd * fx;
 
-            let wc_floor_jpy     = cfg.war_chest_target_jpy * MODE_B_PREEMPT_FLOOR;
-            let bridge_floor_usd = bridge_target_usd        * MODE_B_PREEMPT_FLOOR;
+            let wc_floor_jpy = if cfg.war_chest_enabled {
+                cfg.war_chest_target_jpy * MODE_B_PREEMPT_FLOOR
+            } else { 0.0 };
+            let bridge_floor_usd = if cfg.bridge_fund_enabled {
+                bridge_target_usd * MODE_B_PREEMPT_FLOOR
+            } else { 0.0 };
 
             // V7.5 — Defect 1.4: pass monthly non-spend drains (T9 gift + edu skim).
             let monthly_non_spend_drain = {

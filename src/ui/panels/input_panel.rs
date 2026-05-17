@@ -281,8 +281,12 @@ pub struct InputPanelState {
     pub nenkin_income_monthly_jpy: String,
     pub nenkin_income_start_age:   String,
     // ── Buffers ───────────────────────────────────────────────────────────────
-    pub bridge_months:        String,
-    pub war_chest_target_jpy: String,
+    pub war_chest_enabled:         bool,
+    pub war_chest_target_jpy:      String,
+    pub pre_funded_war_chest_jpy:  String,
+    pub bridge_fund_enabled:       bool,
+    pub bridge_months:             String,
+    pub pre_funded_bridge_usd:     String,
     // ── Market simulation ────────────────────────────────────────────────────
     pub fx_drift_enabled:   bool,
     pub fx_drift_rate:      String,
@@ -432,8 +436,12 @@ impl Default for InputPanelState {
             dependents:           vec![],
             nenkin_income_monthly_jpy: "0".into(),
             nenkin_income_start_age:   "65".into(),
-            bridge_months:       "0".into(),
-            war_chest_target_jpy: "0".into(),
+            war_chest_enabled:       true,
+            war_chest_target_jpy:    "0".into(),
+            pre_funded_war_chest_jpy: "0".into(),
+            bridge_fund_enabled:     true,
+            bridge_months:           "0".into(),
+            pre_funded_bridge_usd:   "0".into(),
             fx_drift_enabled:   false,
             fx_drift_rate:      "0.02".into(),
             recession_enabled:  false,
@@ -983,8 +991,12 @@ impl InputPanelState {
             },
             nenkin_income_monthly_jpy: num_str("nenkin_income_monthly_jpy", "0"),
             nenkin_income_start_age:   num_str("nenkin_income_start_age",   "65"),
-            bridge_months:         num_str("bridge_fund_months_target", "0"),
-            war_chest_target_jpy:  num_str("war_chest_target_jpy",      "0"),
+            war_chest_enabled:        bool_val("war_chest_enabled",         true),
+            war_chest_target_jpy:     num_str("war_chest_target_jpy",       "0"),
+            pre_funded_war_chest_jpy: num_str("pre_funded_war_chest_jpy",   "0"),
+            bridge_fund_enabled:      bool_val("bridge_fund_enabled",       true),
+            bridge_months:            num_str("bridge_fund_months_target",  "0"),
+            pre_funded_bridge_usd:    num_str("pre_funded_bridge_usd",      "0"),
             fx_drift_enabled:   bool_val("simulate_yen_strengthening",      false),
             fx_drift_rate:      num_str("fx_drift_rate_annual",             "0.02"),
             recession_enabled:  bool_val("simulate_recession_at_retirement", false),
@@ -1188,8 +1200,12 @@ impl InputPanelState {
             set_bool!("monthly_dependent_precision", self.monthly_dependent_precision);
             set_f64_or_na!("fers_monthly_payment_usd", self.fers_monthly_usd);
             set_u64!("fers_start_age",   self.fers_start_age);
-            set_f64!("bridge_fund_months_target", self.bridge_months);
+            set_bool!("war_chest_enabled",        self.war_chest_enabled);
             set_f64!("war_chest_target_jpy",      self.war_chest_target_jpy);
+            set_f64!("pre_funded_war_chest_jpy",  self.pre_funded_war_chest_jpy);
+            set_bool!("bridge_fund_enabled",      self.bridge_fund_enabled);
+            set_f64!("bridge_fund_months_target", self.bridge_months);
+            set_f64!("pre_funded_bridge_usd",     self.pre_funded_bridge_usd);
             set_bool!("simulate_yen_strengthening",       self.fx_drift_enabled);
             set_f64!("fx_drift_rate_annual",              self.fx_drift_rate);
             set_bool!("simulate_recession_at_retirement", self.recession_enabled);
@@ -3454,12 +3470,55 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
 
         // ── Financial Buffers ────────────────────────────────────────────────────
         section(ui, "Financial Buffers");
-        grid(ui, "g_buf", |ui| {
-            vfield_tt(ui, "Bridge Fund Months",     &mut state.bridge_months,        "e.g. 12",      !errors.contains("bridge_months"),
-                "Months of minimum expenses held as USD cash. Spent BEFORE the war chest when dividends underrun.");
-            vfield_tt(ui, "War Chest Target (JPY)", &mut state.war_chest_target_jpy, "e.g. 7000000", !errors.contains("war_chest_target_jpy"),
-                "JPY reserve for tax bills, NHI true-ups, and equity-shock recovery. Tapped only after the bridge is empty.");
-        });
+        ui.label(RichText::new(
+            "Cash buffers protect your portfolio from forced liquidation during market downturns. \
+             Choose which buffers to fund at retirement based on your situation.")
+            .small().color(Color32::GRAY));
+        ui.add_space(4.0);
+
+        // ── War Chest ────────────────────────────────────────────────────────
+        ui.checkbox(&mut state.war_chest_enabled,
+            "Enable War Chest (JPY Emergency Reserve)")
+            .on_hover_text(
+                "A JPY cash reserve for tax bills, NHI true-ups, and equity-shock recovery. \
+                 Sits at Tier 3 in the withdrawal waterfall — tapped only when JPY income \
+                 and dividends can't cover monthly expenses.\n\n\
+                 Disable if you already hold sufficient JPY cash outside this model, or if \
+                 you live in a non-JPY economy.");
+        if state.war_chest_enabled {
+            grid(ui, "g_wc", |ui| {
+                vfield_tt(ui, "Target Amount (JPY)", &mut state.war_chest_target_jpy,
+                    "e.g. 7000000", !errors.contains("war_chest_target_jpy"),
+                    "Total JPY you want held in the war chest at retirement.");
+                vfield_tt(ui, "Already Set Aside (JPY)", &mut state.pre_funded_war_chest_jpy,
+                    "e.g. 3000000", !errors.contains("pre_funded_war_chest_jpy"),
+                    "JPY you have already earmarked for the war chest (savings account, envelope, etc.). \
+                     The model will only liquidate portfolio shares to cover the gap: Target minus this amount.");
+            });
+        }
+        ui.add_space(6.0);
+
+        // ── Bridge Fund ──────────────────────────────────────────────────────
+        ui.checkbox(&mut state.bridge_fund_enabled,
+            "Enable Bridge Fund (USD Operating Liquidity)")
+            .on_hover_text(
+                "A USD cash buffer covering several months of expenses. Sits at Tier 6 in the \
+                 withdrawal waterfall — drawn after JPY sources are exhausted, before \
+                 belt-tightening or stock liquidation.\n\n\
+                 The target is calculated as: (monthly expense shortfall) x (months you specify). \
+                 Disable if your guaranteed income (VA, FERS, pension) covers your expenses from day one.");
+        if state.bridge_fund_enabled {
+            grid(ui, "g_bridge", |ui| {
+                vfield_tt(ui, "Months of Expenses", &mut state.bridge_months,
+                    "e.g. 12", !errors.contains("bridge_months"),
+                    "How many months of expense shortfall to hold in USD cash. The model calculates \
+                     the dollar target based on your expenses minus guaranteed income.");
+                vfield_tt(ui, "Already Set Aside (USD)", &mut state.pre_funded_bridge_usd,
+                    "e.g. 25000", !errors.contains("pre_funded_bridge_usd"),
+                    "USD you have already earmarked for the bridge fund. The model will only \
+                     liquidate shares to cover the gap.");
+            });
+        }
         ui.add_space(8.0);
 
         // ── Family Financial Planning (V7.3 Education / V7.5 Gift Sink) ──────────

@@ -620,12 +620,16 @@ pub struct Config {
     pub nhi_model: NhiModel,
 
     // ── War Chest ───────────────────────────────────────────────────────────────
+    #[serde(default = "default_true")]
+    pub war_chest_enabled: bool,
     /// "JPY" or "USD"
     pub war_chest_currency: String,
     pub war_chest_target_jpy: f64,
     pub war_chest_target_usd: f64,
 
     // ── Bridge Fund ─────────────────────────────────────────────────────────────
+    #[serde(default = "default_true")]
+    pub bridge_fund_enabled: bool,
     pub bridge_months_target: u32,
     /// "JPY" or "USD"
     pub bridge_fund_currency: String,

@@ -105,12 +105,16 @@
 
     "_comment_section_7": "--- PRE-FUNDING & ALLOCATION ---",
     "_help_war_chest": "Emergency fund kept in cash. Script refills this from portfolio if it drops.",
+    "_help_war_chest_enabled": "Set to false to skip war chest funding entirely.",
+    "war_chest_enabled": true,
     "war_chest_currency": "JPY",
     "war_chest_target_jpy": 7000000,
     "war_chest_target_usd": 50000,
     "pre_funded_war_chest_jpy": 3131679,
 
     "_help_bridge": "Cash buffer for the first 1-2 years before pensions kick in.",
+    "_help_bridge_fund_enabled": "Set to false to skip bridge fund funding entirely.",
+    "bridge_fund_enabled": true,
     "bridge_fund_months_target": 12,
     "bridge_fund_currency": "USD",
     "pre_funded_bridge_usd": 0,

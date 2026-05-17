@@ -45,16 +45,19 @@ pub fn handle_transition(
     // Step 1: Calculate cash targets.
     // V7.1: war_chest_jpy is always JPY-denominated. Legacy "USD" configs are
     // converted at transition-date FX to preserve the intended reserve level.
-    let new_wc_jpy = if cfg.war_chest_currency == "USD" {
-        cfg.war_chest_target_usd * state.current_fx  // convert to JPY at today's rate
-    } else {
-        cfg.war_chest_target_jpy
-    };
-    let wc_needed_usd = {
+    let wc_needed_usd = if cfg.war_chest_enabled {
+        let new_wc_jpy = if cfg.war_chest_currency == "USD" {
+            cfg.war_chest_target_usd * state.current_fx  // convert to JPY at today's rate
+        } else {
+            cfg.war_chest_target_jpy
+        };
         let pre_jpy = cfg.pre_funded_war_chest_jpy;
+        state.war_chest_jpy = new_wc_jpy;
         ((new_wc_jpy - pre_jpy).max(0.0)) / state.current_fx
+    } else {
+        state.war_chest_jpy = 0.0;
+        0.0
     };
-    state.war_chest_jpy = new_wc_jpy;
 
     let exp_breakdown = cf_engine.get_expenses_breakdown(current_date, state.current_fx);
     let income = cf_engine.get_incomes_usd(current_date);
@@ -74,11 +77,16 @@ pub fn handle_transition(
     };
     let jp_tax_pre = cfg.pre_funded_japan_tax_jpy;
 
-    let bridge_total_pull_usd = ((bridge_general_target - bridge_pre_general).max(0.0)
-        + (resident_tax_total - jp_tax_pre).max(0.0))
-        / state.current_fx;
+    let bridge_total_pull_usd = if cfg.bridge_fund_enabled {
+        state.bridge_fund_usd = (bridge_general_target + resident_tax_total) / state.current_fx;
 
-    state.bridge_fund_usd = (bridge_general_target + resident_tax_total) / state.current_fx;
+        ((bridge_general_target - bridge_pre_general).max(0.0)
+            + (resident_tax_total - jp_tax_pre).max(0.0))
+            / state.current_fx
+    } else {
+        state.bridge_fund_usd = 0.0;
+        0.0
+    };
 
     // Step 2: Estimate ordinary income for the retirement year.
     let months_worked = (cfg.retirement_date.month() as i32 - 1).max(0) as f64;
@@ -373,3 +381,4 @@ pub fn handle_transition(
         },
     }
 }
+
