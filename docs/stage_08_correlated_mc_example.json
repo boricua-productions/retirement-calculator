@@ -1,0 +1,44 @@
+{
+  "_comment": "Stage 08 — Correlated Monte Carlo Example Configuration",
+  "_description": "Add these fields to your simulation_settings section to enable correlated asset paths.",
+
+  "simulation_settings": {
+    "_comment_mc_use_correlated_paths": "Enable correlated Monte Carlo (recommended for stress tests)",
+    "mc_use_correlated_paths": true,
+
+    "_comment_mc_correlation_matrix": "Historical 2000-2024 correlation matrix for US/Japan equities, USD/JPY, and US bonds",
+    "mc_correlation_matrix": {
+      "US Equity": {
+        "US Equity": 1.0,
+        "Japan Equity": 0.65,
+        "USD/JPY": -0.40,
+        "US Bond": -0.10
+      },
+      "Japan Equity": {
+        "US Equity": 0.65,
+        "Japan Equity": 1.0,
+        "USD/JPY": -0.30,
+        "US Bond": -0.05
+      },
+      "USD/JPY": {
+        "US Equity": -0.40,
+        "Japan Equity": -0.30,
+        "USD/JPY": 1.0,
+        "US Bond": 0.0
+      },
+      "US Bond": {
+        "US Equity": -0.10,
+        "Japan Equity": -0.05,
+        "USD/JPY": 0.0,
+        "US Bond": 1.0
+      }
+    }
+  },
+
+  "_explanation": {
+    "purpose": "Models the 'safe-haven yen' effect: when US stocks crash, USD/JPY tends to fall (yen strengthens), softening the net loss for JPY-resident retirees.",
+    "effect": "Correlated paths produce a NARROWER JPY confidence band than independent paths with the same marginal distributions.",
+    "validation": "The engine validates symmetry and positive semi-definiteness. If validation fails, it emits a warning and falls back to independent paths.",
+    "default_behavior": "If mc_use_correlated_paths is false or mc_correlation_matrix is empty, the engine uses independent paths (V7.5 baseline)."
+  }
+}

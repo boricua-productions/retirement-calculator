@@ -980,4 +980,14 @@ pub struct Config {
     /// output and write the suggested amount into `annual_gift_jpy_per_recipient`.
     #[serde(default)]
     pub enable_gifting_optimiser: bool,
+
+    // ── Stage 08 — Correlated Monte Carlo ────────────────────────────────────
+    /// When true, use correlated asset paths (multivariate normal) instead of
+    /// independent draws. Models the historical "safe haven yen" effect.
+    #[serde(default)]
+    pub mc_use_correlated_paths: bool,
+    /// Correlation matrix: map of asset-class pairs to correlation coefficients.
+    /// Example: { "US Equity": { "USD/JPY": -0.40, "US Bond": -0.10 } }
+    #[serde(default)]
+    pub mc_correlation_matrix: HashMap<String, HashMap<String, f64>>,
 }

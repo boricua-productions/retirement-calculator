@@ -318,6 +318,9 @@ fn estate_planning_config() -> Config {
         ],
         estate_planning_jurisdiction: TaxProtocol::Both,
         enable_gifting_optimiser: false,
+        // Stage 08 defaults
+        mc_use_correlated_paths: false,
+        mc_correlation_matrix: std::collections::HashMap::new(),
     }
 }
 

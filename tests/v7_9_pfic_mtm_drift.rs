@@ -160,6 +160,9 @@ fn pfic_config(track_drift: bool) -> Config {
         heirs: vec![],
         estate_planning_jurisdiction: TaxProtocol::Both,
         enable_gifting_optimiser: false,
+        // Stage 08 defaults
+        mc_use_correlated_paths: false,
+        mc_correlation_matrix: std::collections::HashMap::new(),
     }
 }
 

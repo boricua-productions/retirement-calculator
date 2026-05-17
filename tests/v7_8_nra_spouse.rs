@@ -162,6 +162,9 @@ fn base_cfg() -> Config {
         heirs: vec![],
         estate_planning_jurisdiction: retirement_calculator::models::config::TaxProtocol::Both,
         enable_gifting_optimiser: false,
+        // Stage 08 defaults
+        mc_use_correlated_paths: false,
+        mc_correlation_matrix: std::collections::HashMap::new(),
     }
 }
 
