@@ -235,6 +235,10 @@ pub struct InputPanelState {
     pub rsu_tax_handling: String,
     /// V7.7.2 — When true, model RSU tax-liability margin calls (realism on).
     pub rsu_sell_to_cover_realism: bool,
+    // ── Stage 03: Monthly Dependent Precision ─────────────────────────────────
+    /// When true (default), VA add-ons, NHI per-capita, and Jido Teate are
+    /// computed at month resolution using exact birth dates.
+    pub monthly_dependent_precision: bool,
     // ── Family demographics (V6.6) ───────────────────────────────────────────
     pub user_birth_date:   String,
     pub is_married:        bool,
@@ -373,6 +377,7 @@ impl Default for InputPanelState {
             us_tax_strategy:     UsTaxStrategy::FtcOnly,
             rsu_tax_handling:    "SALARY".into(),
             rsu_sell_to_cover_realism: true,
+            monthly_dependent_precision: true,
             user_birth_date:        String::new(),
             is_married:             false,
             spouse_birth_date:      String::new(),
@@ -887,6 +892,7 @@ impl InputPanelState {
             us_tax_strategy,
             rsu_tax_handling: str_val("rsu_tax_handling", "SALARY"),
             rsu_sell_to_cover_realism: sets["rsu_sell_to_cover_realism"].as_bool().unwrap_or(true),
+            monthly_dependent_precision: bool_val("monthly_dependent_precision", true),
             user_birth_date:   str_val("birth_date",        ""),
             is_married:        sets["is_married"].as_bool()
                                   .unwrap_or_else(|| sets["spouse_birth_date"].is_string()),
@@ -1109,6 +1115,7 @@ impl InputPanelState {
             set_f64!("nhi_spike_monthly_jpy", self.nhi_first_year_monthly_jpy);
             set_str!("rsu_tax_handling", self.rsu_tax_handling);
             set_bool!("rsu_sell_to_cover_realism", self.rsu_sell_to_cover_realism);
+            set_bool!("monthly_dependent_precision", self.monthly_dependent_precision);
             set_f64_or_na!("fers_monthly_payment_usd", self.fers_monthly_usd);
             set_u64!("fers_start_age",   self.fers_start_age);
             set_f64!("bridge_fund_months_target", self.bridge_months);
@@ -2945,6 +2952,30 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         if ui.small_button("+ Add Dependent").clicked() {
             state.dependents.push(DependentEntry::default());
+        }
+        ui.add_space(6.0);
+
+        // ── Stage 03: Monthly Dependent Precision toggle ─────────────────────────
+        ui.checkbox(&mut state.monthly_dependent_precision,
+            RichText::new("Monthly dependent-eligibility precision (Recommended)").strong())
+            .on_hover_text(
+                "Stage 03: Recalculates VA dependent add-ons, NHI per-capita charges, and \
+                 Jido Teate every month using exact birthdays.\n\n\
+                 Disable to fall back to the legacy annual-bucket approximation, which can \
+                 mis-fund the bridge fund by 5–7 months in a transition year."
+            );
+        // Show upcoming drop-off read-out when any dependent is within 2 years of turning 18.
+        for dep in &state.dependents {
+            if let Ok(birth) = chrono::NaiveDate::parse_from_str(dep.birth_date.trim(), "%Y-%m-%d") {
+                let cutoff_yr = birth.year() + 18;
+                if let Some(cutoff) = chrono::NaiveDate::from_ymd_opt(cutoff_yr, birth.month(), birth.day()) {
+                    ui.label(RichText::new(format!(
+                        "Upcoming dependent drop-off: Child turns 18 on {} \
+                         (loses VA child add-on, NHI per-capita head, Jido Teate).",
+                        cutoff.format("%Y-%m-%d"),
+                    )).small().color(egui::Color32::from_rgb(255, 200, 80)));
+                }
+            }
         }
         ui.add_space(8.0);
 

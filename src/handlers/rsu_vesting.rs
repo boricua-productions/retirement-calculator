@@ -75,7 +75,20 @@ pub fn handle_rsu_vesting(
                 let fx = state.current_fx;
                 let vest_jpy = vest_value * fx;
                 let age = yr - cfg.birth_date.year();
-                let num_deps: u32 = if cfg.is_married { 1 } else { 0 };
+                // Dec 31 snapshot per NTA spec (扶養控除 not prorated mid-year).
+                let num_deps: u32 = {
+                    let dec31 = chrono::NaiveDate::from_ymd_opt(yr, 12, 31).unwrap();
+                    cfg.family_unit.dependents.iter().filter(|dep| {
+                        let birth = dep.birth_date.unwrap_or_else(|| {
+                            chrono::NaiveDate::from_ymd_opt(dep.birth_year, 1, 1).unwrap()
+                        });
+                        let dep_age = {
+                            let y = dec31.year() - birth.year();
+                            if (dec31.month(), dec31.day()) < (birth.month(), birth.day()) { y - 1 } else { y }
+                        };
+                        dep_age < 18
+                    }).count() as u32
+                };
                 let salary_jpy = state.stats.year_salary_jpy;
                 // year_rsu_vest_jpy accumulates DURING the year; use the value
                 // before this vest event (added below after buy).

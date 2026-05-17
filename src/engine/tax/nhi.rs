@@ -22,7 +22,9 @@ impl NhiEngine {
         prev_year_gross_salary_jpy: f64,
         prev_year_gross_pension_jpy: f64,
         prev_year_investment_income_jpy: f64,
-        num_insured: u32,
+        // Stage 03: fractional household size; 1.0 = primary only; 1.333 = retiree
+        // plus a dependent covered for 4/12 months.
+        num_insured: f64,
         age: i32,
         is_spike_year: bool,
     ) -> f64 {
@@ -77,7 +79,7 @@ impl NhiEngine {
         prev_year_gross_salary_jpy: f64,
         prev_year_gross_pension_jpy: f64,
         prev_year_investment_income_jpy: f64,
-        num_insured: u32,
+        num_insured: f64,
         age: i32,
     ) -> f64 {
         let net_salary = (prev_year_gross_salary_jpy
@@ -97,7 +99,7 @@ impl NhiEngine {
         let income_basis =
             (net_salary + net_pension + investment_income - NHI_BASIC_DEDUCTION).max(0.0);
 
-        let n = num_insured as f64;
+        let n = num_insured;
 
         // Medical component (医療分)
         let medical = (income_basis * rates.medical_rate + rates.per_capita_medical * n)
@@ -140,7 +142,7 @@ mod tests {
         // support:  5,670,000 × 2.04% + 11,400  = 127,068
         // nursing:  5,670,000 × 2.02% + 12,600  = 127,134
         // total:    767,484
-        let nhi = NhiEngine::compute_annual(&sagamihara(), 8_000_000.0, 0.0, 0.0, 1, 50, true);
+        let nhi = NhiEngine::compute_annual(&sagamihara(), 8_000_000.0, 0.0, 0.0, 1.0, 50, true);
         assert!((nhi - 767_484.0).abs() < 1.0, "nhi={nhi:.0} expected≈767,484");
     }
 
@@ -150,15 +152,15 @@ mod tests {
         // pension ¥1.2M, age 65 → pension_ded = ¥1.1M → net = ¥100,000
         // income_basis = (100,000 − 430,000).max(0) = 0
         // medical = ¥33,600; support = ¥11,400; nursing = 0 (age 65)
-        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 1_200_000.0, 0.0, 1, 65, false);
+        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 1_200_000.0, 0.0, 1.0, 65, false);
         assert!((nhi - 45_000.0).abs() < 1.0, "nhi={nhi:.0} expected=45,000");
     }
 
     /// Spike exceeds normalized by more than 4×.
     #[test]
     fn test_nhi_engine_spike_exceeds_normalized() {
-        let spike      = NhiEngine::compute_annual(&sagamihara(), 8_000_000.0, 0.0, 0.0, 1, 50, true);
-        let normalized = NhiEngine::compute_annual(&sagamihara(), 0.0, 1_200_000.0, 0.0, 1, 50, false);
+        let spike      = NhiEngine::compute_annual(&sagamihara(), 8_000_000.0, 0.0, 0.0, 1.0, 50, true);
+        let normalized = NhiEngine::compute_annual(&sagamihara(), 0.0, 1_200_000.0, 0.0, 1.0, 50, false);
         assert!(spike > normalized * 4.0,
             "spike ¥{spike:.0} should be >4× normalized ¥{normalized:.0}");
     }
@@ -168,14 +170,14 @@ mod tests {
     fn test_nhi_engine_nursing_care_applied_age_50() {
         // zero income → income_basis = 0; only per-capita portions.
         // medical = ¥33,600; support = ¥11,400; nursing = ¥12,600 → total ¥57,600
-        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 0.0, 0.0, 1, 50, false);
+        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 0.0, 0.0, 1.0, 50, false);
         assert!((nhi - 57_600.0).abs() < 1.0, "nhi={nhi:.0} expected=57,600");
     }
 
     /// Nursing care is excluded for age 65+.
     #[test]
     fn test_nhi_engine_no_nursing_care_age_65() {
-        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 0.0, 0.0, 1, 65, false);
+        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 0.0, 0.0, 1.0, 65, false);
         assert!((nhi - 45_000.0).abs() < 1.0, "nhi={nhi:.0} expected=45,000");
     }
 
@@ -188,7 +190,7 @@ mod tests {
         // support raw: 17,620,000×2.04%+11,400 = 370,848   → cap 240,000
         // nursing raw: 17,620,000×2.02%+12,600 = 368,524   → cap 170,000
         // total: 1,060,000
-        let nhi = NhiEngine::compute_annual(&sagamihara(), 20_000_000.0, 0.0, 0.0, 1, 50, false);
+        let nhi = NhiEngine::compute_annual(&sagamihara(), 20_000_000.0, 0.0, 0.0, 1.0, 50, false);
         assert!((nhi - 1_060_000.0).abs() < 1.0, "nhi={nhi:.0} expected=1,060,000");
     }
 
@@ -205,7 +207,7 @@ mod tests {
         // support:  570,000 × 2.04% + 11,400 = 23,028
         // nursing:  570,000 × 2.02% + 12,600 = 24,114  (age 50)
         // total:    128,964
-        let nhi = NhiEngine::compute_annual(&model, 0.0, 0.0, 1_000_000.0, 1, 50, false);
+        let nhi = NhiEngine::compute_annual(&model, 0.0, 0.0, 1_000_000.0, 1.0, 50, false);
         let expected = 81_822.0 + 23_028.0 + 24_114.0;
         assert!((nhi - expected).abs() < 1.0, "nhi={nhi:.0} expected≈{expected:.0}");
     }
@@ -214,9 +216,29 @@ mod tests {
     #[test]
     fn test_nhi_engine_investment_income_excluded_by_default() {
         // same scenario as above but default (include_us_investment_income = false)
-        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 0.0, 1_000_000.0, 1, 50, false);
+        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 0.0, 1_000_000.0, 1.0, 50, false);
         // income_basis = 0 (no salary/pension after deduction), so only per-capita
         assert!((nhi - 57_600.0).abs() < 1.0, "nhi={nhi:.0} expected=57,600 (per-capita only)");
+    }
+
+    /// Stage 03 — per-capita prorates with fractional num_insured.
+    /// A dependent covered for 4 of 12 months → num_insured = 1 + 4/12 ≈ 1.333.
+    /// At zero income, only per-capita components are non-zero:
+    ///   medical: 33,600 × 1.333 = 44,800
+    ///   support: 11,400 × 1.333 = 15,200
+    ///   nursing: 12,600 × 1.333 = 16,800  (age 50)
+    ///   total:   76,800
+    #[test]
+    fn test_nhi_engine_fractional_insured_prorates_per_capita() {
+        let n = 1.0 + 4.0 / 12.0; // 1.333…
+        let nhi = NhiEngine::compute_annual(&sagamihara(), 0.0, 0.0, 0.0, n, 50, false);
+        // per-capita for 1 person (age 50): 33,600 + 11,400 + 12,600 = 57,600
+        let one_person = 57_600.0_f64;
+        let expected = one_person * n;
+        assert!((nhi - expected).abs() < 1.0,
+            "nhi={nhi:.1} expected≈{expected:.1} (n={n:.4})");
+        assert!(nhi > one_person,
+            "fractional insured must exceed single-person per-capita");
     }
 
     /// ManualOverride returns spike amount in spike year, ongoing otherwise.
@@ -226,8 +248,8 @@ mod tests {
             spike_year_total_jpy:     880_000.0,
             ongoing_annual_total_jpy: 540_000.0,
         };
-        let spike   = NhiEngine::compute_annual(&model, 0.0, 0.0, 0.0, 1, 55, true);
-        let ongoing = NhiEngine::compute_annual(&model, 0.0, 0.0, 0.0, 1, 55, false);
+        let spike   = NhiEngine::compute_annual(&model, 0.0, 0.0, 0.0, 1.0, 55, true);
+        let ongoing = NhiEngine::compute_annual(&model, 0.0, 0.0, 0.0, 1.0, 55, false);
         assert!((spike   - 880_000.0).abs() < 0.01);
         assert!((ongoing - 540_000.0).abs() < 0.01);
     }

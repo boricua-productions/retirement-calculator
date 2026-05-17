@@ -981,6 +981,48 @@ fn first_of_prev_month(on: NaiveDate) -> NaiveDate {
     }
 }
 
+/// Public wrapper around `jido_teate_for` for testing and forward-projection.
+pub fn jido_teate_monthly_jpy(enabled: bool, child_birth: NaiveDate, on: NaiveDate) -> f64 {
+    jido_teate_for(enabled, child_birth, on)
+}
+
+/// Stage 03 — Compute the total JPY-equivalent income expected over the 12
+/// calendar months starting from the 1st of `from`'s month.
+///
+/// Sums VA, FERS, SS, SSDI, military retirement pay, Nenkin, and Jido Teate for
+/// each of the next 12 months by querying the cashflow engine month-by-month.
+/// This naturally captures dependent drop-offs (VA child add-on, Jido Teate)
+/// at the exact month they occur — unlike the legacy annual-divided-by-12 approach.
+pub fn next_12_months_income_jpy(
+    cfg: &Config,
+    cf_engine: &CashFlowEngine,
+    from: NaiveDate,
+    fx: f64,
+) -> f64 {
+    let base_months = from.year() * 12 + from.month() as i32 - 1;
+    let mut total_jpy = 0.0_f64;
+
+    for offset in 0..12i32 {
+        let total_months = base_months + offset;
+        let y = total_months / 12;
+        let m = (total_months % 12 + 1) as u32;
+        let month_date = NaiveDate::from_ymd_opt(y, m, 1).unwrap_or(from);
+
+        let income = cf_engine.get_incomes_usd(month_date);
+        let mil_usd = cfg.military_retired.as_ref()
+            .filter(|mr| mr.jurisdiction != TaxProtocol::TaxFree)
+            .map(|mr| mr.monthly_usd)
+            .unwrap_or(0.0);
+
+        total_jpy += (income.va_usd + income.fers_usd + income.ss_usd
+            + income.ssdi_usd + mil_usd) * fx;
+        total_jpy += income.nenkin_income_jpy;
+        total_jpy += jido_teate_for(cfg.jido_teate_enabled, cfg.child_birth_date, month_date);
+    }
+
+    total_jpy
+}
+
 /// Tier 2.5 — Education Fund drawdown. Education-tagged expenses pull from
 /// `state.education_fund_jpy` first; any residual is covered by a Tier-8 sale
 /// sized exactly to the remaining JPY shortfall. Standard waterfall tiers

@@ -429,6 +429,8 @@ mod tests {
             spouse_profile: crate::models::config::SpouseProfile::UsPerson,
             spouse_japan_salary_jpy: 0.0,
             spouse_japan_misc_income_jpy: 0.0,
+            // Stage 03 defaults
+            monthly_dependent_precision: true,
         }
     }
 

@@ -5,6 +5,20 @@ fn months_between(from: NaiveDate, to: NaiveDate) -> u32 {
     let diff = (to.year() - from.year()) * 12 + (to.month() as i32 - from.month() as i32);
     diff.max(0) as u32
 }
+
+/// Age of `birth` on `on_date`, using standard (month, day) comparison.
+fn age_on(birth: NaiveDate, on: NaiveDate) -> i32 {
+    let years = on.year() - birth.year();
+    if (on.month(), on.day()) < (birth.month(), birth.day()) { years - 1 } else { years }
+}
+
+/// Count the calendar months in `year` where `birth` is strictly under 18,
+/// measured at the first day of each month (matching the simulation's monthly tick).
+fn months_under_18_in_year(birth: NaiveDate, year: i32) -> u32 {
+    (1u32..=12)
+        .filter(|&mo| age_on(birth, NaiveDate::from_ymd_opt(year, mo, 1).unwrap()) < 18)
+        .count() as u32
+}
 use log::{info, warn};
 use std::collections::HashMap;
 
@@ -446,8 +460,19 @@ impl SimulationController {
         let soc_ins_paid = self.state.social_insurance_history.get(&prev_year).copied().unwrap_or(0.0);
         let age = current_year - self.cfg.birth_date.year();
 
+        // Japan resident-tax dependent deduction (扶養控除) uses a Dec 31 snapshot
+        // per NTA rules — it is NOT prorated for mid-year changes. Count qualifying
+        // dependents (under 18) as of December 31 of the prior year.
+        let num_dependents: u32 = self.cfg.family_unit.dependents.iter().filter(|dep| {
+            let birth = dep.birth_date.unwrap_or_else(|| {
+                NaiveDate::from_ymd_opt(dep.birth_year, 1, 1).unwrap()
+            });
+            let dec31_prev = NaiveDate::from_ymd_opt(prev_year, 12, 31).unwrap();
+            age_on(birth, dec31_prev) < 18
+        }).count() as u32;
+
         let tax_bill = JapanTaxEngine::calculate_resident_tax(
-            gross_salary, gross_pension, soc_ins_paid, age, 1,
+            gross_salary, gross_pension, soc_ins_paid, age, num_dependents,
             self.japan_tax_rates.income_rate, self.japan_tax_rates.per_capita_jpy,
         );
 
@@ -545,12 +570,33 @@ impl SimulationController {
             std::borrow::Cow::Borrowed(&self.cfg.nhi_model)
         };
 
+        // Stage 03: NHI per-capita charges change month-to-month with household
+        // composition. When monthly_dependent_precision is true, prorate based
+        // on how many months each dependent was under 18 during `current_year`.
+        // When false, use a Dec 31 snapshot (integer count).
+        let num_insured: f64 = {
+            let base = 1.0_f64; // primary retiree always enrolled
+            let dep_fraction: f64 = self.cfg.family_unit.dependents.iter().map(|dep| {
+                let birth = dep.birth_date.unwrap_or_else(|| {
+                    NaiveDate::from_ymd_opt(dep.birth_year, 1, 1).unwrap()
+                });
+                if self.cfg.monthly_dependent_precision {
+                    months_under_18_in_year(birth, current_year) as f64 / 12.0
+                } else {
+                    // Dec 31 snapshot — NTA approach for annual benefits.
+                    let dec31 = NaiveDate::from_ymd_opt(current_year, 12, 31).unwrap();
+                    if age_on(birth, dec31) < 18 { 1.0 } else { 0.0 }
+                }
+            }).sum();
+            base + dep_fraction
+        };
+
         let annual_nhi = NhiEngine::compute_annual(
             effective_model.as_ref(),
             prev_salary_jpy,
             prev_pension_jpy,
             prev_investment_income_jpy,
-            1,   // num_insured (primary retiree)
+            num_insured,
             age,
             is_spike_year,
         );
@@ -586,12 +632,20 @@ impl SimulationController {
         }
         let age = yr - self.cfg.birth_date.year();
         let soc_ins_paid = self.state.stats.year_exp_nhi + self.state.stats.year_exp_nenkin;
+        // Dec 31 snapshot per NTA spec (扶養控除 is not prorated mid-year).
+        let num_dependents: u32 = self.cfg.family_unit.dependents.iter().filter(|dep| {
+            let birth = dep.birth_date.unwrap_or_else(|| {
+                NaiveDate::from_ymd_opt(dep.birth_year, 1, 1).unwrap()
+            });
+            let dec31 = NaiveDate::from_ymd_opt(yr, 12, 31).unwrap();
+            age_on(birth, dec31) < 18
+        }).count() as u32;
         let tax = JapanTaxEngine::calculate_income_tax(
             gross_earned_jpy,
             0.0,
             soc_ins_paid,
             age,
-            1,
+            num_dependents,
         );
         self.state.stats.year_japan_income_tax_jpy = tax;
     }

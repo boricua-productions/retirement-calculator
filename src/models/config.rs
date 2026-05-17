@@ -858,4 +858,11 @@ pub struct Config {
     /// `Strict` drains buffers and logs unpaid liability; `Permissive` is legacy.
     #[serde(default)]
     pub rsu_sell_to_cover_policy: RsuSellToCoverPolicy,
+
+    // ── Stage 03 — Monthly Dependent Precision ────────────────────────────────
+    /// When true (default), VA add-ons, NHI per-capita charges, and Jido Teate
+    /// are computed at month resolution using exact birth dates. When false,
+    /// falls back to annual-bucket approximations (legacy behaviour).
+    #[serde(default = "default_true")]
+    pub monthly_dependent_precision: bool,
 }
