@@ -130,6 +130,10 @@ pub struct AnnualStats {
     pub year_kaigo_premium_jpy: f64,
     /// Stage 10 — Annual projected out-of-pocket care costs (JPY, based on CareScenario).
     pub year_kaigo_care_jpy: f64,
+    /// Stage 12 — Total JPY diverted to buffer accumulation this year (pre-retirement ramp).
+    pub year_buffer_accumulation_jpy: f64,
+    /// Stage 12 — Total USD diverted to buffer accumulation this year (pre-retirement ramp).
+    pub year_buffer_accumulation_usd: f64,
 }
 
 impl AnnualStats {

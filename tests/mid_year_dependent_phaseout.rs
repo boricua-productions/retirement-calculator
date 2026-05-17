@@ -20,7 +20,7 @@ use retirement_calculator::engine::tax::nhi::NhiEngine;
 use retirement_calculator::engine::va_benefits::lookup_va_monthly_2026;
 use retirement_calculator::handlers::cashflow_manager::{jido_teate_monthly_jpy, next_12_months_income_jpy};
 use retirement_calculator::models::config::{
-    Config, Dependent, FamilyUnit, NhiCalculatedRates, NhiModel, SpouseProfile,
+    BufferFundingTiming, Config, Dependent, FamilyUnit, NhiCalculatedRates, NhiModel, SpouseProfile,
     TaxProtocol, TaxRules, UsTaxStrategy, VaDependentStatus, WaterfallStrategy,
     WithdrawalRegime, WithdrawalStrategy,
 };
@@ -57,10 +57,14 @@ fn scenario_cfg() -> Config {
         nhi_spike_monthly_jpy: 0.0,
         nhi_model: NhiModel::default(),
         war_chest_enabled: true,
+        war_chest_funding_timing: BufferFundingTiming::AtRetirement,
+        war_chest_ramp_months: 24,
         war_chest_currency:    "JPY".into(),
         war_chest_target_jpy:  0.0,
         war_chest_target_usd:  0.0,
         bridge_fund_enabled: true,
+        bridge_fund_funding_timing: BufferFundingTiming::AtRetirement,
+        bridge_fund_ramp_months: 18,
         bridge_months_target:  12,
         bridge_fund_currency:  "USD".into(),
         roth_start_limit:      7_000.0,

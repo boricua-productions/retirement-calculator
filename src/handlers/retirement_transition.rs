@@ -45,13 +45,15 @@ pub fn handle_transition(
     // Step 1: Calculate cash targets.
     // V7.1: war_chest_jpy is always JPY-denominated. Legacy "USD" configs are
     // converted at transition-date FX to preserve the intended reserve level.
+    // Stage 12: Account for gradual accumulation during ramp period.
+    let wc_already_accumulated = state.war_chest_accumulating_jpy;
     let wc_needed_usd = if cfg.war_chest_enabled {
         let new_wc_jpy = if cfg.war_chest_currency == "USD" {
             cfg.war_chest_target_usd * state.current_fx  // convert to JPY at today's rate
         } else {
             cfg.war_chest_target_jpy
         };
-        let pre_jpy = cfg.pre_funded_war_chest_jpy;
+        let pre_jpy = cfg.pre_funded_war_chest_jpy + wc_already_accumulated;
         state.war_chest_jpy = new_wc_jpy;
         ((new_wc_jpy - pre_jpy).max(0.0)) / state.current_fx
     } else {
@@ -70,11 +72,13 @@ pub fn handle_transition(
     let jp_tax_details = JapanTaxEngine::estimate_resident_tax_transition(cfg.retirement_year_gross_income_jpy);
     let resident_tax_total = jp_tax_details.tax_bill;
 
-    let bridge_pre_general = if cfg.bridge_fund_currency == "USD" {
+    // Stage 12: Include gradual accumulation in pre-funded amount
+    let bridge_pre_general_base = if cfg.bridge_fund_currency == "USD" {
         cfg.pre_funded_bridge_usd * state.current_fx
     } else {
         cfg.pre_funded_bridge_jpy
     };
+    let bridge_pre_general = bridge_pre_general_base + (state.bridge_fund_accumulating_usd * state.current_fx);
     let jp_tax_pre = cfg.pre_funded_japan_tax_jpy;
 
     let bridge_total_pull_usd = if cfg.bridge_fund_enabled {
@@ -350,6 +354,11 @@ pub fn handle_transition(
     let reinvested_cash: f64 = buys_snapshot.iter().map(|b| b.cost).sum();
     info!("   Pre-rebalance: ${:.2} | Post-rebalance: ${:.2}", pre_val, final_balance);
 
+    // Stage 12: Reset accumulators after transition
+    let bridge_pre_accumulated_usd = state.bridge_fund_accumulating_usd;
+    state.war_chest_accumulating_jpy = 0.0;
+    state.bridge_fund_accumulating_usd = 0.0;
+
     TransitionReport {
         date: current_date,
         fx_rate: state.current_fx,
@@ -371,11 +380,13 @@ pub fn handle_transition(
             wc_currency: cfg.war_chest_currency.clone(),
             wc_paid_from_portfolio_usd: wc_needed_usd,
             wc_pre: cfg.pre_funded_war_chest_jpy,
+            wc_pre_accumulated_jpy: wc_already_accumulated,
             bridge_total_jpy: bridge_general_target + resident_tax_total,
             bridge_pre_general_jpy: bridge_pre_general,
             bridge_fund_currency: cfg.bridge_fund_currency.clone(),
             jp_tax_pre_jpy: jp_tax_pre,
             bridge_pull_usd: bridge_total_pull_usd,
+            bridge_pre_accumulated_usd,
             jp_tax_bill: resident_tax_total,
             reinvested_cash,
         },
