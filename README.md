@@ -383,7 +383,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V7.8.2)](#16-hardening--compliance-v75--v782)
+16. [Hardening & Compliance (V7.5 → V7.9)](#16-hardening--compliance-v75--v79)
 
 ---
 
@@ -1427,7 +1427,7 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**139/139 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
+**142/142 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -1686,7 +1686,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V7.8.2)
+## 16. Hardening & Compliance (V7.5 → V7.9)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
@@ -1703,7 +1703,11 @@ forward month-by-month via `next_12_months_income_jpy` so cliff-drop years are f
 V7.8.2 makes combined recession + FX shock ordering deterministic and selectable via the
 `shock_ordering` enum (`DepreciateThenReprice` default, `RepriceThenDepreciate`, `Simultaneous`),
 records pre- and post-shock JPY net worth on each snapshot, and surfaces the dual-shock event in
-the UI with yellow highlighting and a hover tooltip.
+the UI with yellow highlighting and a hover tooltip;
+V7.9 completes the IRC §1296 MTM pipeline by adding a real §1296(d) loss carry-forward ledger,
+a dual-currency `MtmGainResult` that feeds the Japan resident-tax base for non-NISA/iDeCo
+accounts, and an annual JPY-basis drift monitor (`track_pfic_basis_drift`) that self-heals
+stale JPY basis entries and emits auditable `PficDriftWarning` records when drift exceeds 1%.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income
@@ -1748,6 +1752,16 @@ transition event so vested-RSU proceeds flow into the post-retirement target mix
 also gained `JapanTaxEngine::calculate_income_tax()` for working-year 所得税 (with reconstruction
 surcharge), fed by the new N−1 `salary_history` / `rsu_vest_history` so the first-year
 resident-tax base is honest.
+
+### Fix 7 — PFIC §1296 MTM Carry-Forward & JPY Basis Drift Monitor *(V7.9)*
+The §1296(d) loss carry-forward is now a real ledger entry on each asset
+(`pfic_mtm_loss_carryforward_usd`): loss years bank the absolute USD loss; gain years draw it
+down before any ordinary income reaches the US income stack. The MTM computation returns a
+`MtmGainResult { usd, jpy }` so phantom income flows into the Japan resident-tax base for
+accounts where `japan_tax_advantaged == false`. The `track_pfic_basis_drift` flag enables an
+annual cross-check of each Mtm-flagged asset's `prior_price × current_fx` against the stored
+`pfic_prior_year_fmv_per_share_jpy`; when drift exceeds 1% the engine self-heals by resetting
+the JPY basis and emits a `PficDriftWarning` (year, ticker, drift_pct) recorded on `SimResults`.
 
 ### Fix 6 — RSU Sell-to-Cover Death Spiral *(V7.7.2)*
 The legacy SELL_TO_COVER path silently zeroed any tax shortfall when a recession dropped the vest
