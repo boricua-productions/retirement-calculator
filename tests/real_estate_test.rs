@@ -169,6 +169,9 @@ fn base_config(
         heirs: vec![],
         estate_planning_jurisdiction: TaxProtocol::Both,
         enable_gifting_optimiser: false,
+        // Stage 08 defaults
+        mc_use_correlated_paths: false,
+        mc_correlation_matrix: std::collections::HashMap::new(),
     }
 }
 

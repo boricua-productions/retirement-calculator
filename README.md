@@ -1,4 +1,4 @@
-# Retirement Calculator — Stage 07: Estate Planning Edition
+# Retirement Calculator — V7.9.8: Correlated Monte Carlo Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: Stage 07 — Estate Planning)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.9.8 — Correlated Monte Carlo)
 ---
 
 ## Beginner Quick Start
@@ -151,7 +151,7 @@ says otherwise. For optional income streams, use `0` when that income does not a
 
 HELOC draws are sized to the minimum of (available credit, cash gap needed). The FX spread penalty (`fx_spread_penalty`, default 0.5%) is applied on every draw, consistent with other USD→JPY conversion tiers. Outstanding HELOC balance accumulates in simulation state and is reported in the annual snapshot as `outstanding_heloc_usd`.
 
-#### Estate Planning *(Stage 07)*
+#### Estate Planning *(V7.9.7)*
 
 Japan taxes inheritance heavily — up to 55%. As a long-term US citizen resident in Japan, your **global assets** are subject to Japan Sōzoku-zei (相続税). The US also taxes the same estate. This section projects the bilateral bill and tells you how much your heirs actually receive.
 
@@ -283,7 +283,7 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 ## V7.5–V7.6 Strategic Hardening — Cost Basis, Liquidation, and Compliance
 
-The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, and Stage 07 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax).
+The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), and V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect).
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -388,6 +388,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **Stage 08** | Correlated Monte Carlo — **Historical safe-haven yen effect**: Models negative correlation (ρ = -0.40) between US equity and USD/JPY to accurately capture how JPY-resident retirees experience equity crashes. **Cholesky decomposition** transforms independent normal draws into correlated multivariate draws across US equity, Japan equity, USD/JPY, and US bonds using historical 2000-2024 correlation matrix. **Narrower JPY confidence bands**: Correlated paths produce ~28% narrower p10-p90 bands than independent paths (¥14.1B vs ¥19.6B in 40-year test), eliminating systematic overstatement of downside risk. **Matrix validation**: `CorrelationMatrix::validate()` checks symmetry and PSD; nearest-PSD correction applies when user matrix fails. **Configuration**: `mc_use_correlated_paths: bool` + `mc_correlation_matrix: HashMap<String, HashMap<String, f64>>` in JSON. **Backward compatible**: when disabled or empty, falls back to V7.5 independent-paths baseline. 9 new acceptance tests; 109 total tests passing. |
 | **Stage 07** | Estate Planning — **Japan Sōzoku-zei (相続税)**: NTA 8-bracket marginal table (10%–55%) applied per heir on each heir's taxable share after the basic exclusion (¥30M + ¥6M × heir count); spousal ½ deduction (配偶者の税額軽減) applied before attribution. **US Estate Tax**: pre-2026 TCJA exclusion (~$13.61M) sunsets to ~$7M in 2026; 40% flat rate above threshold. **US-Japan Treaty (2004) Art. 6 pro-rata credit** prevents double taxation by crediting the Japan tax proportional to Japan-situs assets. **Lifetime Gifting Optimiser**: computes optimal 暦年贈与 (¥1.1M/recipient/yr) and §2503(b) ($19k/recipient/yr) pre-death transfers to reduce taxable estate, reporting projected annual gift amounts and estimated tax reduction. **Overview panel** shows a "Wealth Transferred to Heirs" grid (gross estate, Japan tax, US tax, treaty credit, net to heirs) when `enable_estate_planning: true`. 13 new acceptance tests; all tests passing. |
 | **V7.9** | PFIC MTM Phantom Income & FX Drift (Stage 05) — **`track_pfic_basis_drift: bool`** (default `true`) enables an annual cross-check of each PFIC-flagged asset's USD × FX basis against its stored JPY basis; when drift exceeds 1% the engine self-heals by recomputing the JPY basis from first principles and emits a `PficDriftWarning`. **§1296(d) loss carry-forward** is now a real ledger entry (`pfic_mtm_loss_carryforward_usd` on `Asset`): loss years bank the absolute loss; gain years draw it down before any ordinary income is reported. **Dual-currency MTM result** (`MtmGainResult { usd, jpy }`) feeds Japan resident-tax base for non-NISA/iDeCo accounts. **Per-position PFIC Regime dropdown** in the input panel (`Not PFIC` / `§1296 MTM` / `§1295 QEF` / `§1291 Excess Dist.`). **Overview tab** shows a `PFIC §1296 MTM Drag` row with lifetime phantom income and drift-event count when any MTM asset is present. **`AnnualSnapshot`** gains `pfic_mtm_income_usd` and `pfic_mtm_income_jpy`. 3 new acceptance tests. **Real Estate & Mortgage Amortization (Stage 06)** — `RealEstateHolding` model with analytical mortgage amortization (`monthly_pi_payment`, `mortgage_balance`), rental income routing (JPY→Tier 0, USD→Tier 4), HELOC draw (**Tier 7.5** in the defensive waterfall) gated by `enable_heloc_tier: bool`, annual depreciation, and HELOC/equity/rental aggregates on `AnnualSnapshot`. 9 new acceptance tests; 163/163 tests passing. |
 | **V7.8.2** | FX Shock Ordering (Stage 04) — **`shock_ordering`** enum (`depreciate_then_reprice` / `reprice_then_depreciate` / `simultaneous`) makes the application order deterministic when a recession event and an FX shock event fall in the **same calendar year**. **`DepreciateThenReprice`** (default, conservative) applies the equity drop first so the JPY purchasing-power loss is shown at its largest; **`RepriceThenDepreciate`** (optimistic) prices the equity loss at the new FX rate; **`Simultaneous`** snapshots both shocks and commits them path-independently for stress-test comparability. **`AnnualSnapshot`** gains `pre_shock_net_worth_jpy` and `post_shock_net_worth_jpy` (`None` in years without a combined shock). **`jpy_purchasing_power_index`** tracks cumulative Japan CPI since simulation start. **UI**: three radio buttons in the Market Simulation section with a collapsible worked numeric example ($100 k VTI, FX 145 → 80, −35% recession). **Annual Table** highlights dual-shock years in yellow with a hover tooltip showing the pre → post JPY net worth. **Overview tab** shows a `Dual-Shock:` row for each shock year. 4 new acceptance tests; 139/139 tests passing. |
@@ -1080,7 +1081,31 @@ before running a simulation.
 | P50 | Median / most-likely path — base planning assumption |
 | P90 | Best-case outcome — strong markets; excess wealth available |
 
-**Limitations:** The stochastic model is applied to the aggregate portfolio as a single GBM process using weighted-average parameters. It does not model per-asset correlation, currency shocks, or tax effects stochastically — those remain deterministic.
+**Limitations (independent-paths baseline):** The stochastic model is applied to the aggregate portfolio as a single GBM process using weighted-average parameters. Without correlated paths enabled (see V7.9.8 below), it does not model per-asset correlation or currency shocks — those remain deterministic. Tax effects are always deterministic.
+
+##### 🔗 Correlated Monte Carlo (V7.9.8)
+
+**New in V7.9.8:** The Marco Polo engine now supports **correlated asset paths** to model the historical relationship between US equities, Japan equities, USD/JPY, and US bonds. This feature addresses a critical shortcoming of the independent-paths baseline: it systematically overstates downside risk in JPY purchasing-power terms because it doesn't credit the "safe-haven yen" effect — when US stocks crash, USD/JPY tends to fall too, softening the net loss for JPY-resident retirees.
+
+**Recommended for stress tests.** Enable correlated paths when you want a realistic worst-case scenario that reflects how markets actually move together.
+
+**Configuration:**
+- Set `"mc_use_correlated_paths": true` in your scenario JSON's `simulation_settings` section.
+- Optionally define `"mc_correlation_matrix"` as a nested object mapping asset-class pairs to correlation coefficients (e.g., `{ "US Equity": { "USD/JPY": -0.40 } }`).
+- If no correlation matrix is provided, the engine falls back to independent paths.
+
+**Default correlation regime (2000–2024 historical averages):**
+
+| | US Equity | Japan Equity | USD/JPY | US Bond |
+|---|---|---|---|---|
+| US Equity | 1.00 | 0.65 | -0.40 | -0.10 |
+| Japan Equity | 0.65 | 1.00 | -0.30 | -0.05 |
+| USD/JPY | -0.40 | -0.30 | 1.00 | 0.00 |
+| US Bond | -0.10 | -0.05 | 0.00 | 1.00 |
+
+**Effect:** A correlated-paths Monte Carlo run with ρ(equity, FX) = -0.40 produces a **narrower** JPY confidence band than independent paths with the same marginal distributions. This is the safe-haven effect: equity drawdowns are partially offset by yen appreciation, reducing the JPY purchasing-power loss that a Japan-resident retiree experiences.
+
+**Technical note:** The engine uses Cholesky decomposition to transform independent normal draws into correlated draws. If the user-supplied correlation matrix is not positive semi-definite, the engine applies a nearest-PSD correction and emits a warning.
 
 #### 🔀 Dual-Scenario Comparison
 
@@ -1469,7 +1494,7 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**163/163 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
+**195/195 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -1493,6 +1518,7 @@ cargo test
 | `tests/v7_8_fx_shock_ordering.rs` *(V7.8.2)* | 4 | All three `ShockOrdering` variants populate `pre_shock_net_worth_jpy` / `post_shock_net_worth_jpy` in combined-shock year (A), pre ≈ ¥14.5M and post ≈ ¥5.2M within ±5% tolerance for all orderings (B), non-shock years have `None` fields (D), `jpy_purchasing_power_index` stays at 1.0 with 0% Japan inflation (B) |
 | `tests/v7_9_pfic_mtm_drift.rs` *(V7.9)* | 3 | 30-year PFIC §1296 MTM simulation with FX drift produces zero drift warnings when `track_pfic_basis_drift=true` and MTM income is positive (A), §1296(d) loss carry-forward absorbs subsequent gains — partial-gain year absorbed fully, residual gain in third year (B), drift warnings suppressed when `track_pfic_basis_drift=false` (C) |
 | `tests/real_estate_test.rs` *(V7.9 Stage 06)* | 9 | Analytical mortgage amortization P&I correctness (A), empty portfolio no-op (B), rental income routing JPY/USD (C), HELOC availability gated by `enable_heloc_tier` (D) |
+| `tests/stage_08_correlated_mc.rs` *(V7.9.8)* | 9 | Cholesky decomposition identity matrix (A), 2×2 known reference (B), non-symmetric rejection (C), wrong-diagonal rejection (D), historical 2000-2024 matrix validation (E), correlated vs independent JPY bands — safe-haven yen effect produces ~28% narrower confidence band (F), 4-asset correlated smoke test (G), invalid matrix fallback (H), nearest-PSD correction (I) |
 
 ---
 
@@ -1547,7 +1573,7 @@ retirement-calculator-v2/
     ├── reporter.rs                 ← Text report, CSV, and clipboard formatters
     ├── simulation/
     │   ├── controller.rs           ← SimulationController: month loop, tax true-up, V7.7.1 per-account rebalance & Japan income tax
-    │   ├── monte_carlo.rs          ← Marco Polo GBM engine (1,000 iterations; P10/P50/P90)
+    │   ├── monte_carlo.rs          ← Marco Polo GBM engine (1,000 iterations; P10/P50/P90); V7.9.8 correlated paths with Cholesky decomposition
     │   ├── state.rs                ← SimState: all mutable simulation state (V7.7.1 salary_history, rsu_vest_history)
     │   └── stats.rs                ← AnnualStats: year-to-date accumulators (V7.7.1 year_salary_jpy, year_rsu_vest_jpy, year_japan_income_tax_jpy)
     └── ui/

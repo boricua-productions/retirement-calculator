@@ -769,7 +769,54 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             _            => TaxProtocol::Both,
         },
         enable_gifting_optimiser: get_bool("enable_gifting_optimiser", false),
+        // ── Stage 08 — Correlated Monte Carlo ─────────────────────────────────────
+        mc_use_correlated_paths: get_bool("mc_use_correlated_paths", false),
+        mc_correlation_matrix: {
+            let mut matrix = HashMap::new();
+            if let Value::Object(map) = &sets["mc_correlation_matrix"] {
+                for (k1, v1) in map {
+                    if let Value::Object(inner) = v1 {
+                        let mut inner_map = HashMap::new();
+                        for (k2, v2) in inner {
+                            if let Some(corr) = v2.as_f64() {
+                                inner_map.insert(k2.clone(), corr);
+                            }
+                        }
+                        matrix.insert(k1.clone(), inner_map);
+                    }
+                }
+            }
+            matrix
+        },
     };
+
+    // ── Stage 08: Validate correlation matrix if correlated paths are enabled ────
+    if config.mc_use_correlated_paths && !config.mc_correlation_matrix.is_empty() {
+        // Build a CorrelationMatrix from the config to validate it
+        use crate::simulation::monte_carlo::CorrelationMatrix;
+
+        let labels: Vec<String> = config.mc_correlation_matrix.keys().cloned().collect();
+        let n = labels.len();
+        let mut data = vec![vec![0.0; n]; n];
+
+        for (i, label_i) in labels.iter().enumerate() {
+            data[i][i] = 1.0; // Set diagonal to 1.0
+            if let Some(inner) = config.mc_correlation_matrix.get(label_i) {
+                for (j, label_j) in labels.iter().enumerate() {
+                    if let Some(&corr) = inner.get(label_j) {
+                        data[i][j] = corr;
+                    }
+                }
+            }
+        }
+
+        let corr_matrix = CorrelationMatrix { data, labels: labels.clone() };
+        if let Err(e) = corr_matrix.validate() {
+            eprintln!("⚠️  WARNING: Correlation matrix validation failed: {}", e);
+            eprintln!("    The Monte Carlo engine will fall back to independent paths.");
+            eprintln!("    Fix the matrix in your scenario JSON and reload.");
+        }
+    }
 
     // ── Manual price overrides ────────────────────────────────────────────────
     let mut manual_prices: HashMap<String, f64> = HashMap::new();

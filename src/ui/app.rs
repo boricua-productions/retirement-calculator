@@ -426,6 +426,8 @@ impl RetirementApp {
             annual_net_cashflow_usd: 0.0, // overridden in thread after main sim
             seed: None,
             fx_stochastic: None,
+            asset_classes: None,        // Stage 08: TODO - wire from input_state
+            correlation_matrix: None,   // Stage 08: TODO - wire from input_state
         }
     }
 
