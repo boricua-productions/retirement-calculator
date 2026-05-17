@@ -729,6 +729,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             "simultaneous"            => crate::models::config::ShockOrdering::Simultaneous,
             _                         => crate::models::config::ShockOrdering::DepreciateThenReprice,
         },
+
+        // ── Stage 05: PFIC Basis Drift Monitor ───────────────────────────────
+        track_pfic_basis_drift: get_bool("track_pfic_basis_drift", true),
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────
@@ -811,6 +814,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                 };
                 let pfic_regime = match info["pfic_regime"].as_str().unwrap_or("not_pfic") {
                     "mtm" => crate::models::assets::PficRegime::Mtm,
+                    "qef" => crate::models::assets::PficRegime::Qef,
                     "excess_distribution" => crate::models::assets::PficRegime::ExcessDistribution,
                     _ => crate::models::assets::PficRegime::NotPfic,
                 };
@@ -826,6 +830,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     dividend_currency,
                     pfic_regime,
                     pfic_prior_year_fmv_per_share: 0.0,
+                    pfic_prior_year_fmv_per_share_jpy: 0.0,
+                    pfic_mtm_loss_carryforward_usd: 0.0,
+                    pfic_qef_election_year: info["pfic_qef_election_year"].as_i64().map(|y| y as i32),
                     asset_class: parse_asset_class(info),
                     return_profile: parse_return_profile(info),
                     lots: Vec::new(),
@@ -890,6 +897,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                         };
                         let pfic_regime_b = match info["pfic_regime"].as_str().unwrap_or("not_pfic") {
                             "mtm" => crate::models::assets::PficRegime::Mtm,
+                            "qef" => crate::models::assets::PficRegime::Qef,
                             "excess_distribution" => crate::models::assets::PficRegime::ExcessDistribution,
                             _ => crate::models::assets::PficRegime::NotPfic,
                         };
@@ -906,6 +914,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                             dividend_currency: div_currency,
                             pfic_regime: pfic_regime_b,
                             pfic_prior_year_fmv_per_share: 0.0,
+                            pfic_prior_year_fmv_per_share_jpy: 0.0,
+                            pfic_mtm_loss_carryforward_usd: 0.0,
+                            pfic_qef_election_year: info["pfic_qef_election_year"].as_i64().map(|y| y as i32),
                             asset_class: parse_asset_class(info),
                             return_profile: parse_return_profile(info),
                             lots: Vec::new(),
@@ -965,6 +976,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
                     dividend_currency: div_currency,
                     pfic_regime: crate::models::assets::PficRegime::NotPfic,
                     pfic_prior_year_fmv_per_share: 0.0,
+                    pfic_prior_year_fmv_per_share_jpy: 0.0,
+                    pfic_mtm_loss_carryforward_usd: 0.0,
+                    pfic_qef_election_year: None,
                     asset_class: parse_asset_class(info),
                     return_profile: parse_return_profile(info),
                     lots: Vec::new(),
@@ -997,6 +1011,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             dividend_currency: DividendCurrency::Jpy,
             pfic_regime: crate::models::assets::PficRegime::NotPfic,
             pfic_prior_year_fmv_per_share: 0.0,
+            pfic_prior_year_fmv_per_share_jpy: 0.0,
+            pfic_mtm_loss_carryforward_usd: 0.0,
+            pfic_qef_election_year: None,
             asset_class: crate::models::assets::AssetClass::default(),
             return_profile: None,
             lots: Vec::new(),

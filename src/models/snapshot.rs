@@ -144,6 +144,24 @@ pub struct AnnualSnapshot {
     /// committed this year. `None` in years without a combined recession+FX shock.
     #[serde(default)]
     pub post_shock_net_worth_jpy: Option<f64>,
+
+    // ── Stage 05 — PFIC MTM phantom income ───────────────────────────────────
+    /// Total §1296 MTM gain for the year after §1296(d) carry-forward offset (USD).
+    #[serde(default)]
+    pub pfic_mtm_income_usd: f64,
+    /// Total §1296 MTM gain for the year in JPY (non-NISA/iDeCo accounts only).
+    #[serde(default)]
+    pub pfic_mtm_income_jpy: f64,
+}
+
+/// Stage 05 — Emitted when the USD×FX vs JPY MTM basis diverges by > 1%.
+/// The engine self-heals (resets JPY basis) immediately after emitting this warning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PficDriftWarning {
+    pub year: i32,
+    pub ticker: String,
+    /// Percentage drift: abs(usd_basis×fx − jpy_basis) / jpy_basis × 100.
+    pub drift_pct: f64,
 }
 
 /// A quarterly solvency warning recorded when income < expenses for a quarter.
@@ -251,4 +269,8 @@ pub struct SimResults {
     /// Derived from `spouse_profile` (e.g. NraMfs → "Married Filing Separately")
     /// and surfaced in the Overview tab so the user can confirm the right path ran.
     pub effective_filing_status: String,
+    /// Stage 05 — PFIC basis drift events recorded during the simulation.
+    /// Non-empty only when `track_pfic_basis_drift` is true and drift > 1% occurred;
+    /// the engine self-heals immediately, so a non-zero count flags precision loss.
+    pub pfic_basis_drift_warnings: Vec<PficDriftWarning>,
 }

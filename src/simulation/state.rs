@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use std::collections::HashMap;
 
 use crate::models::assets::Account;
-use crate::models::snapshot::{AnnualSnapshot, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
+use crate::models::snapshot::{AnnualSnapshot, PficDriftWarning, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
 use super::stats::AnnualStats;
 
 /// The complete mutable simulation state.
@@ -137,6 +137,13 @@ pub struct SimState {
     pub shock_pre_net_worth_jpy: Option<f64>,
     /// Total portfolio net worth (JPY) captured after all shock events commit.
     pub shock_post_net_worth_jpy: Option<f64>,
+
+    // ── Stage 05 — PFIC basis drift tracking ─────────────────────────────────────
+    /// Accumulated PFIC basis drift warnings for the entire simulation run.
+    pub pfic_basis_drift_warnings: Vec<PficDriftWarning>,
+    /// Annual PFIC MTM JPY income history: year → total_jpy (non-tax-advantaged accounts).
+    /// Archived in January of each new year; read by the Japan resident-tax scheduler.
+    pub pfic_mtm_jpy_history: HashMap<i32, f64>,
 }
 
 impl SimState {
@@ -187,6 +194,8 @@ impl SimState {
             rsu_sell_to_cover_warnings: Vec::new(),
             shock_pre_net_worth_jpy: None,
             shock_post_net_worth_jpy: None,
+            pfic_basis_drift_warnings: Vec::new(),
+            pfic_mtm_jpy_history: HashMap::new(),
         }
     }
 }

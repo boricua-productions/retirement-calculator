@@ -98,6 +98,7 @@ impl SimulationController {
             city: self.cfg.city.clone(),
             rsu_sell_to_cover_warnings: self.state.rsu_sell_to_cover_warnings,
             effective_filing_status: self.cfg.tax_rules.filing_status.clone(),
+            pfic_basis_drift_warnings: self.state.pfic_basis_drift_warnings,
         }
     }
 
@@ -325,6 +326,9 @@ impl SimulationController {
 
         // Archive prior-year gross dividend income for NHI investment-income basis.
         self.state.div_income_history.insert(prev_yr, self.state.stats.year_div_gross);
+
+        // Stage 05 — archive PFIC MTM JPY income for N-1 Japan resident-tax hand-off.
+        self.state.pfic_mtm_jpy_history.insert(prev_yr, self.state.stats.year_pfic_mtm_income_jpy);
 
         // Schedule Japan resident tax and NHI installments for the current year.
         if self.state.date >= self.cfg.retirement_date {
@@ -572,8 +576,13 @@ impl SimulationController {
             age_on(birth, dec31_prev) < 18
         }).count() as u32;
 
+        // Stage 05 — PFIC MTM income from non-NISA/iDeCo accounts is taxable in Japan
+        // as investment income (雑所得). Add it to the salary base for resident tax.
+        let pfic_mtm_jpy = self.state.pfic_mtm_jpy_history.get(&prev_year).copied().unwrap_or(0.0);
+        let gross_salary_with_pfic = gross_salary + pfic_mtm_jpy;
+
         let tax_bill = JapanTaxEngine::calculate_resident_tax(
-            gross_salary, gross_pension, soc_ins_paid, age, num_dependents,
+            gross_salary_with_pfic, gross_pension, soc_ins_paid, age, num_dependents,
             self.japan_tax_rates.income_rate, self.japan_tax_rates.per_capita_jpy,
         );
 
@@ -774,11 +783,18 @@ impl SimulationController {
         } else {
             0.0
         };
-        // V7.5 — Feature 1: Aggregate §1296 MTM gains as ordinary income (not LTCG).
-        let pfic_mtm_usd = crate::engine::tax::pfic::aggregate_pfic_mtm_income(
-            &mut self.state.accounts,
-        );
+        // Stage 05 — §1296 MTM: dual-currency gain, carry-forward, drift monitoring.
+        let fx = self.state.current_fx;
+        let (pfic_mtm_usd, pfic_mtm_jpy, pfic_drift_warnings) =
+            crate::engine::tax::pfic::aggregate_pfic_mtm_income(
+                &mut self.state.accounts,
+                fx,
+                self.cfg.track_pfic_basis_drift,
+                yr,
+            );
         self.state.stats.year_pfic_mtm_income_usd = pfic_mtm_usd;
+        self.state.stats.year_pfic_mtm_income_jpy = pfic_mtm_jpy;
+        self.state.pfic_basis_drift_warnings.extend(pfic_drift_warnings);
 
         // Stage 02 — §6013(g) NRA spouse income pooling.
         // When the NRA spouse elected to be treated as a US resident, all of their
@@ -1047,6 +1063,10 @@ impl SimulationController {
             },
             pre_shock_net_worth_jpy:  self.state.shock_pre_net_worth_jpy,
             post_shock_net_worth_jpy: self.state.shock_post_net_worth_jpy,
+
+            // Stage 05 — PFIC MTM phantom income reporting.
+            pfic_mtm_income_usd: s.year_pfic_mtm_income_usd,
+            pfic_mtm_income_jpy: s.year_pfic_mtm_income_jpy,
         });
     }
 

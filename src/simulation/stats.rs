@@ -87,6 +87,9 @@ pub struct AnnualStats {
     /// V7.5 — PFIC §1296 mark-to-market gain for the year (USD).
     /// Taxed as ordinary income; NOT FEIE-eligible (passive income, §911(d)(2)).
     pub year_pfic_mtm_income_usd: f64,
+    /// Stage 05 — PFIC §1296 MTM gain in JPY (non-Japan-tax-advantaged accounts only).
+    /// Added to Japan resident-tax income base in the N-1 hand-off.
+    pub year_pfic_mtm_income_jpy: f64,
     /// V7.6 — PFIC-flagged capital-gains distributions (ordinary, passive basket).
     /// Distinct from MTM: this is pass-through CGD from a §1296-flagged fund.
     /// Accumulated by the dividend handler; consumed at year-end true-up.

@@ -97,6 +97,9 @@ pub enum PficRegime {
     NotPfic,
     /// IRC §1296 — annual mark-to-market; FMV − basis taxed as ordinary income.
     Mtm,
+    /// IRC §1295 — qualified electing fund; pass-through of income and gains.
+    /// Avoids §1291 excess-distribution stacking but requires annual PFIC statement.
+    Qef,
     /// IRC §1291 — default excess distribution treatment.
     /// Out-of-scope for V7.5 (flag and warn; no multi-year reconstruction).
     ExcessDistribution,
@@ -210,6 +213,19 @@ pub struct Asset {
     /// Initialized to cost basis per share on the first MTM mark.
     #[serde(default)]
     pub pfic_prior_year_fmv_per_share: f64,
+    /// Stage 05 — JPY-denominated prior-year FMV per share (mirrors the USD field).
+    /// Used by the drift cross-check: if abs(usd_basis×fx − jpy_basis)/jpy_basis > 1%,
+    /// a PficDriftWarning is emitted and the JPY basis is reset.
+    #[serde(default)]
+    pub pfic_prior_year_fmv_per_share_jpy: f64,
+    /// Stage 05 — §1296(d) MTM loss carry-forward (USD, unsigned magnitude).
+    /// Applied against future MTM gains before reporting; never goes negative.
+    #[serde(default)]
+    pub pfic_mtm_loss_carryforward_usd: f64,
+    /// Stage 05 — Year the §1295 QEF election was made.
+    /// Stored for audit; QEF income routing is a V1 placeholder.
+    #[serde(default)]
+    pub pfic_qef_election_year: Option<i32>,
     /// V7.6 — Asset classification (Stock / Etf / MutualFund / Other).
     /// Defaults to Stock for backward compatibility with pre-V7.6 configs.
     #[serde(default)]
@@ -240,6 +256,9 @@ impl Asset {
             dividend_currency: DividendCurrency::Usd,
             pfic_regime: PficRegime::NotPfic,
             pfic_prior_year_fmv_per_share: 0.0,
+            pfic_prior_year_fmv_per_share_jpy: 0.0,
+            pfic_mtm_loss_carryforward_usd: 0.0,
+            pfic_qef_election_year: None,
             asset_class: AssetClass::Stock,
             return_profile: None,
             lots: Vec::new(),

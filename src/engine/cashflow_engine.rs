@@ -433,6 +433,8 @@ mod tests {
             monthly_dependent_precision: true,
             // Stage 04 defaults
             shock_ordering: crate::models::config::ShockOrdering::DepreciateThenReprice,
+            // Stage 05 defaults
+            track_pfic_basis_drift: true,
         }
     }
 

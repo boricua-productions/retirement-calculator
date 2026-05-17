@@ -160,6 +160,7 @@ fn shock_config(ordering: ShockOrdering) -> Config {
         spouse_japan_misc_income_jpy: 0.0,
         monthly_dependent_precision: true,
         shock_ordering: ordering,
+        track_pfic_basis_drift: true,
     }
 }
 
@@ -181,6 +182,9 @@ fn taxable_vti_100k() -> Account {
         dividend_currency: DividendCurrency::Usd,
         pfic_regime: PficRegime::NotPfic,
         pfic_prior_year_fmv_per_share: 0.0,
+        pfic_prior_year_fmv_per_share_jpy: 0.0,
+        pfic_mtm_loss_carryforward_usd: 0.0,
+        pfic_qef_election_year: None,
         asset_class: AssetClass::Etf,
         return_profile: None,
         lots: Vec::new(),

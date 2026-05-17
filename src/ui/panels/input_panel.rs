@@ -54,6 +54,9 @@ pub struct PositionRow {
     // ── V7.6 — Asset classification & detailed return profile ──────────────────
     /// "Stock" | "ETF" | "MutualFund" | "Other".
     pub asset_class:          String,
+    // ── Stage 05 — PFIC regime ─────────────────────────────────────────────────
+    /// "NotPfic" | "Mtm" | "Qef" | "ExcessDistribution".
+    pub pfic_regime:          String,
     /// When true, the component-wise return profile drives the engine instead of
     /// the single legacy `growth_pct` + flat dividend yield.
     pub use_detailed_profile: bool,
@@ -89,6 +92,7 @@ impl Default for PositionRow {
             mgmt_expanded:        false,
             rebalance_date:       String::new(),
             asset_class:          "Stock".into(),
+            pfic_regime:          "NotPfic".into(),
             use_detailed_profile: false,
             profile_expanded:     false,
             cap_growth_pct:        String::new(),
@@ -342,6 +346,8 @@ pub struct InputPanelState {
     pub annual_gift_jpy_per_recipient: String,
     pub gift_recipient_count: String,
     pub us_gift_exclusion_usd: String,
+    // ── Stage 05 — PFIC Basis Drift Monitor ──────────────────────────────────
+    pub track_pfic_basis_drift: bool,
     // ── Source ───────────────────────────────────────────────────────────────
     pub source_json: Option<Value>,
     pub source_path: Option<String>,
@@ -453,6 +459,7 @@ impl Default for InputPanelState {
             annual_gift_jpy_per_recipient: "1100000".into(),
             gift_recipient_count:          "0".into(),
             us_gift_exclusion_usd:         "19000".into(),
+            track_pfic_basis_drift:        true,
             source_json:  Some(blank_json),
             source_path:  None,
             reload_path:  None,
@@ -593,6 +600,12 @@ impl InputPanelState {
                     "other" | "Other"                       => "Other",
                     _                                       => "Stock",
                 }.to_string();
+                let pfic_regime = match info["pfic_regime"].as_str().unwrap_or("not_pfic") {
+                    "mtm" | "Mtm"                                   => "Mtm",
+                    "qef" | "Qef"                                   => "Qef",
+                    "excess_distribution" | "ExcessDistribution"    => "ExcessDistribution",
+                    _                                               => "NotPfic",
+                }.to_string();
                 let profile = &info["return_profile"];
                 let use_detailed_profile = profile.is_object();
                 let pct_from_frac = |k: &str| -> String {
@@ -603,7 +616,7 @@ impl InputPanelState {
                 rows.push(PositionRow {
                     ticker: ticker.clone(), units, unit_value, cost_basis, growth_pct, volatility_pct,
                     drip_enabled, drip_reinvest_ticker,
-                    asset_class,
+                    asset_class, pfic_regime,
                     use_detailed_profile,
                     cap_growth_pct:     pct_from_frac("cap_growth"),
                     nav_growth_pct:     pct_from_frac("nav_growth"),
@@ -1004,6 +1017,7 @@ impl InputPanelState {
             annual_gift_jpy_per_recipient: num_str("annual_gift_jpy_per_recipient", "1100000"),
             gift_recipient_count:          num_str("gift_recipient_count",          "0"),
             us_gift_exclusion_usd:         num_str("us_gift_exclusion_usd",         "19000"),
+            track_pfic_basis_drift: sets["track_pfic_basis_drift"].as_bool().unwrap_or(true),
             source_json: Some(json.clone()),
             source_path: Some(path.to_string()),
             reload_path: None,
@@ -1125,6 +1139,7 @@ impl InputPanelState {
             set_f64!("nhi_spike_monthly_jpy", self.nhi_first_year_monthly_jpy);
             set_str!("rsu_tax_handling", self.rsu_tax_handling);
             set_bool!("rsu_sell_to_cover_realism", self.rsu_sell_to_cover_realism);
+            set_bool!("track_pfic_basis_drift", self.track_pfic_basis_drift);
             set_bool!("monthly_dependent_precision", self.monthly_dependent_precision);
             set_f64_or_na!("fers_monthly_payment_usd", self.fers_monthly_usd);
             set_u64!("fers_start_age",   self.fers_start_age);
@@ -1498,6 +1513,17 @@ impl InputPanelState {
                             _            => "stock",
                         };
                         pos.insert("asset_class".into(), Value::String(class_snake.into()));
+
+                        // Stage 05 — persist PFIC regime (omit key when not a PFIC).
+                        if row.pfic_regime != "NotPfic" {
+                            let regime_snake = match row.pfic_regime.as_str() {
+                                "Mtm"               => "mtm",
+                                "Qef"               => "qef",
+                                "ExcessDistribution" => "excess_distribution",
+                                _                   => "not_pfic",
+                            };
+                            pos.insert("pfic_regime".into(), Value::String(regime_snake.into()));
+                        }
 
                         if row.use_detailed_profile {
                             let mut prof = serde_json::Map::new();
@@ -1999,6 +2025,18 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             UsTaxStrategy::FtcOnly    => "Standard: Japan-First FTC credits resident tax against US federal liability.",
             UsTaxStrategy::FeieAndFtc => "Simulation computes both paths and uses the lower-tax result. 2026 FEIE limit: $126,500.",
         }).small().color(Color32::GRAY));
+        ui.add_space(4.0);
+
+        // Stage 05 — PFIC basis drift monitor toggle
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut state.track_pfic_basis_drift, "☑ Track PFIC Basis Drift (Recommended)")
+                .on_hover_text(
+                    "When enabled, the engine cross-checks each PFIC asset's JPY basis each year \
+                     against USD basis × current FX rate. If drift exceeds 1%, it self-heals the \
+                     JPY basis and logs a warning in the audit report. Disable only for \
+                     apples-to-apples comparisons where you want a frozen FX basis."
+                );
+        });
         ui.add_space(8.0);
 
         // ── US Tax Filing Status ─────────────────────────────────────────────────
@@ -2483,6 +2521,33 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                                 ui.selectable_value(&mut pos.asset_class, "MutualFund".into(),  "Mutual Fund");
                                                 ui.selectable_value(&mut pos.asset_class, "Other".into(),       "Other");
                                             });
+
+                                        // ── Stage 05 — PFIC regime dropdown ──────────────────────
+                                        egui::ComboBox::from_id_salt(("pfic", acct_idx, pos_idx))
+                                            .selected_text(match pos.pfic_regime.as_str() {
+                                                "Mtm"                => "§1296 MTM",
+                                                "Qef"                => "§1295 QEF",
+                                                "ExcessDistribution" => "§1291 XD",
+                                                _                    => "Not PFIC",
+                                            })
+                                            .width(90.0)
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut pos.pfic_regime, "NotPfic".into(),            "Not a PFIC");
+                                                ui.selectable_value(&mut pos.pfic_regime, "Mtm".into(),                "§1296 MTM");
+                                                ui.selectable_value(&mut pos.pfic_regime, "Qef".into(),                "§1295 QEF");
+                                                ui.selectable_value(&mut pos.pfic_regime, "ExcessDistribution".into(), "§1291 Excess Dist.");
+                                            })
+                                            .response
+                                            .on_hover_text(
+                                                "PFIC Regime (US persons holding non-US mutual funds)\n\n\
+                                                 If you hold a Japanese mutual fund and you're a US citizen, \
+                                                 you owe US tax on the year-end paper gain even if you didn't sell anything.\n\n\
+                                                 Not a PFIC — standard equity treatment.\n\
+                                                 §1296 MTM — Mark-to-Market: annual phantom income taxed as ordinary (recommended).\n\
+                                                 §1295 QEF — Qualified Electing Fund: requires annual QEF statement from fund.\n\
+                                                 §1291 Excess Dist. — Default punitive regime with penalty interest."
+                                            );
+
                                         let prof_label = if pos.use_detailed_profile {
                                             if pos.profile_expanded { "📊 Detail ▾" } else { "📊 Detail" }
                                         } else {
