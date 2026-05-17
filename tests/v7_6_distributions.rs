@@ -54,6 +54,7 @@ fn base_asset(ticker: &str) -> Asset {
         pfic_qef_election_year: None,
         asset_class: AssetClass::default(),
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: Vec::new(),
     }
 }

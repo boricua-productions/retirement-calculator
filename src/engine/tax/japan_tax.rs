@@ -175,6 +175,56 @@ impl JapanTaxEngine {
         ResidentTaxTransitionResult { taxable_income: taxable, tax_bill }
     }
 
+    /// Stage 09 — Calculates Japan miscellaneous income tax (雑所得) for cryptocurrency.
+    ///
+    /// Crypto gains in Japan are taxed as miscellaneous income at the taxpayer's
+    /// marginal ordinary-income rate (up to 55% including resident tax), NOT at the
+    /// standard 20.315% capital-gains rate.
+    ///
+    /// This function applies the marginal rate directly to the gain amount.
+    /// `marginal_rate` should be the combined national + resident tax rate for the
+    /// taxpayer's bracket (e.g., 0.40 for 40%, 0.55 for the top 55% bracket).
+    pub fn miscellaneous_income_tax_jpy(amount_jpy: f64, marginal_rate: f64) -> f64 {
+        if amount_jpy <= 0.0 {
+            return 0.0;
+        }
+        amount_jpy * marginal_rate
+    }
+
+    /// Stage 09 — Estimates the Japan marginal tax rate based on taxable income.
+    ///
+    /// Combines national income tax + reconstruction surcharge + resident tax.
+    /// Brackets (national income tax, 2024):
+    ///   ≤ ¥1.95M  → 5%   | total ~15% (+ resident 10% = 15%)
+    ///   ≤ ¥3.3M   → 10%  | total ~20% (+ resident 10% = 20%)
+    ///   ≤ ¥6.95M  → 20%  | total ~30% (+ resident 10% = 30%)
+    ///   ≤ ¥9M     → 23%  | total ~33% (+ resident 10% = 33%)
+    ///   ≤ ¥18M    → 33%  | total ~43% (+ resident 10% = 43%)
+    ///   ≤ ¥40M    → 40%  | total ~50% (+ resident 10% = 50%)
+    ///   > ¥40M    → 45%  | total ~55% (+ resident 10% = 55%)
+    ///
+    /// Returns the combined marginal rate (fraction, e.g., 0.40 for 40%).
+    pub fn estimate_marginal_rate(taxable_income_jpy: f64) -> f64 {
+        // National income tax brackets (with 2.1% reconstruction surcharge).
+        let national_rate = if taxable_income_jpy <= 1_950_000.0 {
+            0.05
+        } else if taxable_income_jpy <= 3_300_000.0 {
+            0.10
+        } else if taxable_income_jpy <= 6_950_000.0 {
+            0.20
+        } else if taxable_income_jpy <= 9_000_000.0 {
+            0.23
+        } else if taxable_income_jpy <= 18_000_000.0 {
+            0.33
+        } else if taxable_income_jpy <= 40_000_000.0 {
+            0.40
+        } else {
+            0.45
+        };
+        // Apply 2.1% reconstruction surcharge and add 10% resident tax.
+        national_rate * 1.021 + 0.10
+    }
+
     /// Estimates annual NHI (National Health Insurance) premiums based on FERS income.
     /// Uses the Sagamihara City 3-step discount tier system.
     ///

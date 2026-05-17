@@ -165,6 +165,8 @@ fn base_cfg() -> Config {
         // Stage 08 defaults
         mc_use_correlated_paths: false,
         mc_correlation_matrix: std::collections::HashMap::new(),
+        // Stage 09 defaults
+        crypto_tax_enabled: true,
     }
 }
 
@@ -196,6 +198,7 @@ fn state_with_roth(date: NaiveDate) -> SimState {
         pfic_qef_election_year: None,
         asset_class: AssetClass::default(),
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: vec![],
     });
 

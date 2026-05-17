@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.9.8: Correlated Monte Carlo Edition
+# Retirement Calculator — V7.9.9: Cryptocurrency Tax Engine Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.9.8 — Correlated Monte Carlo)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.9.9 — Cryptocurrency Tax Engine)
 ---
 
 ## Beginner Quick Start
@@ -150,6 +150,30 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | **Structure Type** | `Wood`, `Rc` (reinforced concrete), `Steel`, `Residential`, or `Commercial`. Selects the applicable depreciation life. |
 
 HELOC draws are sized to the minimum of (available credit, cash gap needed). The FX spread penalty (`fx_spread_penalty`, default 0.5%) is applied on every draw, consistent with other USD→JPY conversion tiers. Outstanding HELOC balance accumulates in simulation state and is reported in the annual snapshot as `outstanding_heloc_usd`.
+
+#### Cryptocurrency *(Stage 09)*
+
+Japan taxes cryptocurrency gains as **miscellaneous income (雑所得)** at the taxpayer's marginal ordinary-income rate — up to **55%** including resident tax — NOT at the standard 20.315% capital-gains rate. The US treats crypto as property, taxing long-term gains at 0/15/20% LTCG rates (>12 month holding period) or ordinary rates for short-term gains.
+
+This tax-bracket mismatch is the worst in the entire US-Japan dual-tax model. For a Japan-resident US citizen who sells $100k of crypto gains, Japan imposes ~50% tax on the entire gain while the US credits only the LTCG portion — the Japan excess is not creditable, creating a severe FTC mismatch.
+
+**Toggle:** `Enable Crypto Tax Engine` (default: on). When enabled:
+- Assets marked as `Crypto` in the Asset Class dropdown route Japan gains through miscellaneous-income tax at the marginal rate (estimated from year-to-date income).
+- US side continues to use standard LTCG/STCG treatment based on holding period.
+- Disabling reverts to the legacy "treat crypto like an ETF" approximation (20.315% Japan cap-gains).
+
+| Field | What it is for |
+|-------|----------------|
+| **Asset Class: Crypto** | Per-position dropdown option. When selected, the asset is taxed under Japan's miscellaneous-income regime (up to 55%) instead of the standard 20.315% capital-gains rate. Available on every account type that uses the positions table. |
+| **Staking APR %** | Annual staking yield % for crypto assets. Treated as ordinary income in both jurisdictions at FMV on receipt (IRS Notice 2014-21; Japan NTA alignment). Zero for non-crypto assets. |
+
+**Why this matters:**
+- A $10k crypto gain in the 40% marginal bracket costs ~¥600k in Japan tax vs ~¥300k if it were an ETF.
+- Tax-loss harvesting (TLH) is still useful for crypto, but the IRC §1091 wash-sale rule does NOT apply to cryptocurrency in the US (IRS Notice 2014-21 treats crypto as property but not a "security"). The TLH handler continues to enforce the wash-sale check for all assets including crypto to maintain conservative compliance; crypto-specific bypass can be added if desired.
+
+**Overview Tab:** When crypto is enabled, a "Crypto Tax Mismatch (Japan − US)" line shows how much extra Japan tax your crypto exposure is generating. The line appears in red when the value exceeds ¥1M/year.
+
+**NTA Position:** The National Tax Agency explicitly treats virtual currency (暗号資産) as miscellaneous income under Income Tax Act Article 35. See the [NTA FAQ on virtual currency taxation](https://www.nta.go.jp/taxes/shiraberu/taxanswer/shotoku/1524.htm).
 
 #### Estate Planning *(V7.9.7)*
 
@@ -283,7 +307,7 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 ## V7.5–V7.6 Strategic Hardening — Cost Basis, Liquidation, and Compliance
 
-The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), and V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect).
+The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), and V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%).
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -388,6 +412,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **Stage 09** | Cryptocurrency Tax Engine — **Japan miscellaneous-income treatment**: Crypto gains taxed at marginal ordinary-income rate (up to 55% including resident tax) instead of the standard 20.315% capital-gains rate. **US property treatment**: Standard LTCG/STCG based on holding period (>12 months = LTCG at 0/15/20%; ≤12 months = ordinary rates). **Marginal rate estimation**: Dynamic calculation from year-to-date income (FERS + Nenkin) to determine Japan tax bracket. **Asset classification**: New `Crypto` variant in `AssetClass` enum; `is_crypto()` helper method. **Toggle**: `crypto_tax_enabled: bool` (default `true`) enables/disables the crypto tax engine; when disabled, reverts to legacy cap-gains treatment. **TLH documentation**: IRC §1091 wash-sale rule does NOT apply to cryptocurrency (IRS Notice 2014-21), but handler conservatively enforces check. 4 new unit tests; all 31 existing tests passing. |
 | **Stage 08** | Correlated Monte Carlo — **Historical safe-haven yen effect**: Models negative correlation (ρ = -0.40) between US equity and USD/JPY to accurately capture how JPY-resident retirees experience equity crashes. **Cholesky decomposition** transforms independent normal draws into correlated multivariate draws across US equity, Japan equity, USD/JPY, and US bonds using historical 2000-2024 correlation matrix. **Narrower JPY confidence bands**: Correlated paths produce ~28% narrower p10-p90 bands than independent paths (¥14.1B vs ¥19.6B in 40-year test), eliminating systematic overstatement of downside risk. **Matrix validation**: `CorrelationMatrix::validate()` checks symmetry and PSD; nearest-PSD correction applies when user matrix fails. **Configuration**: `mc_use_correlated_paths: bool` + `mc_correlation_matrix: HashMap<String, HashMap<String, f64>>` in JSON. **Backward compatible**: when disabled or empty, falls back to V7.5 independent-paths baseline. 9 new acceptance tests; 109 total tests passing. |
 | **Stage 07** | Estate Planning — **Japan Sōzoku-zei (相続税)**: NTA 8-bracket marginal table (10%–55%) applied per heir on each heir's taxable share after the basic exclusion (¥30M + ¥6M × heir count); spousal ½ deduction (配偶者の税額軽減) applied before attribution. **US Estate Tax**: pre-2026 TCJA exclusion (~$13.61M) sunsets to ~$7M in 2026; 40% flat rate above threshold. **US-Japan Treaty (2004) Art. 6 pro-rata credit** prevents double taxation by crediting the Japan tax proportional to Japan-situs assets. **Lifetime Gifting Optimiser**: computes optimal 暦年贈与 (¥1.1M/recipient/yr) and §2503(b) ($19k/recipient/yr) pre-death transfers to reduce taxable estate, reporting projected annual gift amounts and estimated tax reduction. **Overview panel** shows a "Wealth Transferred to Heirs" grid (gross estate, Japan tax, US tax, treaty credit, net to heirs) when `enable_estate_planning: true`. 13 new acceptance tests; all tests passing. |
 | **V7.9** | PFIC MTM Phantom Income & FX Drift (Stage 05) — **`track_pfic_basis_drift: bool`** (default `true`) enables an annual cross-check of each PFIC-flagged asset's USD × FX basis against its stored JPY basis; when drift exceeds 1% the engine self-heals by recomputing the JPY basis from first principles and emits a `PficDriftWarning`. **§1296(d) loss carry-forward** is now a real ledger entry (`pfic_mtm_loss_carryforward_usd` on `Asset`): loss years bank the absolute loss; gain years draw it down before any ordinary income is reported. **Dual-currency MTM result** (`MtmGainResult { usd, jpy }`) feeds Japan resident-tax base for non-NISA/iDeCo accounts. **Per-position PFIC Regime dropdown** in the input panel (`Not PFIC` / `§1296 MTM` / `§1295 QEF` / `§1291 Excess Dist.`). **Overview tab** shows a `PFIC §1296 MTM Drag` row with lifetime phantom income and drift-event count when any MTM asset is present. **`AnnualSnapshot`** gains `pfic_mtm_income_usd` and `pfic_mtm_income_jpy`. 3 new acceptance tests. **Real Estate & Mortgage Amortization (Stage 06)** — `RealEstateHolding` model with analytical mortgage amortization (`monthly_pi_payment`, `mortgage_balance`), rental income routing (JPY→Tier 0, USD→Tier 4), HELOC draw (**Tier 7.5** in the defensive waterfall) gated by `enable_heloc_tier: bool`, annual depreciation, and HELOC/equity/rental aggregates on `AnnualSnapshot`. 9 new acceptance tests; 163/163 tests passing. |
@@ -426,7 +451,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V7.9)](#16-hardening--compliance-v75--v79)
+16. [Hardening & Compliance (V7.5 → V7.9.9)](#16-hardening--compliance-v75--v799)
 
 ---
 
@@ -1519,6 +1544,7 @@ cargo test
 | `tests/v7_9_pfic_mtm_drift.rs` *(V7.9)* | 3 | 30-year PFIC §1296 MTM simulation with FX drift produces zero drift warnings when `track_pfic_basis_drift=true` and MTM income is positive (A), §1296(d) loss carry-forward absorbs subsequent gains — partial-gain year absorbed fully, residual gain in third year (B), drift warnings suppressed when `track_pfic_basis_drift=false` (C) |
 | `tests/real_estate_test.rs` *(V7.9 Stage 06)* | 9 | Analytical mortgage amortization P&I correctness (A), empty portfolio no-op (B), rental income routing JPY/USD (C), HELOC availability gated by `enable_heloc_tier` (D) |
 | `tests/stage_08_correlated_mc.rs` *(V7.9.8)* | 9 | Cholesky decomposition identity matrix (A), 2×2 known reference (B), non-symmetric rejection (C), wrong-diagonal rejection (D), historical 2000-2024 matrix validation (E), correlated vs independent JPY bands — safe-haven yen effect produces ~28% narrower confidence band (F), 4-asset correlated smoke test (G), invalid matrix fallback (H), nearest-PSD correction (I) |
+| `tests/stage_09_crypto_test.rs` *(V7.9.9)* | 4 | Crypto Japan misc-income tax vs legacy cap-gains (¥502k vs ¥305k for $10k gain at 33% marginal) (A), US STCG/LTCG treatment for crypto (B), Asset `is_crypto()` identification (C), Marginal rate estimation at various income brackets (15% / 30% / 44% / 56%) (D) |
 
 ---
 
@@ -1755,7 +1781,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V7.9)
+## 16. Hardening & Compliance (V7.5 → V7.9.9)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed

@@ -172,6 +172,8 @@ fn shock_config(ordering: ShockOrdering) -> Config {
         // Stage 08 defaults
         mc_use_correlated_paths: false,
         mc_correlation_matrix: std::collections::HashMap::new(),
+        // Stage 09 defaults
+        crypto_tax_enabled: true,
     }
 }
 
@@ -198,6 +200,7 @@ fn taxable_vti_100k() -> Account {
         pfic_qef_election_year: None,
         asset_class: AssetClass::Etf,
         return_profile: None,
+        crypto_staking_apr: 0.0,
         lots: Vec::new(),
     };
     // 1000 shares at $80/share basis

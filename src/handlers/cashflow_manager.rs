@@ -827,22 +827,35 @@ pub fn v7_liquidate_for_deficit(state: &mut SimState, cfg: &Config) {
     for ticker in sorted_tickers {
         if state.bridge_fund_usd >= 0.0 { break; }
 
-        let (price, jpy_basis_per_share, usd_basis_per_share, available_qty) = {
+        let (price, jpy_basis_per_share, usd_basis_per_share, available_qty, is_crypto) = {
             let asset = match state.accounts.get("Taxable").and_then(|a| a.assets.get(&ticker)) {
                 Some(a) if a.qty() > 0.0 && a.price > 0.0 => a,
                 _ => continue,
             };
             let q = asset.qty();
-            (asset.price, asset.jpy_basis_per_share(fx), asset.basis() / q, q)
+            (asset.price, asset.jpy_basis_per_share(fx), asset.basis() / q, q, asset.is_crypto())
         };
 
         let jpy_proceeds_per_share = price * fx;
         let jpy_gain_per_share     = jpy_proceeds_per_share - jpy_basis_per_share;
         let usd_gain_per_share     = (price - usd_basis_per_share).max(0.0);
 
-        // V7.5 — Defect 1.1: preserve signed JPY gain for loss carry-forward tracking.
+        // Stage 09 — Crypto-aware Japan tax. Crypto gains are taxed as miscellaneous
+        // income at the marginal rate (up to 55%) when crypto_tax_enabled; otherwise
+        // standard 20.315% capital-gains rate applies.
         let japan_tax_per_share_jpy = if jpy_gain_per_share >= 0.0 {
-            jpy_gain_per_share * JAPAN_CAPITAL_GAINS_RATE
+            if cfg.crypto_tax_enabled && is_crypto {
+                // Estimate marginal rate from current taxable income (simplified).
+                // For a more accurate estimate, we'd sum year-to-date income, but
+                // this per-share approximation is sufficient for real-time liquidation.
+                let fers_jpy = state.stats.year_fers_gross * fx;
+                let marginal_rate = crate::engine::tax::japan_tax::JapanTaxEngine::estimate_marginal_rate(
+                    fers_jpy + state.stats.year_nenkin_income_jpy
+                );
+                jpy_gain_per_share * marginal_rate
+            } else {
+                jpy_gain_per_share * JAPAN_CAPITAL_GAINS_RATE
+            }
         } else {
             0.0
         };
@@ -869,10 +882,18 @@ pub fn v7_liquidate_for_deficit(state: &mut SimState, cfg: &Config) {
         let shares_sold    = gain.proceeds / price;
         let jpy_basis_sold = shares_sold * jpy_basis_per_share;
         let jpy_proceeds   = gain.proceeds * fx;
-        // V7.5 — Defect 1.1: preserve signed JPY gain; accumulate losses for carry-forward.
+        // Stage 09 — Defect 1.1: preserve signed JPY gain; accumulate losses for carry-forward.
         let jpy_gain_signed = jpy_proceeds - jpy_basis_sold;
         let japan_tax_jpy  = if jpy_gain_signed >= 0.0 {
-            jpy_gain_signed * JAPAN_CAPITAL_GAINS_RATE
+            if cfg.crypto_tax_enabled && is_crypto {
+                let fers_jpy = state.stats.year_fers_gross * fx;
+                let marginal_rate = crate::engine::tax::japan_tax::JapanTaxEngine::estimate_marginal_rate(
+                    fers_jpy + state.stats.year_nenkin_income_jpy
+                );
+                jpy_gain_signed * marginal_rate
+            } else {
+                jpy_gain_signed * JAPAN_CAPITAL_GAINS_RATE
+            }
         } else {
             state.stats.year_japan_cap_loss_jpy += jpy_gain_signed.abs();
             0.0
