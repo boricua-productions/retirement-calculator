@@ -26,9 +26,9 @@ use retirement_calculator::models::assets::{
     Account, AccountJurisdiction, AccountLocation, Asset, AssetCategory, Currency, DividendCurrency,
 };
 use retirement_calculator::models::config::{
-    Config, FamilyUnit, NhiModel, RsuSellToCoverPolicy, SpouseProfile, TaxProtocol, TaxRules,
-    VaDependentStatus, WithdrawalRegime, WithdrawalStrategy, WaterfallStrategy, UsTaxStrategy,
-    InvestmentLocation,
+    Config, FamilyUnit, NhiModel, RsuSellToCoverPolicy, ShockOrdering, SpouseProfile, TaxProtocol,
+    TaxRules, VaDependentStatus, WithdrawalRegime, WithdrawalStrategy, WaterfallStrategy,
+    UsTaxStrategy, InvestmentLocation,
 };
 use retirement_calculator::models::rsu::{RsuAward, VestingCadence};
 use retirement_calculator::simulation::state::SimState;
@@ -171,6 +171,8 @@ fn stc_config(realism: bool) -> Config {
         spouse_japan_misc_income_jpy: 0.0,
         // Stage 03 defaults
         monthly_dependent_precision: true,
+        // Stage 04 defaults
+        shock_ordering: ShockOrdering::DepreciateThenReprice,
     }
 }
 

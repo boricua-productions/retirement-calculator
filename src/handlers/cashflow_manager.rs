@@ -1075,6 +1075,15 @@ fn liquidate_for_jpy_gap(
     fx: f64,
     penalty: f64,
 ) -> f64 {
+    // Stage 04: when both recession and FX shock fired this year, the FX rate used
+    // here must be the post-shock rate (state.current_fx was already updated by
+    // apply_year_shocks before any monthly cashflow runs). Verify the caller
+    // forwards the live state FX and not a stale cached value.
+    debug_assert!(
+        (fx - state.current_fx).abs() < 1e-6 || state.shock_pre_net_worth_jpy.is_none(),
+        "liquidate_for_jpy_gap: fx={fx} differs from post-shock state.current_fx={}. \
+         Tier 8 must use the post-shock FX rate.", state.current_fx
+    );
     let needed_usd = gap_jpy / (fx * (1.0 - penalty).max(f64::EPSILON));
     state.bridge_fund_usd -= needed_usd;
     v7_liquidate_for_deficit(state, cfg);

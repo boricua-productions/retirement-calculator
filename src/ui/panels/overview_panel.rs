@@ -97,6 +97,19 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
                 ui.end_row();
             }
 
+            // Stage 04 — Show pre/post shock net-worth rows for any shock year.
+            let shock_years: Vec<_> = res.annual_summary.iter()
+                .filter(|s| s.pre_shock_net_worth_jpy.is_some())
+                .collect();
+            for snap in &shock_years {
+                if let (Some(pre), Some(post)) = (snap.pre_shock_net_worth_jpy, snap.post_shock_net_worth_jpy) {
+                    ui.label(RichText::new(format!("{} Dual-Shock:", snap.year)).strong().color(Color32::YELLOW));
+                    ui.label(RichText::new(format!("Pre ¥{:.0} → Post ¥{:.0}", pre, post))
+                        .color(Color32::YELLOW));
+                    ui.end_row();
+                }
+            }
+
             ui.label(RichText::new("Tax Jurisdiction:").strong());
             ui.label(res.tax_jurisdiction.to_string());
             ui.end_row();

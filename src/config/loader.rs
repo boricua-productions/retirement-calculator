@@ -722,6 +722,13 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
 
         // ── Stage 03: Monthly Dependent Precision ─────────────────────────────
         monthly_dependent_precision: get_bool("monthly_dependent_precision", true),
+
+        // ── Stage 04: Shock Application Order ────────────────────────────────
+        shock_ordering: match sets["shock_ordering"].as_str().unwrap_or("depreciate_then_reprice") {
+            "reprice_then_depreciate" => crate::models::config::ShockOrdering::RepriceThenDepreciate,
+            "simultaneous"            => crate::models::config::ShockOrdering::Simultaneous,
+            _                         => crate::models::config::ShockOrdering::DepreciateThenReprice,
+        },
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────

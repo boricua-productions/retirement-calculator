@@ -130,6 +130,13 @@ pub struct SimState {
     pub unpaid_rsu_tax_liability_usd: f64,
     /// All RSU margin-call deficit events recorded during the simulation.
     pub rsu_sell_to_cover_warnings: Vec<RsuSellToCoverWarning>,
+
+    // ── Stage 04 — Shock ordering audit ───────────────────────────────────────────
+    /// Total portfolio net worth (JPY) captured just before any shock events fire
+    /// in a year with both a recession and an FX shock. `None` in all other years.
+    pub shock_pre_net_worth_jpy: Option<f64>,
+    /// Total portfolio net worth (JPY) captured after all shock events commit.
+    pub shock_post_net_worth_jpy: Option<f64>,
 }
 
 impl SimState {
@@ -178,6 +185,8 @@ impl SimState {
             transition_report: None,
             unpaid_rsu_tax_liability_usd: 0.0,
             rsu_sell_to_cover_warnings: Vec::new(),
+            shock_pre_net_worth_jpy: None,
+            shock_post_net_worth_jpy: None,
         }
     }
 }

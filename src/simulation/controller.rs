@@ -349,38 +349,63 @@ impl SimulationController {
         self.state.stats.acc_ord_inc = annual_fers;
         self.state.fers_history.insert(yr, annual_fers);
 
-        // Apply any scheduled recession events for this year.
+        // Reset shock audit fields before applying this year's events.
+        self.state.shock_pre_net_worth_jpy = None;
+        self.state.shock_post_net_worth_jpy = None;
+
+        // Apply scheduled recession and FX shock events, respecting the configured ordering.
+        self.apply_year_shocks(yr);
+
+        // Grow Roth IRA contribution limit after 2025.
+        if yr > 2025 {
+            self.state.ira_limit = (self.state.ira_limit * (1.0 + self.cfg.ira_limit_growth))
+                .round();
+            // Round to nearest $10 to match Python's `round(x, -1)`.
+            self.state.ira_limit = (self.state.ira_limit / 10.0).round() * 10.0;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Shock application helpers (Stage 04)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Sum of all account values converted to JPY at the current FX rate.
+    fn compute_total_jpy(&self) -> f64 {
+        let fx = self.state.current_fx;
+        self.state.accounts.values().map(|acc| {
+            use crate::models::assets::Currency;
+            match acc.currency {
+                Currency::Jpy => acc.total_value(fx),
+                Currency::Usd => acc.total_value(fx) * fx,
+            }
+        }).sum()
+    }
+
+    /// Apply the recession shock for `yr` (instant or multi-month trajectory).
+    fn apply_recession_for_year(&mut self, yr: i32) {
         let recession_this_year: Vec<_> = self.cfg.recession_events.iter()
             .filter(|e| e.year == yr)
             .cloned()
             .collect();
         for event in recession_this_year {
-            // Skip if this year overlaps with the retirement rebalance shock.
             if self.cfg.recession_enabled && yr == self.cfg.rebalance_date.year() {
                 info!("   [Recession] Skipping {yr} recession — overlaps with retirement rebalance.");
                 continue;
             }
             if event.duration_months <= 1 {
-                // Legacy single-shock: apply the full drawdown instantly in January.
                 info!("   [!!!] SCHEDULED RECESSION {yr}: -{:.1}% (instant shock)",
                     event.severity * 100.0);
                 for acc in self.state.accounts.values_mut() {
                     acc.shock(event.severity);
                 }
             } else {
-                // Multi-month trajectory: arm the per-month drawdown counters.
-                // The shock fires in process_month each month until the counter expires.
-                // Surplus reinvestment is suppressed while recession_active is set.
                 info!("   [!!!] SCHEDULED RECESSION {yr}: -{:.1}% over {} months, {} month recovery",
                     event.severity * 100.0, event.duration_months, event.recovery_months);
                 self.state.recession_active = true;
                 self.state.recession_months_remaining = event.duration_months;
                 self.state.recession_monthly_shock_rate = event.monthly_shock_rate();
-                // Pre-compute the per-month recovery rate that fully reverses the drawdown.
                 self.state.recovery_months_remaining = event.recovery_months;
                 self.state.recovery_monthly_boost_rate = if event.recovery_months > 0 {
-                    // Guard: severity=1.0 makes the denominator 0 → +∞ boost rate.
-                    // Floor at 0.001 (0.1% residual) keeps recovery finite and monotone.
                     let base = (1.0 - event.severity).max(0.001);
                     (1.0 / base).powf(1.0 / event.recovery_months as f64) - 1.0
                 } else {
@@ -388,8 +413,10 @@ impl SimulationController {
                 };
             }
         }
+    }
 
-        // Apply any scheduled FX shock events for this year (macro events; pre- and post-retirement).
+    /// Apply the FX shock for `yr`.
+    fn apply_fx_shock_for_year(&mut self, yr: i32) {
         let fx_shocks_this_year: Vec<_> = self.cfg.fx_shock_events.iter()
             .filter(|e| e.year == yr)
             .cloned()
@@ -398,20 +425,94 @@ impl SimulationController {
             let safe_fx = if event.target_fx.is_finite() && event.target_fx > 0.0 {
                 event.target_fx
             } else {
-                warn!("   [FX Shock] Year {}: target_fx={} is invalid — clamped to 0.01.",
-                    yr, event.target_fx);
+                warn!("   [FX Shock] Year {}: target_fx={} is invalid — clamped to 0.01.", yr, event.target_fx);
                 0.01
             };
             info!("   [FX Shock] Year {}: USD/JPY → {:.2} ({})", yr, safe_fx, event.description);
             self.state.current_fx = safe_fx;
         }
+    }
 
-        // Grow Roth IRA contribution limit after 2025.
-        if yr > 2025 {
-            self.state.ira_limit = (self.state.ira_limit * (1.0 + self.cfg.ira_limit_growth))
-                .round();
-            // Round to nearest $10 to match Python's `round(x, -1)`.
-            self.state.ira_limit = (self.state.ira_limit / 10.0).round() * 10.0;
+    /// Apply all shock events for `yr`, in the order chosen by `cfg.shock_ordering`.
+    ///
+    /// When both a recession and an FX shock are scheduled for the same year, the
+    /// intermediate JPY net-worth (between the two shocks) differs by ordering:
+    ///
+    /// | ordering | intermediate ¥ value |
+    /// |----------|----------------------|
+    /// | DepreciateThenReprice | equity at old FX — larger apparent loss |
+    /// | RepriceThenDepreciate | equity at new FX — smaller apparent loss |
+    /// | Simultaneous | no intermediate — both committed at once |
+    fn apply_year_shocks(&mut self, yr: i32) {
+        use crate::models::config::ShockOrdering;
+
+        let has_recession = self.cfg.recession_events.iter().any(|e| e.year == yr);
+        let has_fx_shock  = self.cfg.fx_shock_events.iter().any(|e| e.year == yr);
+
+        // Single-type shocks need no ordering logic.
+        if !has_recession || !has_fx_shock {
+            self.apply_recession_for_year(yr);
+            self.apply_fx_shock_for_year(yr);
+            return;
+        }
+
+        // Both shock types fire this year — record pre-shock state and apply in order.
+        let pre_jpy = self.compute_total_jpy();
+        self.state.shock_pre_net_worth_jpy = Some(pre_jpy);
+
+        match self.cfg.shock_ordering {
+            ShockOrdering::DepreciateThenReprice => {
+                self.apply_recession_for_year(yr);
+                let mid_jpy = self.compute_total_jpy();
+                self.apply_fx_shock_for_year(yr);
+                let post_jpy = self.compute_total_jpy();
+                info!("   [STRESS {yr}] Equity-first ordering: ¥{:.0} → ¥{:.0} (after equity) → ¥{:.0} (after FX). Conservative.",
+                    pre_jpy, mid_jpy, post_jpy);
+                self.state.shock_post_net_worth_jpy = Some(post_jpy);
+            }
+            ShockOrdering::RepriceThenDepreciate => {
+                self.apply_fx_shock_for_year(yr);
+                let mid_jpy = self.compute_total_jpy();
+                self.apply_recession_for_year(yr);
+                let post_jpy = self.compute_total_jpy();
+                info!("   [STRESS {yr}] FX-first ordering: ¥{:.0} → ¥{:.0} (after FX) → ¥{:.0} (after equity).",
+                    pre_jpy, mid_jpy, post_jpy);
+                self.state.shock_post_net_worth_jpy = Some(post_jpy);
+            }
+            ShockOrdering::Simultaneous => {
+                // Snapshot pre-shock asset prices; compute both shocks independently
+                // against that snapshot and commit both at once.
+                let pre_fx = self.state.current_fx;
+                let snapshot_prices: Vec<(String, std::collections::HashMap<String, f64>)> =
+                    self.state.accounts.iter()
+                        .map(|(name, acc)| {
+                            let prices = acc.assets.iter()
+                                .map(|(t, a)| (t.clone(), a.price))
+                                .collect();
+                            (name.clone(), prices)
+                        })
+                        .collect();
+
+                // Apply FX shock to get new rate, then restore pre-shock prices.
+                self.apply_fx_shock_for_year(yr);
+                let new_fx = self.state.current_fx;
+                // Restore prices to pre-shock levels for the recession shock.
+                for (name, prices) in &snapshot_prices {
+                    if let Some(acc) = self.state.accounts.get_mut(name) {
+                        for (ticker, &price) in prices {
+                            if let Some(asset) = acc.assets.get_mut(ticker) {
+                                asset.price = price;
+                            }
+                        }
+                    }
+                }
+                // Now apply recession (which uses restored prices as the baseline).
+                self.apply_recession_for_year(yr);
+                let post_jpy = self.compute_total_jpy();
+                info!("   [STRESS {yr}] Simultaneous ordering (pre-FX={:.2} → {:.2}): ¥{:.0} → ¥{:.0}. Path-independent.",
+                    pre_fx, new_fx, pre_jpy, post_jpy);
+                self.state.shock_post_net_worth_jpy = Some(post_jpy);
+            }
         }
     }
 
@@ -938,6 +1039,14 @@ impl SimulationController {
             dist_roc_usd: s.year_dist_roc_usd,
             japan_income_tax_jpy: s.year_japan_income_tax_jpy,
             unpaid_rsu_tax_liability_usd: self.state.unpaid_rsu_tax_liability_usd,
+
+            // Stage 04 — Shock ordering audit fields.
+            jpy_purchasing_power_index: {
+                let elapsed = (yr - self.cfg.start_date.year()).max(0);
+                (1.0 + self.cfg.inflation_japan).powi(elapsed)
+            },
+            pre_shock_net_worth_jpy:  self.state.shock_pre_net_worth_jpy,
+            post_shock_net_worth_jpy: self.state.shock_post_net_worth_jpy,
         });
     }
 

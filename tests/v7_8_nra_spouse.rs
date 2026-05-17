@@ -152,6 +152,7 @@ fn base_cfg() -> Config {
         spouse_japan_salary_jpy: 0.0,
         spouse_japan_misc_income_jpy: 0.0,
         monthly_dependent_precision: true,
+        shock_ordering: retirement_calculator::models::config::ShockOrdering::DepreciateThenReprice,
     }
 }
 

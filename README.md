@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.8.1 Mid-Year Dependent Phase-Outs Edition
+# Retirement Calculator — V7.8.2 FX Shock Ordering Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.8.1 Mid-Year Dependent Phase-Outs)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V7.8.2 FX Shock Ordering)
 ---
 
 ## Beginner Quick Start
@@ -222,6 +222,7 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | **Simulate Recession at Retirement** | Applies a one-time retirement-date portfolio shock. |
 | **Recession Severity** | Size of the shock, such as `0.20` for a 20% drawdown. |
 | **Scheduled Recessions** | Additional year/severity stress events. |
+| **Shock Application Order** *(Stage 04)* | Controls which shock is applied first when a recession and an FX shock fall in the **same calendar year**. Three options: **Equity drop first, then FX repricing** (default, conservative — JPY purchasing-power loss is shown at its largest); **FX repricing first, then equity drop** (optimistic — equity loss is denominated in the new FX, which may look smaller in JPY terms); **Simultaneous** (path-independent — recommended for stress-test comparability). The Annual Table highlights dual-shock years in yellow with a tooltip showing the pre-shock and post-shock JPY net worth. Corresponds to `shock_ordering` in JSON config (`depreciate_then_reprice` / `reprice_then_depreciate` / `simultaneous`). |
 | **Marco Polo Mode** | Runs Monte Carlo-style portfolio paths and shows P10/P50/P90 results in Compare. |
 
 #### RSU Settings
@@ -346,7 +347,8 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
-| **V7.8.1** | Mid-Year Dependent Phase-Outs (Stage 03) — **`monthly_dependent_precision: bool`** (default `true`) resolves dependent-driven income and tax at month resolution instead of annual buckets. **VA add-on** switches `WithSpouseAndChild` → `WithSpouse` at the exact monthly tick after the child's 18th birthday (no change — already month-precise; now documented and tested). **NHI per-capita** (`per_capita_medical`, `per_capita_support`, `per_capita_nursing`) uses a fractional `num_insured: f64` (e.g., `1 + 4/12 ≈ 1.333` if the child was under 18 for only 4 months); legacy path uses the NTA December-31 integer snapshot. **Jido Teate** monthly accrual was already month-precise (V7.4); now tested via the public `jido_teate_monthly_jpy` helper. **Japan resident-tax dependent deduction** (扶養控除) uses the December-31 NTA snapshot per regulation — not prorated. **RSU vesting `num_deps`** corrected from an `is_married` heuristic to an actual December-31 snapshot count of dependents under 18. **`next_12_months_income_jpy`** rolling helper sums VA, FERS, SS, SSDI, Nenkin, and Jido Teate month-by-month for the forward 12 months, capturing cliff drops in bridge-fund sizing decisions. **UI**: new checkbox in the Family Demographics section with an "upcoming drop-off" read-out. 6 new acceptance tests; 135/135 tests passing. |
+| **V7.8.2** | FX Shock Ordering (Stage 04) — **`shock_ordering`** enum (`depreciate_then_reprice` / `reprice_then_depreciate` / `simultaneous`) makes the application order deterministic when a recession event and an FX shock event fall in the **same calendar year**. **`DepreciateThenReprice`** (default, conservative) applies the equity drop first so the JPY purchasing-power loss is shown at its largest; **`RepriceThenDepreciate`** (optimistic) prices the equity loss at the new FX rate; **`Simultaneous`** snapshots both shocks and commits them path-independently for stress-test comparability. **`AnnualSnapshot`** gains `pre_shock_net_worth_jpy` and `post_shock_net_worth_jpy` (`None` in years without a combined shock). **`jpy_purchasing_power_index`** tracks cumulative Japan CPI since simulation start. **UI**: three radio buttons in the Market Simulation section with a collapsible worked numeric example ($100 k VTI, FX 145 → 80, −35% recession). **Annual Table** highlights dual-shock years in yellow with a hover tooltip showing the pre → post JPY net worth. **Overview tab** shows a `Dual-Shock:` row for each shock year. 4 new acceptance tests; 139/139 tests passing. |
+| **V7.8.1** | Mid-Year Dependent Phase-Outs (Stage 03) — **`monthly_dependent_precision: bool`** (default `true`) resolves dependent-driven income and tax at month resolution instead of annual buckets. **VA add-on** switches `WithSpouseAndChild` → `WithSpouse` at the exact monthly tick after the child's 18th birthday (no change — already month-precise; now documented and tested). **NHI per-capita** (`per_capita_medical`, `per_capita_support`, `per_capita_nursing`) uses a fractional `num_insured: f64` (e.g., `1 + 4/12 ≈ 1.333` if the child was under 18 for only 4 months); legacy path uses the NTA December-31 integer snapshot. **Jido Teate** monthly accrual was already month-precise (V7.4); now tested via the public `jido_teate_monthly_jpy` helper. **Japan resident-tax dependent deduction** (扶養控除) uses the December-31 NTA snapshot per regulation — not prorated. **RSU vesting `num_deps`** corrected from an `is_married` heuristic to an actual December-31 snapshot count of dependents under 18. **`next_12_months_income_jpy`** rolling helper sums VA, FERS, SS, SSDI, Nenkin, and Jido Teate month-by-month for the forward 12 months, capturing cliff drops in bridge-fund sizing decisions. **UI**: new checkbox in the Family Demographics section with an "upcoming drop-off" read-out. 6 new acceptance tests; 135/135 tests passing (139/139 after V7.8.2). |
 | **V7.8** | NRA Spouse Tax Complexities — **`SpouseProfile`** enum (`us_person` / `nra_elected_to_be_treated_as_resident` / `nra_mfs` / `nra_head_of_household_eligible`) drives effective IRS filing status. **NRA-MFS Roth phase-out**: when `spouse_profile == nra_mfs` and MAGI > $10,000, the Roth contribution is suppressed and a `RothMfsPhaseOutExceeded` SolvencyWarning is emitted (IRC §408A(c)(3)(B)(ii)). **§6013(g) income pooling**: `nra_elected_to_be_treated_as_resident` adds the NRA spouse's Japan salary + misc income to US `gross_ord` and adds the Japan resident tax on that income to the FTC general basket. **HoH fallback**: `nra_head_of_household_eligible` applies intermediate Head-of-Household brackets when a qualifying child is present. **UI**: Spouse Profile dropdown (visible when married) + conditional Japan income fields. **Overview tab**: displays effective filing status. 4 new acceptance tests; 128/128 tests passing. |
 | **V7.7.2** | RSU Sell-to-Cover Death Spiral — **`rsu_sell_to_cover_realism: bool`** (default `true`) models the scenario where a scheduled recession drops the RSU share price below the combined US + Japan tax bill at vest. When a deficit occurs, the simulator executes a three-tier cascade: (1) Bridge Fund USD, (2) War Chest JPY with 0.5% FX spread penalty, (3) Tier 8 taxable stock liquidation (highest-JPY-basis-first). Any remainder that cannot be covered is accumulated in **`unpaid_rsu_tax_liability_usd`** and surfaced as a 🔴 red banner on the Overview tab. A new **`RSUTaxShortfall_USD`** column is written to the audit CSV. **`RsuSellToCoverWarning`** structs record the per-vest ticker, vest value, combined tax, deficit, and uncovered amount. `RsuSellToCoverPolicy` enum (`strict` / `permissive`) is added for future modes. UI checkbox in RSU Settings with tooltip explains the margin-call mechanics. 3 new integration tests. |
 | **V7.7.1** | Portfolio Transition & Tax Alignment — **Per-account rebalance strategy** (`Account.rebalance_strategy: Option<AccountRebalanceStrategy>`) fires independently of the global `rebalance_enabled` flag; the RSU `migrate_on_retirement: bool` triggers the Taxable account's strategy at the transition event so vested-RSU proceeds are redeployed into the post-retirement target mix. **Per-account tax-advantaged flags** (`us_tax_advantaged`, `japan_tax_advantaged`) drive the §5.1 distribution routing gate (`handlers/dividends.rs`) — each account independently opts into `apply_us_tax` / `apply_japan_tax`, so cross-jurisdiction containers (NISA, iDeCo, Roth, 401(k), DC) no longer hand-wire their own bypass. **Japan working-year income tax** (所得税) — new `JapanTaxEngine::calculate_income_tax()` with reconstruction surcharge; `salary_history` and `rsu_vest_history` carry an N−1 hand-off so the first retirement year's resident-tax base is honest. **Snapshot/CSV** gain `year_salary_jpy`, `year_rsu_vest_jpy`, `year_japan_income_tax_jpy`. FERS Article-18 routing bug fixed. 31/31 integration tests pass (119/119 overall). |
@@ -380,7 +382,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V7.8.1)](#16-hardening--compliance-v75--v781)
+16. [Hardening & Compliance (V7.5 → V7.8.2)](#16-hardening--compliance-v75--v782)
 
 ---
 
@@ -1423,7 +1425,7 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**135/135 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
+**139/139 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -1444,6 +1446,7 @@ cargo test
 | `tests/expense_ratio_test.rs` | 13 | Range validator guards (zero/NaN/infinity/out-of-range), fallback table coverage and self-consistency, dispatch + provenance source on Schwab/SSGA/iShares fallthrough, NotApplicable on stocks, Unavailable on unknown tickers, distinct source labels. Two live-network tests (Vanguard VOO, Invesco QQQM) are `#[ignore]`d. |
 | `tests/v7_8_nra_spouse.rs` *(V7.8)* | 4 | MFJ vs MFS vs HoH produce distinct US tax (acceptance A), NRA-MFS Roth suppressed when MAGI > $10k + `RothMfsPhaseOutExceeded` warning (acceptance B), NRA-MFS Roth allowed when MAGI = $0 (acceptance B-inverse), §6013(g) spouse income increases US gross ord and FTC partial offset (acceptance C) |
 | `tests/mid_year_dependent_phaseout.rs` *(V7.8.1)* | 6 | VA switches WithSpouseAndChild → WithSpouse at exact 18th-birthday tick (A), child rate exceeds spouse rate (A2), Jido Teate April-2024 still pays ¥20k (B), Jido Teate June-2024 is zero (B2), NHI fractional `num_insured` precision exceeds legacy integer (C), rolling `next_12_months_income_jpy` cliff drop captured (D) |
+| `tests/v7_8_fx_shock_ordering.rs` *(V7.8.2)* | 4 | All three `ShockOrdering` variants populate `pre_shock_net_worth_jpy` / `post_shock_net_worth_jpy` in combined-shock year (A), pre ≈ ¥14.5M and post ≈ ¥5.2M within ±5% tolerance for all orderings (B), non-shock years have `None` fields (D), `jpy_purchasing_power_index` stays at 1.0 with 0% Japan inflation (B) |
 
 ---
 
@@ -1680,7 +1683,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V7.8.1)
+## 16. Hardening & Compliance (V7.5 → V7.8.2)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
@@ -1693,7 +1696,11 @@ V7.8 adds NRA spouse tax handling — effective filing status derived from `Spou
 income pooling, NRA-MFS Roth phase-out enforcement, and HoH fallback; V7.8.1 resolves mid-year
 dependent phase-out drift — NHI per-capita uses a fractional `num_insured`, Japan resident-tax
 dependent deduction uses the NTA December-31 snapshot, and the bridge-fund income projection rolls
-forward month-by-month via `next_12_months_income_jpy` so cliff-drop years are funded correctly.
+forward month-by-month via `next_12_months_income_jpy` so cliff-drop years are funded correctly;
+V7.8.2 makes combined recession + FX shock ordering deterministic and selectable via the
+`shock_ordering` enum (`DepreciateThenReprice` default, `RepriceThenDepreciate`, `Simultaneous`),
+records pre- and post-shock JPY net worth on each snapshot, and surfaces the dual-shock event in
+the UI with yellow highlighting and a hover tooltip.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income
