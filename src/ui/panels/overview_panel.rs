@@ -176,6 +176,10 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
     let total_restax: f64 = res.annual_summary.iter().map(|s| s.res_tax_jpy).sum();
     let total_nhi: f64 = res.annual_summary.iter().map(|s| s.nhi_obligation_jpy).sum();
     let total_rsu: f64 = res.annual_summary.iter().map(|s| s.rsu_vest_usd).sum();
+    // Stage 10 — Long-Term Care Insurance totals
+    let total_kaigo_premium: f64 = res.annual_summary.iter().map(|s| s.kaigo_hoken_premium_jpy).sum();
+    let total_kaigo_care: f64 = res.annual_summary.iter().map(|s| s.kaigo_out_of_pocket_jpy).sum();
+    let total_kaigo = total_kaigo_premium + total_kaigo_care;
 
     egui::Grid::new("overview_tax_grid")
         .num_columns(2)
@@ -188,6 +192,22 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
             ui.label(RichText::new("Total NHI Paid:").strong());
             ui.label(fmt_jpy(total_nhi));
             ui.end_row();
+
+            // Stage 10 — Show Kaigo Hoken if non-zero
+            if total_kaigo > 0.0 {
+                ui.label(RichText::new("Long-Term Care Cost (介護保険):").strong());
+                if total_kaigo_care > 0.0 {
+                    ui.label(format!(
+                        "{} (premium: {}, care: {})",
+                        fmt_jpy(total_kaigo),
+                        fmt_jpy(total_kaigo_premium),
+                        fmt_jpy(total_kaigo_care)
+                    ));
+                } else {
+                    ui.label(fmt_jpy(total_kaigo));
+                }
+                ui.end_row();
+            }
 
             ui.label(RichText::new("Total RSU Income:").strong());
             ui.label(fmt_usd(total_rsu));

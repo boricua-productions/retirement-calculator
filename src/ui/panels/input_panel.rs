@@ -332,6 +332,9 @@ pub struct InputPanelState {
     // Manual mode fields (annual totals in JPY)
     pub nhi_spike_total_jpy:    String,
     pub nhi_ongoing_total_jpy:  String,
+    // ── Stage 10 — Long-Term Care Insurance (Kaigo Hoken) ─────────────────────
+    pub kaigo_hoken_enabled: bool,
+    pub kaigo_care_scenario: String,  // "none" | "low" | "medium" | "high"
     // ── Entitlement overrides ─────────────────────────────────────────────────
     pub va_override_enabled:  bool,
     pub va_override_monthly:  String,
@@ -463,6 +466,8 @@ impl Default for InputPanelState {
             nhi_include_us_income:  false,
             nhi_spike_total_jpy:    "0".into(),
             nhi_ongoing_total_jpy:  "0".into(),
+            kaigo_hoken_enabled: true,
+            kaigo_care_scenario: "none".into(),
             va_override_enabled:  false,
             va_override_monthly:  String::new(),
             smc_override_enabled: false,
@@ -1025,6 +1030,8 @@ impl InputPanelState {
             nhi_include_us_income,
             nhi_spike_total_jpy,
             nhi_ongoing_total_jpy,
+            kaigo_hoken_enabled: bool_val("kaigo_hoken_enabled", true),
+            kaigo_care_scenario: sets["kaigo_care_scenario"].as_str().unwrap_or("none").to_string(),
             va_override_enabled,
             va_override_monthly,
             smc_override_enabled,
@@ -2083,6 +2090,66 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 "Spike year = first post-retirement year (prior-year employment income basis). \
                  Ongoing = all subsequent years."
             ).small().color(Color32::GRAY));
+        }
+        ui.add_space(8.0);
+
+        // ── Stage 10 — Long-Term Care Insurance (Kaigo Hoken) ────────────────────
+        section(ui, "Long-Term Care Insurance (介護保険)");
+        ui.label(RichText::new(
+            "Japan mandates Long-Term Care Insurance for all residents ≥ 40. From age 40-64 \
+             it's bundled into NHI (already modeled above). From age 65+ it becomes a separate \
+             municipal premium tied to your pension income — typically ¥30k-¥150k/year. \
+             The model automatically handles the smooth transition at age 65."
+        ).small().color(Color32::GRAY));
+        ui.add_space(4.0);
+
+        ui.checkbox(&mut state.kaigo_hoken_enabled, "Model Long-Term Care Insurance (Recommended for retirees ≥ 40)");
+
+        if state.kaigo_hoken_enabled {
+            ui.label(RichText::new(
+                "When enabled, the age-65+ municipal premium is charged as a separate expense line. \
+                 Disable to revert to legacy behavior (no charge after 65)."
+            ).small().color(Color32::from_rgb(255, 200, 50)));
+            ui.add_space(6.0);
+
+            ui.label(RichText::new("Care Need Scenario:").strong());
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut state.kaigo_care_scenario, "none".to_string(),
+                    "None (Premium only)");
+                ui.radio_value(&mut state.kaigo_care_scenario, "low".to_string(),
+                    "Low (~¥20k/mo from age 75)");
+            });
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut state.kaigo_care_scenario, "medium".to_string(),
+                    "Medium (~¥40k/mo from age 75)");
+                ui.radio_value(&mut state.kaigo_care_scenario, "high".to_string(),
+                    "High (~¥80k/mo from age 80)");
+            });
+
+            match state.kaigo_care_scenario.as_str() {
+                "low" => {
+                    ui.label(RichText::new(
+                        "Low scenario: light intermittent home help starting at age 75."
+                    ).small().italics().color(Color32::GRAY));
+                }
+                "medium" => {
+                    ui.label(RichText::new(
+                        "Medium scenario: regular home visits + occasional facility stays from age 75."
+                    ).small().italics().color(Color32::GRAY));
+                }
+                "high" => {
+                    ui.label(RichText::new(
+                        "High scenario: intensive care assumption from age 80. \
+                         Useful for stress-testing, not a likely outcome."
+                    ).small().italics().color(Color32::from_rgb(255, 150, 100)));
+                }
+                _ => {}
+            }
+        } else {
+            ui.label(RichText::new(
+                "Disabled: ages 65+ will not be charged the separate Kaigo Hoken premium. \
+                 Your retirement projection may understate costs by ¥30k-¥150k/year."
+            ).small().color(Color32::from_rgb(255, 100, 100)));
         }
         ui.add_space(8.0);
 
