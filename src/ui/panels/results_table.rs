@@ -58,7 +58,26 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
                         Color32::GRAY
                     };
 
-                    ui.label(snap.year.to_string());
+                    // Stage 04: highlight years with combined recession + FX shock
+                    let is_shock_year = snap.pre_shock_net_worth_jpy.is_some();
+                    let year_color = if is_shock_year {
+                        Color32::YELLOW
+                    } else {
+                        Color32::WHITE
+                    };
+                    let shock_tooltip = snap.pre_shock_net_worth_jpy.map(|pre| {
+                        let post = snap.post_shock_net_worth_jpy.unwrap_or(pre);
+                        format!(
+                            "Two shock events this year (recession + FX). \
+                             Pre-shock: ¥{:.0} → Post-shock: ¥{:.0}",
+                            pre, post
+                        )
+                    });
+                    let year_label = RichText::new(snap.year.to_string()).color(year_color);
+                    let yr_resp = ui.label(year_label);
+                    if let Some(tip) = shock_tooltip {
+                        yr_resp.on_hover_text(tip);
+                    }
                     ui.label(format!("{:.2}", snap.usd_jpy));
                     ui.label(format!("${}", c(snap.brokerage_usd)));
                     ui.label(format!("${}", c(snap.roth_usd)));

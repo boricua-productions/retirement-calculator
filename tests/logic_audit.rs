@@ -175,6 +175,8 @@ fn minimal_cfg() -> Config {
         spouse_japan_misc_income_jpy: 0.0,
         // Stage 03 defaults
         monthly_dependent_precision: true,
+        // Stage 04 defaults
+        shock_ordering: retirement_calculator::models::config::ShockOrdering::DepreciateThenReprice,
     }
 }
 

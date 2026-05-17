@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::engine::tax::japan_regions::{ALL_PREFECTURES, cities_for_prefecture, city_rate_annotation};
 use crate::engine::tax::us_tax::{state_tax_rate, state_display_name, ALL_STATE_CODES, ALL_FILING_STATUSES};
 use crate::engine::va_benefits::{lookup_va_monthly_2026, lookup_smc_monthly_2026, ALL_VA_RATINGS, ALL_SMC_VARIANTS};
-use crate::models::config::{NhiCalculatedRates, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus};
+use crate::models::config::{NhiCalculatedRates, ShockOrdering, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus};
 
 const SAVE_STATUS_ID: &str = "input_panel_save_status";
 const SAVE_STATUS_TTL: Duration = Duration::from_secs(5);
@@ -285,6 +285,10 @@ pub struct InputPanelState {
     pub recession_enabled:  bool,
     pub recession_severity: String,
     pub recession_years:    String,
+    // ── Stage 04 — Shock Application Order ────────────────────────────────────
+    /// Controls which shock is applied first when both recession and FX shock
+    /// fall in the same calendar year.
+    pub shock_ordering: ShockOrdering,
     // ── Marco Polo (Monte Carlo) mode ──────────────────────────────────────────
     pub marco_polo_enabled: bool,
     // ── Active Management / Rebalancing (V6.0) ────────────────────────────────
@@ -378,6 +382,7 @@ impl Default for InputPanelState {
             rsu_tax_handling:    "SALARY".into(),
             rsu_sell_to_cover_realism: true,
             monthly_dependent_precision: true,
+            shock_ordering: ShockOrdering::DepreciateThenReprice,
             user_birth_date:        String::new(),
             is_married:             false,
             spouse_birth_date:      String::new(),
@@ -948,6 +953,11 @@ impl InputPanelState {
             recession_enabled:  bool_val("simulate_recession_at_retirement", false),
             recession_severity: num_str("recession_severity_pct",           "0.20"),
             recession_years,
+            shock_ordering: match sets["shock_ordering"].as_str().unwrap_or("depreciate_then_reprice") {
+                "reprice_then_depreciate" => ShockOrdering::RepriceThenDepreciate,
+                "simultaneous"            => ShockOrdering::Simultaneous,
+                _                         => ShockOrdering::DepreciateThenReprice,
+            },
             marco_polo_enabled:  false, // session-only, not persisted in JSON
             rebalance_enabled:   bool_val("rebalance_enabled", false),
             rebalance_frequency: {
@@ -1124,6 +1134,13 @@ impl InputPanelState {
             set_f64!("fx_drift_rate_annual",              self.fx_drift_rate);
             set_bool!("simulate_recession_at_retirement", self.recession_enabled);
             set_f64!("recession_severity_pct",            self.recession_severity);
+            settings.insert("shock_ordering".into(), Value::String(
+                match self.shock_ordering {
+                    ShockOrdering::DepreciateThenReprice => "depreciate_then_reprice",
+                    ShockOrdering::RepriceThenDepreciate => "reprice_then_depreciate",
+                    ShockOrdering::Simultaneous          => "simultaneous",
+                }.into()
+            ));
             set_str!("us_filing_status", self.filing_status);
             set_str!("us_state_code",    self.us_state_code);
 
@@ -3301,6 +3318,65 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             vfield(ui, "Dynamic Recession Events", &mut state.recession_years, r#"e.g. "2027:0.20, 2035:0.15""#, true);
         });
         ui.label(RichText::new("Format: YEAR:SEVERITY pairs, comma-separated.").small().color(Color32::GRAY));
+        ui.add_space(8.0);
+
+        // ── Shock Application Order (Stage 04) ───────────────────────────────────
+        ui.label(RichText::new("Shock Application Order").strong());
+        ui.label(RichText::new(
+            "How to apply a recession and FX shock that fall in the same calendar year."
+        ).small().color(Color32::GRAY));
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            if ui.radio(
+                state.shock_ordering == ShockOrdering::DepreciateThenReprice,
+                "Equity drop first, then FX repricing (default, conservative)",
+            ).on_hover_text(
+                "Conservative — equity drops first at the old FX rate. \
+                 JPY purchasing-power loss is shown at its largest."
+            ).clicked() {
+                state.shock_ordering = ShockOrdering::DepreciateThenReprice;
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.radio(
+                state.shock_ordering == ShockOrdering::RepriceThenDepreciate,
+                "FX repricing first, then equity drop",
+            ).on_hover_text(
+                "Optimistic — FX moves first; equity loss is denominated in \
+                 the new FX, which may look smaller in JPY terms."
+            ).clicked() {
+                state.shock_ordering = ShockOrdering::RepriceThenDepreciate;
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.radio(
+                state.shock_ordering == ShockOrdering::Simultaneous,
+                "Simultaneous (snapshot both, commit together)",
+            ).on_hover_text(
+                "Path-independent — both shocks are computed against a \
+                 pre-shock snapshot and committed together. Recommended for \
+                 stress-test comparability."
+            ).clicked() {
+                state.shock_ordering = ShockOrdering::Simultaneous;
+            }
+        });
+        ui.add_space(4.0);
+        egui::CollapsingHeader::new("ℹ What does ordering do?")
+            .id_salt("shock_ordering_expander")
+            .show(ui, |ui| {
+                ui.label(RichText::new(
+                    "Example: $100k in VTI, FX 145 → 80, recession −35%\n\
+                     \n\
+                     Option A (Equity first): $100k → $65k (at ¥145) = ¥9,425,000 → FX → ¥5,200,000\n\
+                     Option B (FX first):    $100k → ¥8,000,000 (at ¥80) → −35% → ¥5,200,000\n\
+                     Option C (Simultaneous): ¥14,500,000 → ¥5,200,000 (no intermediate)\n\
+                     \n\
+                     All three end at the same ¥5.2M — but the intermediate audit value \
+                     (shown in the Annual Table tooltip for shock years) differs. Option A \
+                     makes the combined loss look largest; Option B shows a smaller apparent \
+                     equity loss because it is already denominated in the stronger yen."
+                ).small().color(Color32::from_rgb(200, 200, 200)));
+            });
         ui.add_space(8.0);
 
         // ── RSU Settings ─────────────────────────────────────────────────────────

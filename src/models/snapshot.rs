@@ -129,6 +129,21 @@ pub struct AnnualSnapshot {
     /// Resets to 0 only if the simulation is run with realism disabled.
     #[serde(default)]
     pub unpaid_rsu_tax_liability_usd: f64,
+
+    // ── Stage 04 — Shock Ordering audit ──────────────────────────────────────
+    /// Japan CPI purchasing-power index relative to the simulation start year.
+    /// 1.0 in year 0, compounded by `inflation_japan` each subsequent year.
+    /// Separates price-level changes from cash-position changes.
+    #[serde(default)]
+    pub jpy_purchasing_power_index: f64,
+    /// Total portfolio net worth in JPY immediately before any shock events
+    /// fired this year. `None` in years without a combined recession+FX shock.
+    #[serde(default)]
+    pub pre_shock_net_worth_jpy: Option<f64>,
+    /// Total portfolio net worth in JPY immediately after all shock events
+    /// committed this year. `None` in years without a combined recession+FX shock.
+    #[serde(default)]
+    pub post_shock_net_worth_jpy: Option<f64>,
 }
 
 /// A quarterly solvency warning recorded when income < expenses for a quarter.

@@ -13,6 +13,41 @@ fn default_tlh_months() -> Vec<u32> { vec![11, 12] }
 fn default_tlh_threshold() -> f64 { 500.0 }
 fn default_rsu_realism() -> bool { true }
 
+/// Stage 04 — Order of operations when a recession and FX shock fall in the same year.
+///
+/// Because the JPY purchasing-power audit trail is path-dependent, the user can choose
+/// which mental model best matches their scenario:
+///
+/// | Variant | Equity drop | FX move | Intermediate JPY value |
+/// |---------|------------|---------|------------------------|
+/// | `DepreciateThenReprice` (default) | first | second | lower (conservative) |
+/// | `RepriceThenDepreciate` | second | first | higher (equity looks smaller in JPY) |
+/// | `Simultaneous` | snapshot | snapshot | no intermediate — path-independent |
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShockOrdering {
+    /// Equity drops first (at the old FX rate), then FX moves. Conservative: the
+    /// JPY loss appears at its largest. This is the V7.x legacy behaviour.
+    #[default]
+    DepreciateThenReprice,
+    /// FX moves first, then equity drops (at the new FX rate). The equity loss
+    /// may appear smaller in JPY terms when the yen has already strengthened.
+    RepriceThenDepreciate,
+    /// Both shocks are computed against a snapshot of the pre-shock state and
+    /// then committed together. Path-independent; recommended for comparability.
+    Simultaneous,
+}
+
+impl std::fmt::Display for ShockOrdering {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShockOrdering::DepreciateThenReprice => write!(f, "Equity drop first, then FX repricing"),
+            ShockOrdering::RepriceThenDepreciate => write!(f, "FX repricing first, then equity drop"),
+            ShockOrdering::Simultaneous          => write!(f, "Simultaneous (snapshot both, commit together)"),
+        }
+    }
+}
+
 /// V7.7.2 — Controls how aggressive the SELL_TO_COVER deficit cascade is.
 ///
 /// `Strict` (default): drains Bridge Fund → War Chest → Tier 8 liquidation,
@@ -865,4 +900,11 @@ pub struct Config {
     /// falls back to annual-bucket approximations (legacy behaviour).
     #[serde(default = "default_true")]
     pub monthly_dependent_precision: bool,
+
+    // ── Stage 04 — Shock Application Order ───────────────────────────────────
+    /// When a recession and FX shock fall in the same year, determines which is
+    /// applied first. See `ShockOrdering` for the impact on the JPY net-worth
+    /// audit trail. Default: `DepreciateThenReprice` (conservative).
+    #[serde(default)]
+    pub shock_ordering: ShockOrdering,
 }
