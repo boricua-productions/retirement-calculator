@@ -1,0 +1,41 @@
+{
+  "simulation_settings": {
+    "start_date": "2025-01-01",
+    "end_date": "2040-12-31",
+    "retirement_date": "2031-01-01",
+    "rebalance_date": "2031-02-01",
+    "usd_jpy_rate": 145.0,
+    "inflation_us_cpi": 0.028,
+    "inflation_japan_cpi": 0.028,
+    "base_monthly_expenses_jpy": 1000000,
+    "min_monthly_expenses_jpy": 600000,
+    "nhi_spike_monthly_jpy": 73333,
+    "war_chest_enabled": false,
+    "war_chest_target_jpy": 7000000,
+    "bridge_fund_enabled": false,
+    "bridge_fund_months_target": 12,
+    "retirement_year_gross_income_jpy": 10000000,
+    "fers_monthly_payment_usd": 794.55,
+    "fers_start_age": 62,
+    "us_filing_status": "married_filing_jointly",
+    "us_state_code": "CA",
+    "birth_date": "1975-09-01",
+    "spouse_birth_date": "1978-01-01"
+  },
+  "holdings": {
+    "Taxable": {
+      "VTI": {
+        "shares": 1000,
+        "basis_usd": 200.0
+      }
+    }
+  },
+  "market_prices_usd": {
+    "VTI": 250.0,
+    "SCHD": 25.0
+  },
+  "growth_rates_annual": {
+    "VTI": 0.10,
+    "SCHD": 0.08
+  }
+}
