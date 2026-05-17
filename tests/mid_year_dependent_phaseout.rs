@@ -162,6 +162,7 @@ fn scenario_cfg() -> Config {
         spouse_japan_misc_income_jpy: 0.0,
         monthly_dependent_precision: true,
         shock_ordering: retirement_calculator::models::config::ShockOrdering::DepreciateThenReprice,
+        track_pfic_basis_drift: true,
     }
 }
 

@@ -97,6 +97,28 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
                 ui.end_row();
             }
 
+            // Stage 05 — PFIC basis drift banner.
+            let total_pfic_mtm: f64 = res.annual_summary.iter().map(|s| s.pfic_mtm_income_usd).sum();
+            if total_pfic_mtm > 0.0 || !res.pfic_basis_drift_warnings.is_empty() {
+                ui.label(RichText::new("PFIC §1296 MTM Drag:").strong());
+                let drift_msg = if res.pfic_basis_drift_warnings.is_empty() {
+                    format!("${:.0} lifetime phantom income", total_pfic_mtm)
+                } else {
+                    format!(
+                        "${:.0} lifetime phantom income — {} drift event(s) self-healed",
+                        total_pfic_mtm,
+                        res.pfic_basis_drift_warnings.len(),
+                    )
+                };
+                let color = if res.pfic_basis_drift_warnings.is_empty() {
+                    Color32::YELLOW
+                } else {
+                    Color32::from_rgb(255, 165, 0)
+                };
+                ui.label(RichText::new(drift_msg).color(color));
+                ui.end_row();
+            }
+
             // Stage 04 — Show pre/post shock net-worth rows for any shock year.
             let shock_years: Vec<_> = res.annual_summary.iter()
                 .filter(|s| s.pre_shock_net_worth_jpy.is_some())

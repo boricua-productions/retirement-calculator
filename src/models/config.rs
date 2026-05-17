@@ -907,4 +907,12 @@ pub struct Config {
     /// audit trail. Default: `DepreciateThenReprice` (conservative).
     #[serde(default)]
     pub shock_ordering: ShockOrdering,
+
+    // ── Stage 05 — PFIC Basis Drift Monitor ──────────────────────────────────
+    /// When true (default), the engine cross-checks USD vs JPY MTM basis each year
+    /// and emits a PficDriftWarning + self-heals if the two reference values diverge
+    /// by more than 1%. Disable to measure the cumulative drift effect on terminal
+    /// portfolio value (proving the toggle does something in tests).
+    #[serde(default = "default_true")]
+    pub track_pfic_basis_drift: bool,
 }

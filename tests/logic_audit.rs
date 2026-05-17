@@ -177,6 +177,8 @@ fn minimal_cfg() -> Config {
         monthly_dependent_precision: true,
         // Stage 04 defaults
         shock_ordering: retirement_calculator::models::config::ShockOrdering::DepreciateThenReprice,
+        // Stage 05 defaults
+        track_pfic_basis_drift: true,
     }
 }
 
@@ -204,6 +206,9 @@ fn taxable_with_inventory(qty: f64) -> Account {
         dividend_currency: DividendCurrency::Usd,
         pfic_regime: retirement_calculator::models::assets::PficRegime::NotPfic,
         pfic_prior_year_fmv_per_share: 0.0,
+        pfic_prior_year_fmv_per_share_jpy: 0.0,
+        pfic_mtm_loss_carryforward_usd: 0.0,
+        pfic_qef_election_year: None,
         asset_class: retirement_calculator::models::assets::AssetClass::default(),
         return_profile: None,
         lots: vec![],

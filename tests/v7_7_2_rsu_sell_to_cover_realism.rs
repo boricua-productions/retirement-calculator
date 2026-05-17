@@ -173,6 +173,8 @@ fn stc_config(realism: bool) -> Config {
         monthly_dependent_precision: true,
         // Stage 04 defaults
         shock_ordering: ShockOrdering::DepreciateThenReprice,
+        // Stage 05 defaults
+        track_pfic_basis_drift: true,
     }
 }
 
@@ -352,6 +354,9 @@ fn cover_usd_deficit_drains_bridge_then_warchest() {
         dividend_currency: DividendCurrency::Usd,
         pfic_regime: retirement_calculator::models::assets::PficRegime::NotPfic,
         pfic_prior_year_fmv_per_share: 0.0,
+        pfic_prior_year_fmv_per_share_jpy: 0.0,
+        pfic_mtm_loss_carryforward_usd: 0.0,
+        pfic_qef_election_year: None,
         asset_class: retirement_calculator::models::assets::AssetClass::default(),
         return_profile: None,
         lots: Vec::new(),
