@@ -179,17 +179,18 @@ fn manage_monthly_cashflow_defensive(
         .unwrap_or(0.0);
 
     // ── Expense targets ───────────────────────────────────────────────────────
-    let exp = cf_engine.get_expenses_breakdown(current_date);
+    let exp = cf_engine.get_expenses_breakdown(current_date, fx);
     let nhi_delta = compute_nhi_delta(state, cfg, yr, mo, &exp);
 
-    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.education;
+    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.education + exp.real_estate;
     state.stats.year_exp_base      += exp.base_desired;
     state.stats.year_exp_nhi       += exp.nhi + nhi_delta;
     state.stats.year_exp_nenkin    += exp.nenkin;
     state.stats.year_exp_restax    += exp.restax;
+    state.stats.year_real_estate_exp_jpy += exp.real_estate;
 
-    let target_base_jpy = exp.base_desired + nhi_delta + exp.nenkin + exp.restax;
-    let target_min_jpy  = exp.base_floor   + nhi_delta + exp.nenkin + exp.restax;
+    let target_base_jpy = exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.real_estate;
+    let target_min_jpy  = exp.base_floor   + nhi_delta + exp.nenkin + exp.restax + exp.real_estate;
 
     // ── V7.3 — Tier 2.5: Education Fund draw (BYPASS main waterfall) ─────────
     // Education-tagged expenses pull from the dedicated Education bucket first.
@@ -208,9 +209,17 @@ fn manage_monthly_cashflow_defensive(
     let t0_5_jpy = compute_jido_teate_jpy(cfg, current_date);
     state.stats.year_jido_teate_jpy += t0_5_jpy;
 
-    // ── Tier 0: JPY Floor Income (Nenkin + DC Payout + Jido Teate) ───────────
+    // ── Stage 06 — Rental income ─────────────────────────────────────────────
+    // JPY rental → treated as Tier 0 JPY floor income (no FX penalty).
+    // USD rental → treated as Tier 4 USD floor income (converted with FX penalty).
+    let rental_jpy = income.rental_jpy;
+    let rental_usd = income.rental_usd;
+    state.stats.year_rental_income_jpy += rental_jpy;
+    state.stats.year_rental_income_usd += rental_usd;
+
+    // ── Tier 0: JPY Floor Income (Nenkin + DC Payout + Jido Teate + Rental JPY) ─
     // Pure JPY sources: no FX conversion, no spread penalty.
-    let t0_jpy  = nenkin_jpy + dc_payout_jpy + t0_5_jpy;
+    let t0_jpy  = nenkin_jpy + dc_payout_jpy + t0_5_jpy + rental_jpy;
     let mut gap = target_base_jpy;
     let t0_used = t0_jpy.min(gap);
     gap -= t0_used;
@@ -235,8 +244,9 @@ fn manage_monthly_cashflow_defensive(
         }
     }
 
-    // ── Tier 4: USD Floor Income (FERS, VA, SS, SSDI) → JPY with FX penalty ──
-    let usd_pension = va_usd + (fers_usd - fers_tax) + ss_usd + ssdi_usd + mil_usd;
+    // ── Tier 4: USD Floor Income (FERS, VA, SS, SSDI, Rental USD) → JPY ────────
+    // Rental USD is grouped with other USD floor income; converted with FX penalty.
+    let usd_pension = va_usd + (fers_usd - fers_tax) + ss_usd + ssdi_usd + mil_usd + rental_usd;
     let mut t4_surplus_usd = usd_pension;
     if gap > 0.0 && t4_surplus_usd > 0.0 {
         let needed_usd = gap / (fx * (1.0 - penalty));
@@ -316,6 +326,10 @@ fn manage_monthly_cashflow_defensive(
                     warn!("   [T7-A] Shielded: cash buffers at zero — month runs at Minimum (¥{:.0}).",
                         target_min_jpy);
                 }
+            }
+            // ── Tier 7.5 — HELOC Draw ─────────────────────────────────────────
+            if gap > 0.0 {
+                gap = apply_heloc_draw(state, cfg, gap, fx, penalty);
             }
             if gap > 0.0 {
                 gap = liquidate_for_jpy_gap(state, cfg, gap, fx, penalty);
@@ -402,6 +416,10 @@ fn manage_monthly_cashflow_defensive(
                 warn!("   [T7-B] Dynamic: short on restock — target dropped to Minimum (¥{:.0}), ¥{:.0} residual.",
                     target_min_jpy, gap);
             }
+            // ── Tier 7.5 — HELOC Draw ─────────────────────────────────────────
+            if gap > 0.0 {
+                gap = apply_heloc_draw(state, cfg, gap, fx, penalty);
+            }
         }
     }
 
@@ -487,17 +505,24 @@ fn manage_monthly_cashflow_cautious(
         .map(|m| m.monthly_usd)
         .unwrap_or(0.0);
 
-    let pension_net_usd = va_usd + (fers_usd - fers_tax) + ss_usd + ssdi_usd + mil_usd
-        + (nenkin_jpy / state.current_fx);
+    // Stage 06 — Rental income tracking in cautious waterfall.
+    state.stats.year_rental_income_jpy += income.rental_jpy;
+    state.stats.year_rental_income_usd += income.rental_usd;
 
-    let exp = cf_engine.get_expenses_breakdown(current_date);
+    let pension_net_usd = va_usd + (fers_usd - fers_tax) + ss_usd + ssdi_usd + mil_usd
+        + income.rental_usd
+        + (nenkin_jpy / state.current_fx)
+        + (income.rental_jpy / state.current_fx);
+
+    let exp = cf_engine.get_expenses_breakdown(current_date, state.current_fx);
     let nhi_delta = compute_nhi_delta(state, cfg, yr, mo, &exp);
 
-    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax;
+    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.real_estate;
     state.stats.year_exp_base      += exp.base_desired;
     state.stats.year_exp_nhi       += exp.nhi + nhi_delta;
     state.stats.year_exp_nenkin    += exp.nenkin;
     state.stats.year_exp_restax    += exp.restax;
+    state.stats.year_real_estate_exp_jpy += exp.real_estate;
 
     // DC Payout (converted to USD for the cautious legacy path).
     let dc_payout_usd = compute_dc_payout_usd(state, cfg, current_date);
@@ -1015,8 +1040,8 @@ pub fn next_12_months_income_jpy(
             .unwrap_or(0.0);
 
         total_jpy += (income.va_usd + income.fers_usd + income.ss_usd
-            + income.ssdi_usd + mil_usd) * fx;
-        total_jpy += income.nenkin_income_jpy;
+            + income.ssdi_usd + mil_usd + income.rental_usd) * fx;
+        total_jpy += income.nenkin_income_jpy + income.rental_jpy;
         total_jpy += jido_teate_for(cfg.jido_teate_enabled, cfg.child_birth_date, month_date);
     }
 
@@ -1062,6 +1087,48 @@ fn skim_education_savings(state: &mut SimState, cfg: &Config, jpy_surplus: f64) 
     state.education_fund_jpy += skim;
     state.stats.year_edu_fund_in_jpy += skim;
     jpy_surplus - skim
+}
+
+/// Stage 06 — Tier 7.5: HELOC draw.
+///
+/// Fires only when `cfg.enable_heloc_tier` is true AND at least one property
+/// has an active HelocLine.  The draw is sized to the minimum of the remaining
+/// `gap_jpy` and the total available HELOC credit (in USD, converted at `fx`).
+///
+/// The drawn amount is injected directly as JPY (USD draw × fx, with the standard
+/// FX spread penalty), and `state.outstanding_heloc_usd` is incremented.
+///
+/// Returns the residual gap after the HELOC draw (0.0 when fully covered).
+fn apply_heloc_draw(
+    state: &mut SimState,
+    cfg: &Config,
+    gap_jpy: f64,
+    fx: f64,
+    penalty: f64,
+) -> f64 {
+    if !cfg.enable_heloc_tier || cfg.real_estate.is_empty() {
+        return gap_jpy;
+    }
+    let available_usd = crate::engine::real_estate_engine::total_heloc_available_usd(
+        &cfg.real_estate, state.date, state.outstanding_heloc_usd, fx,
+    );
+    if available_usd <= 0.0 {
+        return gap_jpy;
+    }
+    // Draw just enough to cover the gap, applying FX spread penalty (same as T4/T6).
+    let needed_usd = gap_jpy / (fx * (1.0 - penalty).max(f64::EPSILON));
+    let draw_usd   = needed_usd.min(available_usd);
+    let (jpy_in, pen_jpy) = convert_usd_to_jpy(draw_usd, fx, penalty);
+    let covered = jpy_in.min(gap_jpy);
+
+    state.outstanding_heloc_usd         += draw_usd;
+    state.stats.year_heloc_draw_usd     += draw_usd;
+    state.stats.year_fx_penalty_jpy     += pen_jpy;
+
+    warn!("   [T7.5] HELOC draw ${:.2} → ¥{:.0} (FX penalty ¥{:.0}). Outstanding HELOC: ${:.2}.",
+        draw_usd, jpy_in, pen_jpy, state.outstanding_heloc_usd);
+
+    (gap_jpy - covered).max(0.0)
 }
 
 /// Shielded-mode Tier 8: liquidate just enough to close `gap_jpy`. Identical
@@ -1336,6 +1403,7 @@ mod v73_tests {
             base_floor:    60_000.0,
             nhi: 0.0, nenkin: 0.0, restax: 0.0,
             education: 25_000.0,
+            real_estate: 0.0,
         };
         assert_eq!(exp.education, 25_000.0);
     }

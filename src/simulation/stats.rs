@@ -118,6 +118,14 @@ pub struct AnnualStats {
     /// V7.7 — Japan income tax (所得税) paid this year (JPY). Pre-retirement only.
     /// Computed once in December via `JapanTaxEngine::calculate_income_tax`.
     pub year_japan_income_tax_jpy: f64,
+    /// Stage 06 — Annual net rental income (JPY) from Japan properties.
+    pub year_rental_income_jpy: f64,
+    /// Stage 06 — Annual net rental income (USD) from US / international properties.
+    pub year_rental_income_usd: f64,
+    /// Stage 06 — Annual real-estate fixed costs (PI + property tax) in JPY.
+    pub year_real_estate_exp_jpy: f64,
+    /// Stage 06 — Total HELOC drawn this year (USD). Tier 7.5 draws only.
+    pub year_heloc_draw_usd: f64,
 }
 
 impl AnnualStats {

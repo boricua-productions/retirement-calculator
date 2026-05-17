@@ -915,4 +915,15 @@ pub struct Config {
     /// portfolio value (proving the toggle does something in tests).
     #[serde(default = "default_true")]
     pub track_pfic_basis_drift: bool,
+
+    // ── Stage 06 — Real Estate Module ────────────────────────────────────────
+    /// List of real-estate holdings (primary, rental, inherited, vacation).
+    /// When empty the engine behaves identically to the pre-Stage-06 baseline;
+    /// no real-estate flows enter cashflow or tax.
+    #[serde(default)]
+    pub real_estate: Vec<crate::models::real_estate::RealEstateHolding>,
+    /// Master toggle for the Tier 7.5 HELOC-draw step in the defensive waterfall.
+    /// Fires only when true AND at least one holding has an active `HelocLine`.
+    #[serde(default)]
+    pub enable_heloc_tier: bool,
 }

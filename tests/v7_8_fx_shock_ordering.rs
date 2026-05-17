@@ -161,6 +161,8 @@ fn shock_config(ordering: ShockOrdering) -> Config {
         monthly_dependent_precision: true,
         shock_ordering: ordering,
         track_pfic_basis_drift: true,
+        real_estate: vec![],
+        enable_heloc_tier: false,
     }
 }
 

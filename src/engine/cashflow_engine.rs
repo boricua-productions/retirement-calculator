@@ -14,6 +14,9 @@ pub struct ExpenseBreakdown {
     /// V7.3 — Sum of active ExpenseRules whose `name` contains "Education".
     /// These bypass the standard waterfall and route Tier 2.5 → Tier 8.
     pub education: f64,
+    /// Stage 06 — Monthly real-estate fixed costs (PI + property tax) in JPY.
+    /// Zero when `cfg.real_estate` is empty.
+    pub real_estate: f64,
 }
 
 /// The monthly income breakdown.
@@ -28,6 +31,10 @@ pub struct IncomeBreakdown {
     pub ssdi_usd: f64,
     /// Nenkin pension monthly income (JPY). Separate from Nenkin expense contributions.
     pub nenkin_income_jpy: f64,
+    /// Stage 06 — Net monthly rental income in JPY (Japan properties).
+    pub rental_jpy: f64,
+    /// Stage 06 — Net monthly rental income in USD (US / international properties).
+    pub rental_usd: f64,
 }
 
 /// Handles all recurring income and expense calculations.
@@ -92,8 +99,11 @@ impl CashFlowEngine {
     /// Expense rules with "ResTax" in their name → restax bucket
     /// Everything else → added to base_desired and base_floor.
     ///
+    /// `fx` is needed to convert USD mortgage PI / property tax into JPY for the
+    /// `real_estate` bucket.
+    ///
     /// Mirrors Python's `get_expenses_breakdown()`.
-    pub fn get_expenses_breakdown(&self, current_date: NaiveDate) -> ExpenseBreakdown {
+    pub fn get_expenses_breakdown(&self, current_date: NaiveDate, fx: f64) -> ExpenseBreakdown {
         if current_date < self.cfg.retirement_date {
             return ExpenseBreakdown::default();
         }
@@ -125,7 +135,16 @@ impl CashFlowEngine {
             }
         }
 
-        let fixed_costs = nhi_cost + nenkin_cost + restax_cost;
+        // ── Stage 06 — Real-estate fixed costs (PI + property tax) ──────────
+        let re_cost = if self.cfg.real_estate.is_empty() {
+            0.0
+        } else {
+            crate::engine::real_estate_engine::total_monthly_re_expense_jpy(
+                &self.cfg.real_estate, current_date, fx,
+            )
+        };
+
+        let fixed_costs = nhi_cost + nenkin_cost + restax_cost + re_cost;
         ExpenseBreakdown {
             total_desired: base_desired + fixed_costs + edu_cost,
             base_desired,
@@ -134,6 +153,7 @@ impl CashFlowEngine {
             nenkin: nenkin_cost,
             restax: restax_cost,
             education: edu_cost,
+            real_estate: re_cost,
         }
     }
 
@@ -263,7 +283,19 @@ impl CashFlowEngine {
             0.0
         };
 
-        IncomeBreakdown { va_usd, fers_usd, ss_usd, ssdi_usd, nenkin_income_jpy }
+        // ── Stage 06 — Rental income ─────────────────────────────────────────
+        let rental_jpy = if self.cfg.real_estate.is_empty() {
+            0.0
+        } else {
+            crate::engine::real_estate_engine::total_monthly_rental_jpy(&self.cfg.real_estate)
+        };
+        let rental_usd = if self.cfg.real_estate.is_empty() {
+            0.0
+        } else {
+            crate::engine::real_estate_engine::total_monthly_rental_usd(&self.cfg.real_estate)
+        };
+
+        IncomeBreakdown { va_usd, fers_usd, ss_usd, ssdi_usd, nenkin_income_jpy, rental_jpy, rental_usd }
     }
 
     /// Add new expense rules (e.g., dynamically scheduled resident tax installments).
@@ -435,6 +467,9 @@ mod tests {
             shock_ordering: crate::models::config::ShockOrdering::DepreciateThenReprice,
             // Stage 05 defaults
             track_pfic_basis_drift: true,
+            // Stage 06 defaults
+            real_estate: vec![],
+            enable_heloc_tier: false,
         }
     }
 

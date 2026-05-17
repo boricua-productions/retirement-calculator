@@ -152,6 +152,8 @@ fn pfic_config(track_drift: bool) -> Config {
         monthly_dependent_precision: true,
         shock_ordering: ShockOrdering::DepreciateThenReprice,
         track_pfic_basis_drift: track_drift,
+        real_estate: vec![],
+        enable_heloc_tier: false,
     }
 }
 
