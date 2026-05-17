@@ -154,6 +154,8 @@ fn base_cfg() -> Config {
         monthly_dependent_precision: true,
         shock_ordering: retirement_calculator::models::config::ShockOrdering::DepreciateThenReprice,
         track_pfic_basis_drift: true,
+        real_estate: vec![],
+        enable_heloc_tier: false,
     }
 }
 

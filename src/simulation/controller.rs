@@ -1067,6 +1067,23 @@ impl SimulationController {
             // Stage 05 — PFIC MTM phantom income reporting.
             pfic_mtm_income_usd: s.year_pfic_mtm_income_usd,
             pfic_mtm_income_jpy: s.year_pfic_mtm_income_jpy,
+
+            // Stage 06 — Real Estate equity snapshot.
+            outstanding_heloc_usd: self.state.outstanding_heloc_usd,
+            real_estate_equity_jpy: crate::engine::real_estate_engine::total_equity_jpy(
+                &self.cfg.real_estate,
+                NaiveDate::from_ymd_opt(yr, 12, 31).unwrap_or(self.state.date),
+                self.state.outstanding_heloc_usd,
+                fx,
+            ),
+            real_estate_equity_usd: crate::engine::real_estate_engine::total_equity_usd(
+                &self.cfg.real_estate,
+                NaiveDate::from_ymd_opt(yr, 12, 31).unwrap_or(self.state.date),
+                self.state.outstanding_heloc_usd,
+            ),
+            rental_income_jpy: s.year_rental_income_jpy,
+            rental_income_usd: s.year_rental_income_usd,
+            real_estate_exp_jpy: s.year_real_estate_exp_jpy,
         });
     }
 

@@ -732,6 +732,10 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
 
         // ── Stage 05: PFIC Basis Drift Monitor ───────────────────────────────
         track_pfic_basis_drift: get_bool("track_pfic_basis_drift", true),
+
+        // ── Stage 06: Real Estate Module ─────────────────────────────────────
+        enable_heloc_tier: get_bool("enable_heloc_tier", false),
+        real_estate: parse_real_estate(&data),
     };
 
     // ── Manual price overrides ────────────────────────────────────────────────
@@ -1031,6 +1035,111 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
     };
 
     Ok(LoadedScenario { config, accounts })
+}
+
+/// Stage 06 — Parse the top-level `real_estate` array from the scenario JSON.
+fn parse_real_estate(data: &Value) -> Vec<crate::models::real_estate::RealEstateHolding> {
+    use crate::models::real_estate::*;
+
+    let arr = match data.get("real_estate") {
+        Some(Value::Array(a)) => a,
+        _ => return Vec::new(),
+    };
+
+    let parse_date = |s: &str| -> Option<NaiveDate> {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+    };
+    let f = |v: &Value, k: &str| v[k].as_f64().unwrap_or(0.0);
+    let b = |v: &Value, k: &str| v[k].as_bool().unwrap_or(false);
+    let s = |v: &Value, k: &str| v[k].as_str().unwrap_or("").to_string();
+
+    arr.iter().filter_map(|item| {
+        if !item.is_object() { return None; }
+
+        let location = match item["location"].as_str().unwrap_or("japan") {
+            "us" | "US" | "usa" => PropertyLocation::Us,
+            "international"      => PropertyLocation::International,
+            _                    => PropertyLocation::Japan,
+        };
+        let property_type = match item["property_type"].as_str().unwrap_or("primary") {
+            "rental"    => PropertyType::Rental,
+            "inherited" => PropertyType::Inherited,
+            "vacation"  => PropertyType::Vacation,
+            _           => PropertyType::Primary,
+        };
+        let structure_type = match item["structure_type"].as_str().unwrap_or("reinforced_concrete") {
+            "wood"  => StructureType::Wood,
+            "steel" => StructureType::Steel,
+            "other" => StructureType::Other,
+            _       => StructureType::ReinforcedConcrete,
+        };
+
+        let mortgage = if item["mortgage"].is_object() {
+            let m = &item["mortgage"];
+            let currency = match m["currency"].as_str().unwrap_or("jpy") {
+                "usd" | "USD" => MortgageCurrency::Usd,
+                _             => MortgageCurrency::Jpy,
+            };
+            let start_date = m["start_date"].as_str()
+                .and_then(|s| parse_date(s))
+                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2010, 1, 1).unwrap());
+            Some(MortgageTerms {
+                original_principal: f(m, "original_principal"),
+                annual_rate:        f(m, "annual_rate"),
+                term_months:        m["term_months"].as_u64().unwrap_or(360) as u32,
+                start_date,
+                currency,
+            })
+        } else { None };
+
+        let heloc = if item["heloc"].is_object() {
+            let h = &item["heloc"];
+            Some(HelocLine {
+                credit_line_usd: f(h, "credit_line_usd"),
+                draw_rate:       f(h, "draw_rate"),
+                ltv_cap:         h["ltv_cap"].as_f64().unwrap_or(0.80),
+                enabled:         b(h, "enabled"),
+            })
+        } else { None };
+
+        let reverse_mortgage = if item["reverse_mortgage"].is_object() {
+            let r = &item["reverse_mortgage"];
+            Some(ReverseMortgageTerms {
+                max_proceeds_local: f(r, "max_proceeds_local"),
+                elected:            b(r, "elected"),
+            })
+        } else { None };
+
+        let rental = if item["rental"].is_object() {
+            let r = &item["rental"];
+            Some(RentalProfile {
+                monthly_rent_jpy:      f(r, "monthly_rent_jpy"),
+                monthly_rent_usd:      f(r, "monthly_rent_usd"),
+                vacancy_pct:           r["vacancy_pct"].as_f64().unwrap_or(0.05),
+                annual_insurance_jpy:  f(r, "annual_insurance_jpy"),
+                annual_insurance_usd:  f(r, "annual_insurance_usd"),
+                annual_repairs_pct_fmv: r["annual_repairs_pct_fmv"].as_f64().unwrap_or(0.01),
+            })
+        } else { None };
+
+        Some(RealEstateHolding {
+            name:                  s(item, "name"),
+            location,
+            property_type,
+            structure_type,
+            purchase_date:         item["purchase_date"].as_str().and_then(|d| parse_date(d)),
+            purchase_price_jpy:    f(item, "purchase_price_jpy"),
+            purchase_price_usd:    f(item, "purchase_price_usd"),
+            current_fmv_jpy:       f(item, "current_fmv_jpy"),
+            current_fmv_usd:       f(item, "current_fmv_usd"),
+            annual_property_tax_jpy: f(item, "annual_property_tax_jpy"),
+            annual_property_tax_usd: f(item, "annual_property_tax_usd"),
+            mortgage,
+            heloc,
+            reverse_mortgage,
+            rental,
+        })
+    }).collect()
 }
 
 /// Add `months` to a NaiveDate, handling month-end clamping.

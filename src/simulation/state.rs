@@ -144,6 +144,11 @@ pub struct SimState {
     /// Annual PFIC MTM JPY income history: year → total_jpy (non-tax-advantaged accounts).
     /// Archived in January of each new year; read by the Japan resident-tax scheduler.
     pub pfic_mtm_jpy_history: HashMap<i32, f64>,
+
+    // ── Stage 06 — Real Estate ────────────────────────────────────────────────────
+    /// Total HELOC drawn across all properties (USD). Accumulates with each
+    /// Tier 7.5 draw; never auto-repaid in this simulation model.
+    pub outstanding_heloc_usd: f64,
 }
 
 impl SimState {
@@ -196,6 +201,7 @@ impl SimState {
             shock_post_net_worth_jpy: None,
             pfic_basis_drift_warnings: Vec::new(),
             pfic_mtm_jpy_history: HashMap::new(),
+            outstanding_heloc_usd: 0.0,
         }
     }
 }

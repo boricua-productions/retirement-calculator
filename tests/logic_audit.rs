@@ -179,6 +179,8 @@ fn minimal_cfg() -> Config {
         shock_ordering: retirement_calculator::models::config::ShockOrdering::DepreciateThenReprice,
         // Stage 05 defaults
         track_pfic_basis_drift: true,
+        real_estate: vec![],
+        enable_heloc_tier: false,
     }
 }
 

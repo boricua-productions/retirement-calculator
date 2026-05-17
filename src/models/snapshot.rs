@@ -152,6 +152,28 @@ pub struct AnnualSnapshot {
     /// Total §1296 MTM gain for the year in JPY (non-NISA/iDeCo accounts only).
     #[serde(default)]
     pub pfic_mtm_income_jpy: f64,
+
+    // ── Stage 06 — Real Estate ────────────────────────────────────────────────
+    /// Total HELOC balance outstanding at year-end (USD).  Grows with each
+    /// Tier 7.5 draw; does not auto-repay.
+    #[serde(default)]
+    pub outstanding_heloc_usd: f64,
+    /// Year-end real-estate equity for Japan-located holdings (JPY).
+    /// equity = sum(FMV_jpy) − sum(mortgage_balance_jpy) − outstanding_heloc×fx
+    #[serde(default)]
+    pub real_estate_equity_jpy: f64,
+    /// Year-end real-estate equity for US-located holdings (USD).
+    #[serde(default)]
+    pub real_estate_equity_usd: f64,
+    /// Annual net rental income received (JPY, from Japan properties).
+    #[serde(default)]
+    pub rental_income_jpy: f64,
+    /// Annual net rental income received (USD, from US/international properties).
+    #[serde(default)]
+    pub rental_income_usd: f64,
+    /// Annual real-estate fixed costs (PI + property tax) in JPY.
+    #[serde(default)]
+    pub real_estate_exp_jpy: f64,
 }
 
 /// Stage 05 — Emitted when the USD×FX vs JPY MTM basis diverges by > 1%.

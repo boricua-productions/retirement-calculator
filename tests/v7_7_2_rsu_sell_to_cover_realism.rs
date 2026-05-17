@@ -175,6 +175,8 @@ fn stc_config(realism: bool) -> Config {
         shock_ordering: ShockOrdering::DepreciateThenReprice,
         // Stage 05 defaults
         track_pfic_basis_drift: true,
+        real_estate: vec![],
+        enable_heloc_tier: false,
     }
 }
 

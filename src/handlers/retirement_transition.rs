@@ -56,7 +56,7 @@ pub fn handle_transition(
     };
     state.war_chest_jpy = new_wc_jpy;
 
-    let exp_breakdown = cf_engine.get_expenses_breakdown(current_date);
+    let exp_breakdown = cf_engine.get_expenses_breakdown(current_date, state.current_fx);
     let income = cf_engine.get_incomes_usd(current_date);
     let guaranteed_income_jpy = (income.va_usd + income.fers_usd) * state.current_fx;
     let shortfall_monthly = (exp_breakdown.total_desired - guaranteed_income_jpy).max(0.0);

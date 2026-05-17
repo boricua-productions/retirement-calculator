@@ -134,6 +134,23 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | **Asset Class** *(V7.6)* | Per-position dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.). Available on every account type that uses the positions table (Taxable, IRA, Roth IRA, 401(k), NISA, iDeCo); the DC Plan uses a separate ¥/万口 fund table and keeps the flat-growth model. |
 | **Return Profile** *(V7.6)* | Per-position toggle: `Simple` keeps a single Capital Appreciation %; `📊 Detail` exposes a component-level breakdown filtered by Asset Class — Capital Appreciation %, NAV Appreciation %, Dividend Payments %, Interest Income %, Capital Gains Distributions %, Special Distributions %, Return of Capital %, Expense Ratio %. A live read-only `Total Return ≈ capital appreciation + distributions + return of capital` line summarises the breakdown. |
 
+#### Real Estate *(V7.9 Stage 06)*
+
+| Field | What it is for |
+|-------|----------------|
+| **enable_heloc_tier** | Master toggle. When `true`, the HELOC draw tier (T7.5) is inserted into the defensive waterfall between belt-tightening and stock liquidation. Has no effect when `real_estate` is empty. |
+| **real_estate** | Array of `RealEstateHolding` objects (see below). Empty by default; adding entries enables mortgage PI tracking, rental income, and equity calculations. |
+| **Property Location** | `Japan` or `Us`. Determines which depreciation schedule applies (Japan: Wood 22yr / RC 47yr / Steel 34yr; US: Residential 27.5yr / Commercial 39yr) and whether rental income is routed as JPY (Tier 0) or USD (Tier 4). |
+| **Purchase Price / Currency** | Total acquisition cost. Building value is assumed to be 90% (Japan) or 80% (US) of purchase price for depreciation. |
+| **Fair Market Value** | Current FMV used for equity and HELOC LTV calculations. |
+| **Mortgage Terms** | Optional fixed-rate mortgage: principal, annual rate %, term months, origination date, and currency (JPY or USD). Monthly PI is computed analytically; outstanding balance is tracked without simulation state. |
+| **HELOC Line** | Optional home-equity credit line: credit limit, LTV cap %, and an `enabled` toggle. Available credit = min(limit − outstanding, ltv_cap × FMV − mortgage_balance). |
+| **Rental Profile** | Optional rental income: gross monthly rent (JPY or USD), vacancy rate %, annual insurance cost, and annual repairs-as-% of FMV. Net rental income after vacancy, insurance, and repairs flows into the waterfall each month. |
+| **Property Tax** | Annual property tax (JPY or USD). Divided by 12 and added to monthly real estate expenses. |
+| **Structure Type** | `Wood`, `Rc` (reinforced concrete), `Steel`, `Residential`, or `Commercial`. Selects the applicable depreciation life. |
+
+HELOC draws are sized to the minimum of (available credit, cash gap needed). The FX spread penalty (`fx_spread_penalty`, default 0.5%) is applied on every draw, consistent with other USD→JPY conversion tiers. Outstanding HELOC balance accumulates in simulation state and is reported in the annual snapshot as `outstanding_heloc_usd`.
+
 #### Family Financial Planning *(Optional)*
 
 Both channels are off by default and only emit JSON when the corresponding switch is on.
