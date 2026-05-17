@@ -163,6 +163,12 @@ fn base_config(
         track_pfic_basis_drift: false,
         real_estate,
         enable_heloc_tier,
+        enable_estate_planning: false,
+        death_date: None,
+        spouse_death_date: None,
+        heirs: vec![],
+        estate_planning_jurisdiction: TaxProtocol::Both,
+        enable_gifting_optimiser: false,
     }
 }
 

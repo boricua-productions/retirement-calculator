@@ -12,6 +12,7 @@ fn default_us_gift_exclusion() -> f64 { 19_000.0 }
 fn default_tlh_months() -> Vec<u32> { vec![11, 12] }
 fn default_tlh_threshold() -> f64 { 500.0 }
 fn default_rsu_realism() -> bool { true }
+fn default_estate_jurisdiction() -> TaxProtocol { TaxProtocol::Both }
 
 /// Stage 04 — Order of operations when a recession and FX shock fall in the same year.
 ///
@@ -529,6 +530,34 @@ pub struct Dependent {
     pub is_college_student: bool,
 }
 
+/// Stage 07 — Relationship of an heir to the deceased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HeirRelationship {
+    Spouse,
+    #[default]
+    Child,
+    Other,
+}
+
+impl std::fmt::Display for HeirRelationship {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HeirRelationship::Spouse => write!(f, "Spouse"),
+            HeirRelationship::Child  => write!(f, "Child"),
+            HeirRelationship::Other  => write!(f, "Other"),
+        }
+    }
+}
+
+/// Stage 07 — A single heir who will receive a share of the estate.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Heir {
+    pub name:         String,
+    pub birth_date:   Option<NaiveDate>,
+    pub relationship: HeirRelationship,
+}
+
 /// Household members whose birth years govern time-aware rule evaluations:
 ///   - VA dependent-child rider cutoff (age 18 / 23 with college-student flag)
 ///   - IRS senior standard deduction add-on (age ≥ 65 per person)
@@ -926,4 +955,29 @@ pub struct Config {
     /// Fires only when true AND at least one holding has an active `HelocLine`.
     #[serde(default)]
     pub enable_heloc_tier: bool,
+
+    // ── Stage 07 — Estate Planning ───────────────────────────────────────────
+    /// When true, the engine computes Japan Sōzoku-zei and US Estate Tax at the
+    /// end of the simulation horizon (or at `death_date`) and attaches an
+    /// `EstateSummary` to the final snapshot.
+    #[serde(default)]
+    pub enable_estate_planning: bool,
+    /// Optional user-specified death date.  When `None` the engine uses `end_date`.
+    #[serde(default)]
+    pub death_date: Option<NaiveDate>,
+    /// Optional spouse death date (currently informational; used to pre-apply the
+    /// spousal 1/2 deduction on the first-to-die simulation).
+    #[serde(default)]
+    pub spouse_death_date: Option<NaiveDate>,
+    /// List of heirs who will receive the estate.
+    #[serde(default)]
+    pub heirs: Vec<Heir>,
+    /// Tax protocol used in the estate projection.  Typically `Both` for a US
+    /// citizen long-term resident of Japan.
+    #[serde(default = "default_estate_jurisdiction")]
+    pub estate_planning_jurisdiction: TaxProtocol,
+    /// When true and estate_planning is on, show the annual gifting optimiser
+    /// output and write the suggested amount into `annual_gift_jpy_per_recipient`.
+    #[serde(default)]
+    pub enable_gifting_optimiser: bool,
 }

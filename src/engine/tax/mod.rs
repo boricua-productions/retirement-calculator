@@ -1,3 +1,4 @@
+pub mod estate_tax;
 pub mod japan_regions;
 pub mod japan_tax;
 pub mod nhi;

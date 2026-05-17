@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::engine::tax::japan_regions::{ALL_PREFECTURES, cities_for_prefecture, city_rate_annotation};
 use crate::engine::tax::us_tax::{state_tax_rate, state_display_name, ALL_STATE_CODES, ALL_FILING_STATUSES};
 use crate::engine::va_benefits::{lookup_va_monthly_2026, lookup_smc_monthly_2026, ALL_VA_RATINGS, ALL_SMC_VARIANTS};
-use crate::models::config::{NhiCalculatedRates, ShockOrdering, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus};
+use crate::models::config::{HeirRelationship, NhiCalculatedRates, ShockOrdering, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus};
 
 const SAVE_STATUS_ID: &str = "input_panel_save_status";
 const SAVE_STATUS_TTL: Duration = Duration::from_secs(5);
@@ -348,11 +348,25 @@ pub struct InputPanelState {
     pub us_gift_exclusion_usd: String,
     // ── Stage 05 — PFIC Basis Drift Monitor ──────────────────────────────────
     pub track_pfic_basis_drift: bool,
+    // ── Stage 07 — Estate Planning ───────────────────────────────────────────
+    pub enable_estate_planning: bool,
+    pub death_date: String,
+    pub spouse_death_date: String,
+    pub estate_heirs: Vec<HeirEntry>,
+    pub enable_gifting_optimiser: bool,
     // ── Source ───────────────────────────────────────────────────────────────
     pub source_json: Option<Value>,
     pub source_path: Option<String>,
     // ── Signals back to app.rs ───────────────────────────────────────────────
     pub reload_path: Option<String>,
+}
+
+/// Stage 07 — A single heir row in the input panel.
+#[derive(Debug, Clone, Default)]
+pub struct HeirEntry {
+    pub name:         String,
+    pub birth_date:   String,
+    pub relationship: HeirRelationship,
 }
 
 impl Default for InputPanelState {
@@ -460,6 +474,11 @@ impl Default for InputPanelState {
             gift_recipient_count:          "0".into(),
             us_gift_exclusion_usd:         "19000".into(),
             track_pfic_basis_drift:        true,
+            enable_estate_planning:        false,
+            death_date:                    String::new(),
+            spouse_death_date:             String::new(),
+            estate_heirs:                  vec![],
+            enable_gifting_optimiser:      false,
             source_json:  Some(blank_json),
             source_path:  None,
             reload_path:  None,
@@ -1018,6 +1037,25 @@ impl InputPanelState {
             gift_recipient_count:          num_str("gift_recipient_count",          "0"),
             us_gift_exclusion_usd:         num_str("us_gift_exclusion_usd",         "19000"),
             track_pfic_basis_drift: sets["track_pfic_basis_drift"].as_bool().unwrap_or(true),
+            enable_estate_planning: sets["enable_estate_planning"].as_bool().unwrap_or(false),
+            death_date:             str_val("death_date", ""),
+            spouse_death_date:      str_val("spouse_death_date", ""),
+            estate_heirs: if let Value::Array(arr) = &sets["heirs"] {
+                arr.iter().filter_map(|item| {
+                    if !item.is_object() { return None; }
+                    let rel = match item["relationship"].as_str().unwrap_or("child") {
+                        "spouse" | "Spouse" => HeirRelationship::Spouse,
+                        "other"  | "Other"  => HeirRelationship::Other,
+                        _                   => HeirRelationship::Child,
+                    };
+                    Some(HeirEntry {
+                        name:       item["name"].as_str().unwrap_or("").to_string(),
+                        birth_date: item["birth_date"].as_str().unwrap_or("").to_string(),
+                        relationship: rel,
+                    })
+                }).collect()
+            } else { vec![] },
+            enable_gifting_optimiser: sets["enable_gifting_optimiser"].as_bool().unwrap_or(false),
             source_json: Some(json.clone()),
             source_path: Some(path.to_string()),
             reload_path: None,
@@ -1330,6 +1368,42 @@ impl InputPanelState {
                                 Value::Number(serde_json::Number::from(0)));
                 settings.insert("gift_recipient_count".into(),
                                 Value::Number(serde_json::Number::from(0)));
+            }
+
+            // ── Stage 07: Estate Planning ─────────────────────────────────────
+            set_bool!("enable_estate_planning", self.enable_estate_planning);
+            set_bool!("enable_gifting_optimiser", self.enable_gifting_optimiser);
+            if self.enable_estate_planning {
+                if !self.death_date.is_empty() {
+                    settings.insert("death_date".into(), Value::String(self.death_date.clone()));
+                } else {
+                    settings.remove("death_date");
+                }
+                if !self.spouse_death_date.is_empty() {
+                    settings.insert("spouse_death_date".into(), Value::String(self.spouse_death_date.clone()));
+                } else {
+                    settings.remove("spouse_death_date");
+                }
+                let heirs_arr: Vec<Value> = self.estate_heirs.iter().map(|h| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("name".into(), Value::String(h.name.clone()));
+                    if !h.birth_date.is_empty() {
+                        obj.insert("birth_date".into(), Value::String(h.birth_date.clone()));
+                    }
+                    obj.insert("relationship".into(), Value::String(
+                        match h.relationship {
+                            HeirRelationship::Spouse => "spouse",
+                            HeirRelationship::Child  => "child",
+                            HeirRelationship::Other  => "other",
+                        }.into()
+                    ));
+                    Value::Object(obj)
+                }).collect();
+                settings.insert("heirs".into(), Value::Array(heirs_arr));
+            } else {
+                settings.remove("death_date");
+                settings.remove("spouse_death_date");
+                settings.remove("heirs");
             }
 
             // Recession events
@@ -3366,6 +3440,83 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     "US annual gift-tax exclusion per donor-recipient pair (2026 = $19,000). \
                      Per-recipient gifts above this trigger a US reporting flag.");
             });
+        }
+        ui.add_space(8.0);
+
+        // ── Estate Planning (Stage 07) ────────────────────────────────────────────
+        section(ui, "Estate Planning");
+        ui.label(RichText::new(
+            "Japan taxes inheritance heavily — up to 55%. If you're a long-term resident, \
+             your global assets are in scope. Use this to project the bill your heirs will \
+             face and to plan annual gifting under the ¥1.1M / $19k exclusion."
+        ).small().color(Color32::GRAY));
+        ui.add_space(4.0);
+        ui.checkbox(
+            &mut state.enable_estate_planning,
+            "Project Estate / Inheritance Tax",
+        ).on_hover_text(
+            "At the end of the simulation horizon (or at a user-set death date), compute \
+             the Japan Sōzoku-zei and US Estate Tax liability on your remaining global assets, \
+             apply the US-Japan treaty credit, and show the net wealth that transfers to heirs."
+        );
+        if state.enable_estate_planning {
+            ui.add_space(4.0);
+            grid(ui, "g_estate_dates", |ui| {
+                vfield_tt(ui, "Death Date (optional)",
+                    &mut state.death_date,
+                    "YYYY-MM-DD or leave blank",
+                    false,
+                    "Optional date for the estate projection. Leave blank to use the simulation end date.");
+                vfield_tt(ui, "Spouse Death Date (optional)",
+                    &mut state.spouse_death_date,
+                    "YYYY-MM-DD or leave blank",
+                    false,
+                    "Informational — used to apply the spousal ½ deduction (配偶者の税額軽減).");
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new("Heirs").strong());
+            ui.label(RichText::new(
+                "Add each heir below. The spousal ½ deduction is automatically applied when \
+                 a Spouse heir is listed."
+            ).small().color(Color32::GRAY));
+            ui.add_space(2.0);
+
+            let mut to_remove: Option<usize> = None;
+            for (idx, heir) in state.estate_heirs.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut heir.name)
+                        .hint_text("Name")
+                        .desired_width(110.0));
+                    ui.add(egui::TextEdit::singleline(&mut heir.birth_date)
+                        .hint_text("Birth date")
+                        .desired_width(100.0));
+                    egui::ComboBox::from_id_salt(format!("heir_rel_{idx}"))
+                        .selected_text(heir.relationship.to_string())
+                        .width(90.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut heir.relationship, HeirRelationship::Spouse, "Spouse");
+                            ui.selectable_value(&mut heir.relationship, HeirRelationship::Child,  "Child");
+                            ui.selectable_value(&mut heir.relationship, HeirRelationship::Other,  "Other");
+                        });
+                    if ui.small_button("✕").clicked() {
+                        to_remove = Some(idx);
+                    }
+                });
+            }
+            if let Some(i) = to_remove { state.estate_heirs.remove(i); }
+            if ui.small_button("+ Add heir").clicked() {
+                state.estate_heirs.push(HeirEntry::default());
+            }
+
+            ui.add_space(4.0);
+            ui.checkbox(
+                &mut state.enable_gifting_optimiser,
+                "Use Lifetime Gifting Optimiser (Rough guidance — not legal advice)",
+            ).on_hover_text(
+                "Suggests how much to pre-gift each year using the ¥1.1M Japan 暦年贈与 and \
+                 $19k US §2503(b) annual exclusions, and estimates the resulting reduction \
+                 in Sōzoku-zei. Requires the Gift Sink (below) to be configured."
+            );
         }
         ui.add_space(8.0);
 

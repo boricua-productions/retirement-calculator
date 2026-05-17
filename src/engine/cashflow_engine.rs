@@ -470,6 +470,13 @@ mod tests {
             // Stage 06 defaults
             real_estate: vec![],
             enable_heloc_tier: false,
+            // Stage 07 defaults
+            enable_estate_planning: false,
+            death_date: None,
+            spouse_death_date: None,
+            heirs: vec![],
+            estate_planning_jurisdiction: crate::models::config::TaxProtocol::Both,
+            enable_gifting_optimiser: false,
         }
     }
 
