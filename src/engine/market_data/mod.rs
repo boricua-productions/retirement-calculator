@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use log::warn;
 use crate::models::config::Position;
 
@@ -9,6 +10,14 @@ pub use expense_ratio::{resolve_expense_ratio, ExpenseRatioSource, Issuer};
 
 /// Global market average CAGR fallback when live data is unavailable (7%).
 pub const GLOBAL_MARKET_FALLBACK_GROWTH: f64 = 0.07;
+
+/// V7.11 — Shared HTTP agent with timeouts to prevent indefinite hangs.
+static HTTP_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
+    ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(10))
+        .timeout_read(std::time::Duration::from_secs(15))
+        .build()
+});
 
 /// V7.7 — Snapshot of the five auto-fetchable detailed-profile components.
 /// All values are annual fractions (0.04 = 4%). Any field that could not be
@@ -147,7 +156,7 @@ impl MarketDataService {
         );
 
         let result = (|| -> Result<f64, Box<dyn std::error::Error>> {
-            let resp = ureq::get(&url)
+            let resp = HTTP_AGENT.get(&url)
                 .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
                 .call()?;
             let body = resp.into_string()?;
@@ -185,7 +194,7 @@ impl MarketDataService {
         );
 
         let result = (|| -> Result<f64, Box<dyn std::error::Error>> {
-            let resp = ureq::get(&url)
+            let resp = HTTP_AGENT.get(&url)
                 .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
                 .call()?;
 
@@ -299,7 +308,7 @@ impl MarketDataService {
             ticker
         );
         let result = (|| -> Result<f64, Box<dyn std::error::Error>> {
-            let resp = ureq::get(&url)
+            let resp = HTTP_AGENT.get(&url)
                 .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
                 .call()?;
             let body = resp.into_string()?;
@@ -339,7 +348,7 @@ impl MarketDataService {
             ticker
         );
         let result = (|| -> Result<(f64, f64), Box<dyn std::error::Error>> {
-            let resp = ureq::get(&url)
+            let resp = HTTP_AGENT.get(&url)
                 .set("User-Agent", "Mozilla/5.0 retirement-calculator/1.0")
                 .call()?;
             let body = resp.into_string()?;

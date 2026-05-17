@@ -65,8 +65,7 @@ says otherwise. For optional income streams, use `0` when that income does not a
 |-------|----------------|
 | **Start Date** | First month of the simulation. Use the date you want the model to begin tracking assets, income, and expenses. |
 | **End Date** | Last month of the simulation. A 40- to 50-year horizon is useful for retirement stress testing. |
-| **Retirement Date** | First month with no employment salary. This switches the model into retirement cashflow mode. |
-| **Rebalance Date** | Month when the retirement transition event runs. It must be on or after the retirement date. |
+| **Retirement Date** | First month with no employment salary. This switches the model into retirement cashflow mode and triggers the one-time portfolio transition event. |
 
 #### Economics
 
@@ -134,7 +133,7 @@ The model automatically handles the smooth transition at age 65: the NHI nursing
 | **Jurisdiction** | Overrides tax treatment for that account: Both, US Only, Japan Only, or Tax Free. |
 | **Ticker** | Asset symbol or fund label. |
 | **Units** | Number of shares or fund units held. |
-| **Auto-Fetch** | Pulls current price and 10-year price-only CAGR (dividends NOT reinvested) when network data is available; falls back if unavailable. |
+| **Auto-Fetch** *(V7.11: non-blocking)* | Pulls current price and 10-year price-only CAGR (dividends NOT reinvested) from Yahoo Finance in a background thread. Shows a live timer (⏳ 3s) while fetching. Network calls timeout after 25 seconds. Falls back to hardcoded defaults if unavailable. |
 | **Price USD / Price JPY** | Current asset price used for market value. DC rows can use JPY pricing. |
 | **Cost Basis** | Average USD cost basis per share/unit. Used for US gain calculations and JPY-basis fallback. |
 | **Capital Appreciation %** *(previously labelled "Growth %")* | Annual price-only change in market value. Negative values represent capital depreciation. Excludes dividend payments, interest income, and other distributions — those are tracked separately under the 📊 Detail return profile. DRIP does not change this number; it only decides whether dividends buy more shares. |
@@ -142,7 +141,7 @@ The model automatically handles the smooth transition at age 65: the NHI nursing
 | **DRIP** | Reinvest dividends instead of routing them to cash. |
 | **Dividend Reinvest Target** | Optional ticker to receive reinvested dividends. |
 | **Target Alloc %** | Desired allocation for periodic target-state rebalancing. |
-| **Rebalance Date** | Optional per-position rebalance date that overrides the global rebalance date. |
+| **Rebalance Date** | Optional per-position one-time rebalance date. Overrides global rebalancing for this position. The Timing section displays all configured rebalance schedules and warns if any occur before retirement. |
 | **Accum $/mo** | Scheduled monthly purchase amount during accumulation. |
 | **Freq** | How often the scheduled purchase fires: monthly, quarterly, or annually. |
 | **Stop at Retirement** | Stops scheduled buys once retirement begins. |
@@ -231,7 +230,7 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | **Monthly Contribution (JPY)** | Monthly DC/iDeCo contribution during accumulation. |
 | **Contribution Fund** | Fund label used for DC purchases. |
 | **Ticker** *(optional)* | Yahoo Finance symbol for the fund (e.g. `0331418A.T`). When set, the row's **✨** button fills Price (¥/万口) and Total Return % from Yahoo; leave blank to keep the row fully manual. |
-| **✨ Auto-Fetch** *(per fund)* | Calls Yahoo's chart API for the row's Ticker. For `.T` mutual-fund symbols, Yahoo returns 基準価額 in JPY per 10,000 units, so the value drops straight into Price (¥/万口). Total Return % is filled from the 10-year price CAGR. |
+| **✨ Auto-Fetch** *(per fund, V7.11: non-blocking)* | Calls Yahoo's chart API in a background thread. For `.T` mutual-fund symbols, Yahoo returns 基準価額 in JPY per 10,000 units, so the value drops straight into Price (¥/万口). Total Return % is filled from the 10-year price CAGR. Shows a live timer (⏳ 2s) while fetching; timeouts after 25 seconds. |
 | **Allocation %** | Allocation weight for the DC fund row. |
 | **Total Return %** *(previously labelled "Custom Growth %")* | DC fund-specific annual total-return assumption (capital appreciation + reinvested distributions combined). DC accounts are tax-deferred and always reinvest internally, so this single CAGR drives all growth regardless of the DRIP toggle elsewhere. The DC plan also exposes a **Fallback Total Return %** for funds with no per-row value set. |
 | **DC Payout Method** | `LUMP_SUM` moves DC value into taxable at payout; `ANNUITY_20YR` pays monthly over 20 years. |
@@ -435,6 +434,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V7.11.1** | UI/UX Polish (Stage 13) — **Non-blocking auto-fetch with live timers**: All Yahoo Finance network calls (✨ buttons for positions, DC funds, RSUs, detailed profiles) now run in background threads using `std::thread::spawn` + `mpsc` channels. Live timer indicators (⏳ 3s) appear next to fetch buttons showing elapsed time. HTTP timeouts added (10s connect + 15s read = 25s max) via shared `ureq::Agent`. UI remains responsive during all fetch operations. **Rebalance schedule clarity**: Removed editable "Rebalance Date" field from Timing section (auto-set to `retirement_date` for backward compatibility with `handle_transition`). Replaced with read-only summary showing: global rebalancing status (enabled/disabled + frequency), per-position rebalance overrides with dates, and ⚠ amber warnings when any rebalance date occurs before retirement. All 31 integration tests passing; zero compile warnings. |
 | **V7.11** | Gradual Pre-Retirement Buffer Accumulation (Stage 12) — **Tax-efficient cash reserve building**: Instead of liquidating $50k–$200k of portfolio shares in one month at retirement (creating a substantial capital gains tax event compounded with final-year salary), the model can now **gradually divert monthly income** into cash reserves over a 12–36 month ramp period before retirement. **Funding Timing selector**: Each buffer (War Chest, Bridge Fund) independently chooses **"At Retirement"** (default, V7.10.1 behavior) or **"Gradually Before Retirement"**. **Configurable ramp periods**: Default 24 months for War Chest, 18 months for Bridge Fund; monthly skim = (target − already set aside) ÷ months remaining. **Contribution priority**: Cash building takes precedence over equity purchases — the monthly VTI/SCHD contribution is reduced by the skim amount; Roth and DC contributions are unaffected (use-it-or-lose-it limits preserved). **Transition transparency**: TransitionAllocation reports both "Pre-accumulated" and "Portfolio pull" amounts so users see the tax savings. **Annual tracking**: `AnnualSnapshot` gains `buffer_accumulation_jpy` and `buffer_accumulation_usd` to show year-by-year skim totals. **Backward compatible**: `"at_retirement"` default maintains exact V7.10.1 regression. JSON fields: `war_chest_funding_timing`, `war_chest_ramp_months`, `bridge_fund_funding_timing`, `bridge_fund_ramp_months`. All 108 unit tests + 31 integration tests passing. |
 | **V7.10.1** | Buffer Funding Selection (Stage 11A) — **Master toggles for cash buffers**: `war_chest_enabled` and `bridge_fund_enabled` (both default `true`) allow users to disable buffer funding at retirement when they already hold sufficient cash outside the model or when guaranteed income covers expenses from day one. **Pre-funded amount exposure**: New "Already Set Aside" UI fields expose `pre_funded_war_chest_jpy` and `pre_funded_bridge_usd` so users don't need to hand-edit JSON; the model liquidates portfolio shares only to cover the gap (Target − Pre-funded). **Waterfall respect**: When disabled, Tier 3 (War Chest) and Tier 6 (Bridge Fund) are bypassed in post-retirement cashflow; Dynamic regime (Mode B) buffer-gap calculations skip disabled buffers. **Transition Panel clarity**: Shows "$0 (disabled)" when a buffer is disabled instead of silently omitting the row. **Backward compatible**: Missing fields default to `true` (enabled) so existing scenarios fund both buffers as before. 2 new integration tests + all 108 unit tests passing. JSON round-trip verified. |
 | **V7.10** | Long-Term Care Insurance (介護保険 / Kaigo Hoken) — **Mandatory age-65+ premium**: Models the separate municipal premium (typically ¥30k–¥150k/year based on pension income) that replaces the NHI nursing-care component at age 65. **Smooth transition**: NHI nursing-care (¥12.6k/year per-capita, ages 40–64) automatically drops at age 65, and the bracket-based Kaigo Hoken premium appears as a separate expense line with no double-counting. **9-tier income brackets**: Sagamihara 2026 and Nagoya 2026 defaults included; user-overridable for any municipality. **Care scenarios**: Optional out-of-pocket cost projections beyond premium — `None` (premium only), `Low` (~¥20k/mo from age 75), `Medium` (~¥40k/mo from age 75), `High` (~¥80k/mo from age 80, stress-test). **Master toggle**: `kaigo_hoken_enabled: bool` (default `true`) reverts to legacy behavior when disabled. **UI**: Full section in Input Panel with care scenario selector and tooltips; Overview Panel shows lifetime "Long-Term Care Cost" with premium/care breakdown. **AnnualSnapshot** gains `kaigo_hoken_premium_jpy` and `kaigo_out_of_pocket_jpy`. 6 new integration tests; all 139 tests passing. Addresses the ¥30k–¥150k/year expense understatement in retirement projections for Japan residents age 65+. |
@@ -456,7 +456,7 @@ identically.
 | **V7.1** | **Defensive JPY-first spending waterfall** added via `withdrawal_waterfall` (`defensive` default). USD-to-JPY conversions apply `fx_spread_penalty` (0.5% default). Lumpy dividends by month and `dividend_currency` support. |
 | **V7.0** | 🇯🇵 **Japan-Resident Cost Basis model** — `Position.avg_purchase_price_jpy` carries the JPY paid at purchase. ⛏ **Highest-JPY-Basis-First liquidation** sorts taxable holdings DESC by JPY basis to minimize realized gains. |
 | **V6.4 – V6.6** | 👨‍👩‍👧 **Family Demographics** — SSDI support, VA child rider extensions, and Spouse age-gating. 👥 **Marriage toggle** + Spouse SS/Nenkin estimates. ⏱ **FX Drift** step-based cadence logic. |
-| **V5.5 – V6.3** | ⚖ **Target-State Rebalancing** and **Marco Polo (Monte Carlo)** engines. ✨ **Auto-Fetch** ticker pricing. ⚙ **Per-ticker Management** (Accumulation/DRIP). 🛡 **Mathematical Hardening** — FEIE/FTC pipeline split and §904/§911 compliance. |
+| **V5.5 – V6.3** | ⚖ **Target-State Rebalancing** and **Marco Polo (Monte Carlo)** engines. ✨ **Auto-Fetch** ticker pricing (blocking, pre-V7.11). ⚙ **Per-ticker Management** (Accumulation/DRIP). 🛡 **Mathematical Hardening** — FEIE/FTC pipeline split and §904/§911 compliance. |
 ---
 
 ## Table of Contents
@@ -1190,13 +1190,14 @@ and income to USD using this rate at each simulation step.
 
 ### V5.8 Input Config additions
 
-#### ✨ Auto-Calc button (position rows)
+#### ✨ Auto-Fetch button (position rows) — V7.11: Non-blocking with live timer
 
-Every ticker cell in a position row has a ✨ button. Clicking it calls the Yahoo Finance v8
-chart API synchronously for that ticker and populates:
+Every ticker cell in a position row has a ✨ button. Clicking it spawns a background thread that calls the Yahoo Finance v8 chart API for that ticker and populates:
 
 - **Price USD** — most recent adjusted close (5-day daily window)
 - **Capital Appreciation %** — 10-year split-adjusted, price-only CAGR (dividends NOT reinvested; monthly interval, 10-year range). For detailed-profile auto-fetches on funds/ETFs, the same Yahoo call additionally pulls dividend yield and capital-gains distributions. The **expense ratio** resolves via a separate per-issuer pipeline (`engine/market_data/expense_ratio.rs`): Vanguard and Invesco have live adapters; Schwab/iShares/SSGA tickers fall through to a hardcoded fallback table covering 47 common ETFs (VOO, VTI, SCHD, QQQ, QQQM, SPY, IVV, AGG, …). Each value is range-validated to [0.01%, 5%]; a failed fetch with no fallback preserves the user's existing value rather than overwriting it with 0%. The applied source is logged per ticker (e.g. `[ExpenseRatio] VOO: applied 0.030% (fetched: Vanguard)`).
+
+**V7.11 improvements:** Auto-fetch operations now run in background threads to prevent UI freezes. A live timer (⏳ 3s) appears next to the button while fetching. Network calls timeout after 25 seconds (10s connect + 15s read). The button is disabled while a fetch is in progress for that position.
 
 The fields remain freely editable after the fill, allowing custom "What-if" overrides.
 Falls back to built-in defaults on any network or parse error.
@@ -1271,7 +1272,7 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 | `start_date` | Start Date | `YYYY-MM-DD` | `2025-12-31` | Simulation start — first month processed |
 | `end_date` | End Date | `YYYY-MM-DD` | `2080-12-31` | Simulation end |
 | `retirement_date` | Retirement Date | `YYYY-MM-DD` | `2031-01-01` | Last day of employment; income / expense regime switches here |
-| `rebalance_date` | Rebalance Date | `YYYY-MM-DD` | `2031-02-01` | Portfolio rebalance event; must be ≥ `retirement_date` |
+| `rebalance_date` | *(deprecated V7.11)* | `YYYY-MM-DD` | `2031-02-01` | **Deprecated.** Auto-set to `retirement_date` during config save. The one-time portfolio transition event now triggers at retirement. Per-position rebalance dates remain available via `Position.rebalance_date`. |
 | `birth_date` | User Birthday | `YYYY-MM-DD` | `1900-01-01` | Primary retiree's full birth date — drives FERS, SS, Nenkin start-age math, IRS senior add-on at 65, COLA thresholds |
 | `is_married` | Married | `bool` | derived | **V6.6.** When `true`, spouse demographics + Spouse SS / Spouse Nenkin participate. Defaults to `true` when `spouse_birth_date` is present, else `false` |
 | `spouse_birth_date` | Spouse Birthday | `YYYY-MM-DD` | `1900-01-01` | Spouse's full birth date — second senior std-deduction add-on at 65, gates Spouse SS / Nenkin start ages |
@@ -1284,7 +1285,7 @@ before parsing. Four top-level keys: `simulation_settings`, `rsu_awards`, `holdi
 | `holdings.taxable` | JSON | Object | Taxable brokerage. Keys are ticker symbols; each entry has `qty`, `avg_cost`, and optional `avg_purchase_price_jpy`, `drip_enabled`, `dividend_reinvest_target`, `custom_growth_rate`, `category`, `dividend_months`, `dividend_currency`, `pfic_regime` *(V7.5)*, `asset_class` *(V7.6: `stock`/`etf`/`mutual_fund`/`other`)*, `return_profile` *(V7.6: nested object — see §6)* |
 | `holdings.roth_ira` / `holdings.ira` / `holdings.k401` / `holdings.nisa` / `holdings.ideco` | JSON | Object | Same per-asset schema as `taxable`. Per-component `return_profile` and `asset_class` are honoured for every positions-table account (IRA, Roth IRA, 401(k), NISA, iDeCo). Only `holdings.japan_dc` keeps the flat-growth model — see the DC schema row below. |
 | Account-level flags *(V7.7.1)* | JSON | Per-account | Each account object accepts three optional fields driving the §5.1 distribution routing gate and the per-account rebalancer: `us_tax_advantaged: bool` (default `false`) suppresses `apply_us_tax` on dividends/interest/CGD for that container; `japan_tax_advantaged: bool` (default `false`) suppresses `apply_japan_tax`; `rebalance_strategy: { targets: [{ ticker, weight }] }` defines a per-account `AccountRebalanceStrategy` that fires independently of the global `rebalance_enabled` flag and is also triggered by any RSU award with `migrate_on_retirement: true`. |
-| `holdings.japan_dc` | JSON | Object | Japan corporate DC. Multi-fund: top-level `qty` (units) and `nav_jpy_per_10k` (NAV in ¥ per 10,000 units / 万口); the per-fund allocation is persisted in `simulation_settings.dc_funds` (array of `{fund_name, ticker?, units, price_per_10k_jpy, contrib_alloc_pct, growth_rate_pct, stop_at_retirement}`). The optional `ticker` field is a Yahoo symbol (e.g. `0331418A.T`) and powers the per-fund ✨ auto-fetch in the UI; omitted when blank. |
+| `holdings.japan_dc` | JSON | Object | Japan corporate DC. Multi-fund: top-level `qty` (units) and `nav_jpy_per_10k` (NAV in ¥ per 10,000 units / 万口); the per-fund allocation is persisted in `simulation_settings.dc_funds` (array of `{fund_name, ticker?, units, price_per_10k_jpy, contrib_alloc_pct, growth_rate_pct, stop_at_retirement}`). The optional `ticker` field is a Yahoo symbol (e.g. `0331418A.T`) and powers the per-fund ✨ auto-fetch (V7.11: non-blocking with live timer) in the UI; omitted when blank. |
 | `market_prices_usd` | JSON | Object | Manual price override per ticker. Set to `0` to use fallback price |
 | `growth_rates_annual` | JSON | Object | Per-ticker annual CAGR. Ignored for any ticker when `fetch_live_growth_rates: true` |
 | `fetch_live_growth_rates` | Input Config | `bool` | `false` | When `true`, fetches 10-year CAGR from Yahoo Finance; falls back to 7% on failure |
@@ -1580,6 +1581,7 @@ cargo test
 | `tests/stage_10_kaigo_hoken.rs` *(V7.10)* | 6 | Sagamihara brackets typical retiree (¥60k at ¥1.44M pension), Nagoya vs Sagamihara mid-tier comparison, Care scenario None returns zero, Low starts at age 75 (¥20k/mo), High starts at age 80 (¥80k/mo), High-income hits Tier 9 ceiling (¥150k at ¥6M pension) |
 | `tests/stage_11a_buffer_selection.rs` *(V7.10.1)* | 2 | Compile-time field existence check (war_chest_enabled / bridge_fund_enabled), backward-compatibility documentation (missing fields default to true via loader) |
 | *(Stage 12: V7.11)* | — | Gradual Pre-Retirement Buffer Accumulation: diverts monthly income into cash reserves over a configurable ramp period (e.g., 24 months for war chest, 18 months for bridge fund) before retirement, reducing the tax-heavy lump liquidation at transition. AtRetirement mode (default) maintains V7.10.1 behavior for regression compatibility. |
+| *(Stage 13: V7.11.1)* | — | **UI/UX Improvements:** (1) Removed editable "Rebalance Date" field from Timing section; replaced with read-only rebalance schedule summary showing global + per-position rebalancing with warnings when rebalance dates occur before retirement. (2) Non-blocking auto-fetch: all Yahoo Finance network calls moved to background threads with live timer indicators (⏳ 3s) and 25-second timeouts (10s connect + 15s read). UI no longer freezes during market data fetching. |
 
 ---
 

@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use chrono::{Datelike, Local, NaiveDate};
@@ -28,6 +29,71 @@ struct SaveStatus {
     message: String,
     is_success: bool,
     when: Instant,
+}
+
+// ─── Background fetch state (V7.11) ───────────────────────────────────────────
+
+/// Tracks pending background market-data fetches to prevent UI freeze.
+pub struct FetchState {
+    /// Channel receiver for completed fetch results.
+    pub rx: Receiver<FetchResult>,
+    /// Channel sender (cloned into spawned threads).
+    pub tx: Sender<FetchResult>,
+    /// Currently pending fetches: (account_idx, position_idx or fund_idx) -> start_time.
+    pub pending: HashMap<(usize, usize), Instant>,
+    /// Currently pending RSU fetches: rsu_idx -> start_time.
+    pub pending_rsu: HashMap<usize, Instant>,
+}
+
+/// Result payload from a background fetch thread.
+pub enum FetchResult {
+    PriceAndCagr {
+        account_idx: usize,
+        position_idx: usize,
+        price: f64,
+        cagr: f64,
+    },
+    DetailedProfile {
+        account_idx: usize,
+        position_idx: usize,
+        profile: crate::engine::market_data::DetailedMarketProfile,
+        show_cap: bool,
+        show_nav: bool,
+        show_cg: bool,
+        show_er: bool,
+    },
+    DcFund {
+        account_idx: usize,
+        fund_idx: usize,
+        price: f64,
+        cagr: f64,
+    },
+    RsuPriceAndCagr {
+        rsu_idx: usize,
+        price: f64,
+        cagr: f64,
+    },
+    RsuDetailedProfile {
+        rsu_idx: usize,
+        profile: crate::engine::market_data::DetailedMarketProfile,
+    },
+    Error {
+        account_idx: usize,
+        position_idx: usize,
+        message: String,
+    },
+}
+
+impl FetchState {
+    pub fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Self {
+            rx,
+            tx,
+            pending: HashMap::new(),
+            pending_rsu: HashMap::new(),
+        }
+    }
 }
 
 // ─── Public UI data structures ────────────────────────────────────────────────
@@ -366,6 +432,8 @@ pub struct InputPanelState {
     pub source_path: Option<String>,
     // ── Signals back to app.rs ───────────────────────────────────────────────
     pub reload_path: Option<String>,
+    // ── V7.11 — Background fetch state ────────────────────────────────────────
+    pub fetch_state: FetchState,
 }
 
 /// Stage 07 — A single heir row in the input panel.
@@ -495,6 +563,7 @@ impl Default for InputPanelState {
             source_json:  Some(blank_json),
             source_path:  None,
             reload_path:  None,
+            fetch_state:  FetchState::new(),
         }
     }
 }
@@ -929,6 +998,7 @@ impl InputPanelState {
             start_date:      str_val("start_date",      ""),
             end_date:        str_val("end_date",         ""),
             retirement_date: str_val("retirement_date",  ""),
+            // V7.11: Still load rebalance_date for backward-compat, but UI no longer edits it
             rebalance_date:  str_val("rebalance_date",   ""),
             usd_jpy_rate:    num_str("usd_jpy_rate",     "0"),
             inflation_us:    num_str("inflation_us_cpi", "0.028"),
@@ -1078,6 +1148,7 @@ impl InputPanelState {
             source_json: Some(json.clone()),
             source_path: Some(path.to_string()),
             reload_path: None,
+            fetch_state: FetchState::new(),
         }
     }
 
@@ -1096,7 +1167,7 @@ impl InputPanelState {
         if bad_date(&self.start_date)      { bad.insert("start_date"); }
         if bad_date(&self.end_date)        { bad.insert("end_date"); }
         if bad_date(&self.retirement_date) { bad.insert("retirement_date"); }
-        if bad_date(&self.rebalance_date)  { bad.insert("rebalance_date"); }
+        // V7.11: rebalance_date no longer user-editable (auto-set to retirement_date)
 
         if bad_f64(&self.inflation_us)    { bad.insert("inflation_us"); }
         if bad_f64(&self.inflation_japan) { bad.insert("inflation_japan"); }
@@ -1187,7 +1258,8 @@ impl InputPanelState {
             set_str!("start_date",      self.start_date);
             set_str!("end_date",        self.end_date);
             set_str!("retirement_date", self.retirement_date);
-            set_str!("rebalance_date",  self.rebalance_date);
+            // V7.11: Auto-set rebalance_date to retirement_date for transition event
+            set_str!("rebalance_date",  self.retirement_date);
             set_f64!("usd_jpy_rate",         self.usd_jpy_rate);
             set_f64!("inflation_us_cpi",     self.inflation_us);
             set_f64!("inflation_japan_cpi",  self.inflation_japan);
@@ -1835,6 +1907,83 @@ impl InputPanelState {
 // ─── Public render function ───────────────────────────────────────────────────
 
 pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
+    // ── V7.11: Poll for completed background fetch results ──────────────────────
+    while let Ok(result) = state.fetch_state.rx.try_recv() {
+        match result {
+            FetchResult::PriceAndCagr { account_idx, position_idx, price, cagr } => {
+                state.fetch_state.pending.remove(&(account_idx, position_idx));
+                if account_idx < state.accounts.len() && position_idx < state.accounts[account_idx].positions.len() {
+                    let pos = &mut state.accounts[account_idx].positions[position_idx];
+                    pos.unit_value = format!("{:.2}", price);
+                    pos.growth_pct = format!("{:.1}", cagr * 100.0);
+                }
+            }
+            FetchResult::DetailedProfile { account_idx, position_idx, profile, show_cap, show_nav, show_cg, show_er } => {
+                state.fetch_state.pending.remove(&(account_idx, position_idx));
+                if account_idx < state.accounts.len() && position_idx < state.accounts[account_idx].positions.len() {
+                    let pos = &mut state.accounts[account_idx].positions[position_idx];
+                    pos.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
+                    if show_cap { pos.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0); }
+                    if show_nav { pos.nav_growth_pct     = format!("{:.3}", profile.nav_growth     * 100.0); }
+                    if show_cg  { pos.cap_gains_dist_pct = format!("{:.3}", profile.cap_gains_dist * 100.0); }
+                    if show_er {
+                        use crate::engine::market_data::ExpenseRatioSource;
+                        match profile.expense_ratio_source {
+                            ExpenseRatioSource::Unavailable => {
+                                log::warn!(
+                                    "[ExpenseRatio] (background fetch): no live source and no fallback — kept existing value.",
+                                );
+                            }
+                            _ => {
+                                pos.expense_ratio_pct = format!("{:.3}", profile.expense_ratio * 100.0);
+                                log::info!(
+                                    "[ExpenseRatio] (background fetch): applied {:.3}% ({})",
+                                    profile.expense_ratio * 100.0,
+                                    profile.expense_ratio_source.label(),
+                                );
+                            }
+                        }
+                    }
+                    pos.use_detailed_profile = true;
+                }
+            }
+            FetchResult::DcFund { account_idx, fund_idx, price, cagr } => {
+                state.fetch_state.pending.remove(&(account_idx, fund_idx));
+                if account_idx < state.accounts.len() && fund_idx < state.accounts[account_idx].dc_funds.len() {
+                    let fund = &mut state.accounts[account_idx].dc_funds[fund_idx];
+                    fund.price_per_10k = format!("{:.0}", price);
+                    fund.growth_pct    = format!("{:.1}", cagr * 100.0);
+                }
+            }
+            FetchResult::RsuPriceAndCagr { rsu_idx, price, cagr } => {
+                state.fetch_state.pending_rsu.remove(&rsu_idx);
+                if rsu_idx < state.rsu_awards.len() {
+                    let rsu = &mut state.rsu_awards[rsu_idx];
+                    rsu.unit_value = format!("{:.2}", price);
+                    rsu.growth_pct = format!("{:.1}", cagr * 100.0);
+                }
+            }
+            FetchResult::RsuDetailedProfile { rsu_idx, profile } => {
+                state.fetch_state.pending_rsu.remove(&rsu_idx);
+                if rsu_idx < state.rsu_awards.len() {
+                    let rsu = &mut state.rsu_awards[rsu_idx];
+                    rsu.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0);
+                    rsu.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
+                    rsu.use_detailed_profile = true;
+                }
+            }
+            FetchResult::Error { account_idx, position_idx, message } => {
+                state.fetch_state.pending.remove(&(account_idx, position_idx));
+                log::warn!("[AutoFetch] Error for ({}, {}): {}", account_idx, position_idx, message);
+            }
+        }
+    }
+
+    // Request repaint when fetches are pending to update elapsed timer
+    if !state.fetch_state.pending.is_empty() || !state.fetch_state.pending_rsu.is_empty() {
+        ui.ctx().request_repaint();
+    }
+
     ui.heading("Input Configuration");
     ui.add_space(4.0);
 
@@ -1954,9 +2103,72 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 "Last simulated month. Defaults to today + 50 years; long horizons surface FX drift and NHI cost compounding.");
             vfield_tt(ui, "Retirement Date", &mut state.retirement_date, "YYYY-MM-DD", !errors.contains("retirement_date"),
                 "First month with no salary. Drives FERS/SS bridge math and Japan resident-tax spike year.");
-            vfield_tt(ui, "Rebalance Date",  &mut state.rebalance_date,  "YYYY-MM-DD", !errors.contains("rebalance_date"),
-                "Major portfolio rebalance event. Per-position overrides (V6.6) supersede this.");
         });
+
+        // ── V7.11: Read-only rebalance schedule summary ─────────────────────────
+        ui.add_space(6.0);
+        ui.label(RichText::new("Rebalance Schedule:").strong());
+        ui.add_space(2.0);
+
+        let retirement_date_parsed = chrono::NaiveDate::parse_from_str(&state.retirement_date, "%Y-%m-%d").ok();
+        let mut has_warning = false;
+
+        // Global rebalancing schedule
+        if state.rebalance_enabled {
+            let freq_text = match state.rebalance_frequency.as_str() {
+                "Monthly"      => "Monthly",
+                "Quarterly"    => "Quarterly",
+                "Semi-Annual"  => "Semi-Annual",
+                "Annual"       => "Annual",
+                _ => "Unknown frequency",
+            };
+            ui.label(RichText::new(format!("  Global: {} rebalancing", freq_text))
+                .small().color(Color32::from_rgb(200, 200, 200)));
+        } else {
+            ui.label(RichText::new("  Global: Rebalancing disabled")
+                .small().color(Color32::from_rgb(160, 160, 160)));
+        }
+
+        // Per-position rebalance overrides
+        for (_acct_idx, acct) in state.accounts.iter().enumerate() {
+            for (_pos_idx, pos) in acct.positions.iter().enumerate() {
+                if !pos.rebalance_date.is_empty() {
+                    if let Ok(rebal_date) = chrono::NaiveDate::parse_from_str(&pos.rebalance_date, "%Y-%m-%d") {
+                        let warning = if let Some(ret_date) = retirement_date_parsed {
+                            if rebal_date < ret_date {
+                                has_warning = true;
+                                format!(" ⚠ before retirement ({} < {})", pos.rebalance_date, state.retirement_date)
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+
+                        let text = format!("  {} / {}: One-time ({}){}",
+                            acct.account_type, pos.ticker, pos.rebalance_date, warning);
+                        let color = if !warning.is_empty() {
+                            Color32::from_rgb(255, 180, 50)  // amber/orange
+                        } else {
+                            Color32::from_rgb(200, 200, 200)
+                        };
+                        ui.label(RichText::new(text).small().color(color));
+                    }
+                }
+            }
+        }
+
+        if !state.rebalance_enabled && !state.accounts.iter().any(|a| a.positions.iter().any(|p| !p.rebalance_date.is_empty())) {
+            ui.label(RichText::new("  No rebalancing configured")
+                .small().italics().color(Color32::from_rgb(140, 140, 140)));
+        }
+
+        if has_warning {
+            ui.add_space(4.0);
+            ui.label(RichText::new("⚠ Warning: Some rebalance dates occur before retirement. This may not be intended.")
+                .small().color(Color32::from_rgb(255, 180, 50)));
+        }
+        ui.add_space(4.0);
 
         // ── Economics ────────────────────────────────────────────────────────────
         section(ui, "Economics");
@@ -2527,11 +2739,22 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                     ui.add(egui::TextEdit::singleline(&mut fund.ticker)
                                         .hint_text("e.g. 0331418A.T").desired_width(100.0)
                                         .id(egui::Id::new("ft").with(acct_idx).with(fi)));
-                                    if ui.small_button("✨")
-                                        .on_hover_text("Auto-fill Price (¥/万口) & Total Return % from Yahoo Finance.")
-                                        .clicked()
-                                    {
-                                        dc_auto_fill = Some((acct_idx, fi));
+                                    // V7.11: Show loading indicator or fetch button
+                                    let is_fetching = state.fetch_state.pending.contains_key(&(acct_idx, fi));
+                                    if is_fetching {
+                                        let elapsed = state.fetch_state.pending[&(acct_idx, fi)].elapsed();
+                                        ui.label(
+                                            RichText::new(format!("⏳ {:.0}s", elapsed.as_secs_f32()))
+                                                .small()
+                                                .color(Color32::from_rgb(255, 200, 80))
+                                        );
+                                    } else {
+                                        if ui.small_button("✨")
+                                            .on_hover_text("Auto-fill Price (¥/万口) & Total Return % from Yahoo Finance.")
+                                            .clicked()
+                                        {
+                                            dc_auto_fill = Some((acct_idx, fi));
+                                        }
                                     }
                                     ui.add(egui::TextEdit::singleline(&mut fund.units)
                                         .hint_text("e.g. 15000").desired_width(80.0)
@@ -2633,11 +2856,22 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                             .hint_text("e.g. 250")
                                             .desired_width(140.0));
 
-                                        if ui.small_button("✨")
-                                            .on_hover_text("Auto-fill Price & Capital Appreciation % from Yahoo Finance (10-year price CAGR, dividends NOT reinvested).")
-                                            .clicked()
-                                        {
-                                            auto_fill = Some((acct_idx, pos_idx));
+                                        // V7.11: Show loading indicator or fetch button
+                                        let is_fetching = state.fetch_state.pending.contains_key(&(acct_idx, pos_idx));
+                                        if is_fetching {
+                                            let elapsed = state.fetch_state.pending[&(acct_idx, pos_idx)].elapsed();
+                                            ui.label(
+                                                RichText::new(format!("⏳ {:.0}s", elapsed.as_secs_f32()))
+                                                    .small()
+                                                    .color(Color32::from_rgb(255, 200, 80))
+                                            );
+                                        } else {
+                                            if ui.small_button("✨")
+                                                .on_hover_text("Auto-fill Price & Capital Appreciation % from Yahoo Finance (10-year price CAGR, dividends NOT reinvested).")
+                                                .clicked()
+                                            {
+                                                auto_fill = Some((acct_idx, pos_idx));
+                                            }
                                         }
 
                                         ui.add(egui::TextEdit::singleline(&mut pos.unit_value)
@@ -2804,19 +3038,30 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                                     "Use detailed return profile")
                                                     .on_hover_text("When on, the engine drives total return from the components below (capital appreciation + dividend payments + interest + cap-gains distributions + …) instead of the flat Capital Appreciation % column.");
                                                 ui.add_space(10.0);
-                                                if ui.small_button("✨ Auto-Fetch")
-                                                    .on_hover_text(
-                                                        "Fetch the asset-class-appropriate components from Yahoo Finance:\n\
-                                                         • Stock: Capital Appreciation + Dividend Payments\n\
-                                                         • ETF: Capital Appreciation + Dividend Payments + Capital-Gains Distributions + Expense Ratio\n\
-                                                         • Mutual Fund: NAV Appreciation + Dividend Payments + Capital-Gains Distributions + Expense Ratio\n\
-                                                         • Other: all of the above\n\
-                                                         Interest Income, Special Distributions, and Return of Capital are not exposed \
-                                                         by Yahoo and remain under manual control."
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    auto_fill_profile = Some((acct_idx, pos_idx));
+                                                // V7.11: Show loading indicator or fetch button
+                                                let is_fetching = state.fetch_state.pending.contains_key(&(acct_idx, pos_idx));
+                                                if is_fetching {
+                                                    let elapsed = state.fetch_state.pending[&(acct_idx, pos_idx)].elapsed();
+                                                    ui.label(
+                                                        RichText::new(format!("⏳ Fetching... {:.0}s", elapsed.as_secs_f32()))
+                                                            .small()
+                                                            .color(Color32::from_rgb(255, 200, 80))
+                                                    );
+                                                } else {
+                                                    if ui.small_button("✨ Auto-Fetch")
+                                                        .on_hover_text(
+                                                            "Fetch the asset-class-appropriate components from Yahoo Finance:\n\
+                                                             • Stock: Capital Appreciation + Dividend Payments\n\
+                                                             • ETF: Capital Appreciation + Dividend Payments + Capital-Gains Distributions + Expense Ratio\n\
+                                                             • Mutual Fund: NAV Appreciation + Dividend Payments + Capital-Gains Distributions + Expense Ratio\n\
+                                                             • Other: all of the above\n\
+                                                             Interest Income, Special Distributions, and Return of Capital are not exposed \
+                                                             by Yahoo and remain under manual control."
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        auto_fill_profile = Some((acct_idx, pos_idx));
+                                                    }
                                                 }
                                             });
                                             ui.label(RichText::new(
@@ -2973,41 +3218,58 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         if let Some(idx) = remove_account {
             state.accounts.remove(idx);
         }
+        // V7.11: Spawn background thread for price/CAGR fetch
         if let Some((ai, pi)) = auto_fill {
             if ai < state.accounts.len() && pi < state.accounts[ai].positions.len() {
                 let ticker = state.accounts[ai].positions[pi].ticker.clone();
-                if !ticker.is_empty() {
-                    let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
-                    let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
-                    let pos = &mut state.accounts[ai].positions[pi];
-                    pos.unit_value = format!("{:.2}", price);
-                    pos.growth_pct = format!("{:.1}", cagr * 100.0);
+                if !ticker.is_empty() && !state.fetch_state.pending.contains_key(&(ai, pi)) {
+                    let tx = state.fetch_state.tx.clone();
+                    state.fetch_state.pending.insert((ai, pi), Instant::now());
+                    std::thread::spawn(move || {
+                        let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
+                        let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
+                        let _ = tx.send(FetchResult::PriceAndCagr {
+                            account_idx: ai,
+                            position_idx: pi,
+                            price,
+                            cagr,
+                        });
+                    });
                 }
             }
         }
+        // V7.11: Spawn background thread for DC fund fetch
         if let Some((ai, fi)) = dc_auto_fill {
             if ai < state.accounts.len() && fi < state.accounts[ai].dc_funds.len() {
                 let ticker = state.accounts[ai].dc_funds[fi].ticker.trim().to_string();
                 if ticker.is_empty() {
                     log::warn!("[DC Auto-Fetch] fund #{}: no ticker set — enter a Yahoo symbol (e.g. 0331418A.T) first.", fi + 1);
-                } else {
-                    // Yahoo's v8/chart endpoint returns prices in the security's native currency.
-                    // For Japanese mutual-fund tickers (`.T`), that means JPY per 10,000 units (基準価額),
-                    // which lines up directly with the ¥/万口 column — no conversion needed.
-                    let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
-                    let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
-                    let fund = &mut state.accounts[ai].dc_funds[fi];
-                    fund.price_per_10k = format!("{:.0}", price);
-                    fund.growth_pct    = format!("{:.1}", cagr * 100.0);
-                    log::info!("[DC Auto-Fetch] {}: price ¥{:.0}/万口, CAGR {:.2}%", ticker, price, cagr * 100.0);
+                } else if !state.fetch_state.pending.contains_key(&(ai, fi)) {
+                    let tx = state.fetch_state.tx.clone();
+                    state.fetch_state.pending.insert((ai, fi), Instant::now());
+                    std::thread::spawn(move || {
+                        // Yahoo's v8/chart endpoint returns prices in the security's native currency.
+                        // For Japanese mutual-fund tickers (`.T`), that means JPY per 10,000 units (基準価額),
+                        // which lines up directly with the ¥/万口 column — no conversion needed.
+                        let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
+                        let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
+                        log::info!("[DC Auto-Fetch] {}: price ¥{:.0}/万口, CAGR {:.2}%", ticker, price, cagr * 100.0);
+                        let _ = tx.send(FetchResult::DcFund {
+                            account_idx: ai,
+                            fund_idx: fi,
+                            price,
+                            cagr,
+                        });
+                    });
                 }
             }
         }
+        // V7.11: Spawn background thread for detailed profile fetch
         if let Some((ai, pi)) = auto_fill_profile {
             if ai < state.accounts.len() && pi < state.accounts[ai].positions.len() {
                 let ticker    = state.accounts[ai].positions[pi].ticker.clone();
                 let class_str = state.accounts[ai].positions[pi].asset_class.clone();
-                if !ticker.is_empty() {
+                if !ticker.is_empty() && !state.fetch_state.pending.contains_key(&(ai, pi)) {
                     let (show_cap, show_nav, show_cg, show_er) = match class_str.as_str() {
                         "Stock"      => (true,  false, false, false),
                         "ETF"        => (true,  false, true,  true ),
@@ -3015,39 +3277,27 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                         "Other"      => (true,  true,  true,  true ),
                         _            => (true,  false, false, false),
                     };
-                    let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker, show_er);
-                    let pos = &mut state.accounts[ai].positions[pi];
-                    pos.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
-                    if show_cap { pos.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0); }
-                    if show_nav { pos.nav_growth_pct     = format!("{:.3}", profile.nav_growth     * 100.0); }
-                    if show_cg  { pos.cap_gains_dist_pct = format!("{:.3}", profile.cap_gains_dist * 100.0); }
-                    if show_er {
-                        use crate::engine::market_data::ExpenseRatioSource;
-                        match profile.expense_ratio_source {
-                            ExpenseRatioSource::Unavailable => {
-                                log::warn!(
-                                    "[ExpenseRatio] {}: no live source and no fallback — kept your existing value '{}'.",
-                                    ticker, pos.expense_ratio_pct,
-                                );
-                            }
-                            _ => {
-                                pos.expense_ratio_pct = format!("{:.3}", profile.expense_ratio * 100.0);
-                                log::info!(
-                                    "[ExpenseRatio] {}: applied {:.3}% ({})",
-                                    ticker, profile.expense_ratio * 100.0,
-                                    profile.expense_ratio_source.label(),
-                                );
-                            }
+                    let tx = state.fetch_state.tx.clone();
+                    state.fetch_state.pending.insert((ai, pi), Instant::now());
+                    std::thread::spawn(move || {
+                        let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker, show_er);
+                        if matches!(class_str.as_str(), "MutualFund" | "Other") {
+                            log::warn!(
+                                "[MarketData] {}: Yahoo does not expose interest_yield, special_dist, \
+                                 or roc — those fields were left as-is. Edit manually if needed.",
+                                ticker
+                            );
                         }
-                    }
-                    if matches!(class_str.as_str(), "MutualFund" | "Other") {
-                        log::warn!(
-                            "[MarketData] {}: Yahoo does not expose interest_yield, special_dist, \
-                             or roc — those fields were left as-is. Edit manually if needed.",
-                            ticker
-                        );
-                    }
-                    pos.use_detailed_profile = true;
+                        let _ = tx.send(FetchResult::DetailedProfile {
+                            account_idx: ai,
+                            position_idx: pi,
+                            profile,
+                            show_cap,
+                            show_nav,
+                            show_cg,
+                            show_er,
+                        });
+                    });
                 }
             }
         }
@@ -3812,11 +4062,22 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             .hint_text("0").desired_width(44.0)
                             .id(egui::Id::new("rcv").with(rsu_idx)));
                         ui.checkbox(&mut state.rsu_awards[rsu_idx].delayed_initial_vest, "");
-                        if ui.small_button("✨")
-                            .on_hover_text("Auto-fill Price & Capital Appreciation % from Yahoo Finance (10-year price CAGR, dividends NOT reinvested).")
-                            .clicked()
-                        {
-                            rsu_auto_fill_simple = Some(rsu_idx);
+                        // V7.11: Show loading indicator or fetch button
+                        let is_fetching = state.fetch_state.pending_rsu.contains_key(&rsu_idx);
+                        if is_fetching {
+                            let elapsed = state.fetch_state.pending_rsu[&rsu_idx].elapsed();
+                            ui.label(
+                                RichText::new(format!("⏳ {:.0}s", elapsed.as_secs_f32()))
+                                    .small()
+                                    .color(Color32::from_rgb(255, 200, 80))
+                            );
+                        } else {
+                            if ui.small_button("✨")
+                                .on_hover_text("Auto-fill Price & Capital Appreciation % from Yahoo Finance (10-year price CAGR, dividends NOT reinvested).")
+                                .clicked()
+                            {
+                                rsu_auto_fill_simple = Some(rsu_idx);
+                            }
                         }
                         ui.add(egui::TextEdit::singleline(&mut state.rsu_awards[rsu_idx].unit_value)
                             .hint_text("current $").desired_width(74.0)
@@ -3867,15 +4128,26 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             ui.checkbox(&mut row.use_detailed_profile, "Use detailed return profile")
                                 .on_hover_text("When on, the engine seeds the post-vest Asset's capital appreciation and dividend payments from the component fields below.");
                             ui.add_space(10.0);
-                            if ui.small_button("✨ Auto-Fetch")
-                                .on_hover_text(
-                                    "Fetch Capital Appreciation (10y price CAGR, dividends NOT reinvested) \
-                                     and Dividend Payments (TTM yield) from Yahoo Finance. Single-stock RSUs \
-                                     do not have expense ratios or capital-gains distributions."
-                                )
-                                .clicked()
-                            {
-                                rsu_auto_fill_profile = Some(rsu_idx);
+                            // V7.11: Show loading indicator or fetch button
+                            let is_fetching = state.fetch_state.pending_rsu.contains_key(&rsu_idx);
+                            if is_fetching {
+                                let elapsed = state.fetch_state.pending_rsu[&rsu_idx].elapsed();
+                                ui.label(
+                                    RichText::new(format!("⏳ Fetching... {:.0}s", elapsed.as_secs_f32()))
+                                        .small()
+                                        .color(Color32::from_rgb(255, 200, 80))
+                                );
+                            } else {
+                                if ui.small_button("✨ Auto-Fetch")
+                                    .on_hover_text(
+                                        "Fetch Capital Appreciation (10y price CAGR, dividends NOT reinvested) \
+                                         and Dividend Payments (TTM yield) from Yahoo Finance. Single-stock RSUs \
+                                         do not have expense ratios or capital-gains distributions."
+                                    )
+                                    .clicked()
+                                {
+                                    rsu_auto_fill_profile = Some(rsu_idx);
+                                }
                             }
                         });
                         ui.label(RichText::new(
@@ -3913,16 +4185,22 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     });
             }
 
-            // Deferred mutations for RSU rows.
+            // V7.11: Deferred mutations for RSU rows — spawn background thread
             if let Some(idx) = rsu_auto_fill_simple {
                 if idx < state.rsu_awards.len() {
                     let ticker = state.rsu_awards[idx].ticker.clone();
-                    if !ticker.is_empty() {
-                        let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
-                        let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
-                        let row = &mut state.rsu_awards[idx];
-                        row.unit_value = format!("{:.2}", price);
-                        row.growth_pct = format!("{:.1}", cagr * 100.0);
+                    if !ticker.is_empty() && !state.fetch_state.pending_rsu.contains_key(&idx) {
+                        let tx = state.fetch_state.tx.clone();
+                        state.fetch_state.pending_rsu.insert(idx, Instant::now());
+                        std::thread::spawn(move || {
+                            let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
+                            let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
+                            let _ = tx.send(FetchResult::RsuPriceAndCagr {
+                                rsu_idx: idx,
+                                price,
+                                cagr,
+                            });
+                        });
                     }
                 }
             }
@@ -3937,16 +4215,21 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     }
                 }
             }
+            // V7.11: Spawn background thread for RSU detailed profile fetch
             if let Some(idx) = rsu_auto_fill_profile {
                 if idx < state.rsu_awards.len() {
                     let ticker = state.rsu_awards[idx].ticker.clone();
-                    if !ticker.is_empty() {
-                        // RSUs are single stocks — no expense ratio. Skip the fundProfile call.
-                        let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker, false);
-                        let row = &mut state.rsu_awards[idx];
-                        row.cap_growth_pct     = format!("{:.3}", profile.cap_growth     * 100.0);
-                        row.dividend_yield_pct = format!("{:.3}", profile.dividend_yield * 100.0);
-                        row.use_detailed_profile = true;
+                    if !ticker.is_empty() && !state.fetch_state.pending_rsu.contains_key(&idx) {
+                        let tx = state.fetch_state.tx.clone();
+                        state.fetch_state.pending_rsu.insert(idx, Instant::now());
+                        std::thread::spawn(move || {
+                            // RSUs are single stocks — no expense ratio. Skip the fundProfile call.
+                            let profile = crate::engine::market_data::MarketDataService::fetch_detailed_profile(&ticker, false);
+                            let _ = tx.send(FetchResult::RsuDetailedProfile {
+                                rsu_idx: idx,
+                                profile,
+                            });
+                        });
                     }
                 }
             }
