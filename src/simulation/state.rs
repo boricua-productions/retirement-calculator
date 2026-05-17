@@ -34,6 +34,11 @@ pub struct SimState {
     /// expense rules whose name contains "Education", which bypass the standard
     /// waterfall (T2.5 → T8 fallback).
     pub education_fund_jpy: f64,
+    /// Stage 12 — Gradual buffer accumulation. JPY cash being set aside for the
+    /// war chest during the pre-retirement ramp period.
+    pub war_chest_accumulating_jpy: f64,
+    /// Stage 12 — USD cash being set aside for the bridge fund during ramp.
+    pub bridge_fund_accumulating_usd: f64,
 
     // ── DC Payout ────────────────────────────────────────────────────────────────
     pub dc_payout_active: bool,
@@ -165,6 +170,8 @@ impl SimState {
             war_chest_jpy: 0.0,
             bridge_fund_usd: 0.0,
             education_fund_jpy: 0.0,
+            war_chest_accumulating_jpy: 0.0,
+            bridge_fund_accumulating_usd: 0.0,
             dc_payout_active: false,
             dc_months_remaining: 240,
             roth_rebalance_executed: false,

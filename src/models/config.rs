@@ -13,6 +13,8 @@ fn default_tlh_months() -> Vec<u32> { vec![11, 12] }
 fn default_tlh_threshold() -> f64 { 500.0 }
 fn default_rsu_realism() -> bool { true }
 fn default_estate_jurisdiction() -> TaxProtocol { TaxProtocol::Both }
+fn default_war_chest_ramp_months() -> u32 { 24 }
+fn default_bridge_fund_ramp_months() -> u32 { 18 }
 
 /// Stage 04 — Order of operations when a recession and FX shock fall in the same year.
 ///
@@ -60,6 +62,18 @@ pub enum RsuSellToCoverPolicy {
     #[default]
     Strict,
     Permissive,
+}
+
+/// Stage 12 — Controls when buffer cash is raised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BufferFundingTiming {
+    /// Raise all cash in a single portfolio liquidation at retirement date.
+    #[default]
+    AtRetirement,
+    /// Gradually accumulate cash from monthly income over a ramp period
+    /// leading up to retirement, reducing the tax-heavy lump sale.
+    GraduallyBeforeRetirement,
 }
 
 // ─── Japan NHI model ─────────────────────────────────────────────────────────
@@ -622,6 +636,10 @@ pub struct Config {
     // ── War Chest ───────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]
     pub war_chest_enabled: bool,
+    #[serde(default)]
+    pub war_chest_funding_timing: BufferFundingTiming,
+    #[serde(default = "default_war_chest_ramp_months")]
+    pub war_chest_ramp_months: u32,
     /// "JPY" or "USD"
     pub war_chest_currency: String,
     pub war_chest_target_jpy: f64,
@@ -630,6 +648,10 @@ pub struct Config {
     // ── Bridge Fund ─────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]
     pub bridge_fund_enabled: bool,
+    #[serde(default)]
+    pub bridge_fund_funding_timing: BufferFundingTiming,
+    #[serde(default = "default_bridge_fund_ramp_months")]
+    pub bridge_fund_ramp_months: u32,
     pub bridge_months_target: u32,
     /// "JPY" or "USD"
     pub bridge_fund_currency: String,

@@ -277,11 +277,15 @@ pub struct TransitionAllocation {
     pub wc_currency: String,
     pub wc_paid_from_portfolio_usd: f64,
     pub wc_pre: f64,
+    /// Stage 12 — JPY pre-accumulated during gradual ramp period.
+    pub wc_pre_accumulated_jpy: f64,
     pub bridge_total_jpy: f64,
     pub bridge_pre_general_jpy: f64,
     pub bridge_fund_currency: String,
     pub jp_tax_pre_jpy: f64,
     pub bridge_pull_usd: f64,
+    /// Stage 12 — USD pre-accumulated during gradual ramp period.
+    pub bridge_pre_accumulated_usd: f64,
     pub jp_tax_bill: f64,
     pub reinvested_cash: f64,
 }

@@ -19,6 +19,7 @@ use retirement_calculator::models::assets::{
     Currency, DividendCurrency, PficRegime,
 };
 use retirement_calculator::models::config::{
+    BufferFundingTiming,
     Config, FamilyUnit, NhiModel, ShockOrdering, SpouseProfile, TaxProtocol, TaxRules,
     VaDependentStatus, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy,
     UsTaxStrategy, InvestmentLocation, RsuSellToCoverPolicy,
@@ -56,10 +57,14 @@ fn pfic_config(track_drift: bool) -> Config {
         nhi_spike_monthly_jpy: 0.0,
         nhi_model: NhiModel::default(),
         war_chest_enabled: true,
+        war_chest_funding_timing: BufferFundingTiming::AtRetirement,
+        war_chest_ramp_months: 24,
         war_chest_currency:   "JPY".into(),
         war_chest_target_jpy: 6_000_000.0,
         war_chest_target_usd: 0.0,
         bridge_fund_enabled: true,
+        bridge_fund_funding_timing: BufferFundingTiming::AtRetirement,
+        bridge_fund_ramp_months: 18,
         bridge_months_target: 12,
         bridge_fund_currency: "USD".into(),
         roth_start_limit:     0.0,

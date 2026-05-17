@@ -7,7 +7,7 @@ use std::fs;
 use crate::engine::market_data::MarketDataService;
 use crate::engine::tax::us_tax::state_tax_rate;
 use crate::models::assets::{Account, AccountJurisdiction, AccountLocation, Asset, AssetCategory, AssetClass, Currency, DetailedReturnProfile, DividendCurrency};
-use crate::models::config::{AccumulationRule, Config, Dependent, FamilyUnit, FXShockEvent, InvestmentLocation, MilitaryRetiredConfig, NhiCalculatedRates, NhiModel, RecessionEvent, SpouseProfile, TaxProtocol, TaxRules, UsTaxStrategy, VaDependentStatus, VaRates, WaterfallStrategy, WithdrawalStrategy};
+use crate::models::config::{AccumulationRule, BufferFundingTiming, Config, Dependent, FamilyUnit, FXShockEvent, InvestmentLocation, MilitaryRetiredConfig, NhiCalculatedRates, NhiModel, RecessionEvent, SpouseProfile, TaxProtocol, TaxRules, UsTaxStrategy, VaDependentStatus, VaRates, WaterfallStrategy, WithdrawalStrategy};
 use crate::models::expense::ExpenseRule;
 use crate::models::rsu::{RsuAward, VestingCadence};
 
@@ -107,6 +107,13 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
 
     let get_str = |key: &str, default: &str| -> String {
         sets[key].as_str().unwrap_or(default).to_string()
+    };
+
+    let get_buffer_timing = |key: &str| -> BufferFundingTiming {
+        match sets[key].as_str() {
+            Some("gradually_before_retirement") => BufferFundingTiming::GraduallyBeforeRetirement,
+            _ => BufferFundingTiming::AtRetirement,
+        }
     };
 
     // ── Dates ─────────────────────────────────────────────────────────────────
@@ -555,10 +562,14 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         nhi_spike_monthly_jpy,
         nhi_model,
         war_chest_enabled: get_bool("war_chest_enabled", true),
+        war_chest_funding_timing: get_buffer_timing("war_chest_funding_timing"),
+        war_chest_ramp_months: get_u32("war_chest_ramp_months", 24),
         war_chest_currency:  get_str("war_chest_currency",   "JPY"),
         war_chest_target_jpy: get_f64("war_chest_target_jpy", 7_000_000.0),
         war_chest_target_usd: get_f64("war_chest_target_usd",    50_000.0),
         bridge_fund_enabled: get_bool("bridge_fund_enabled", true),
+        bridge_fund_funding_timing: get_buffer_timing("bridge_fund_funding_timing"),
+        bridge_fund_ramp_months: get_u32("bridge_fund_ramp_months", 18),
         bridge_months_target: get_u32("bridge_fund_months_target", 12),
         bridge_fund_currency: get_str("bridge_fund_currency", "USD"),
         roth_start_limit,
