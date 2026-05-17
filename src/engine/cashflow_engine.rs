@@ -17,6 +17,9 @@ pub struct ExpenseBreakdown {
     /// Stage 06 — Monthly real-estate fixed costs (PI + property tax) in JPY.
     /// Zero when `cfg.real_estate` is empty.
     pub real_estate: f64,
+    /// Stage 10 — Monthly Long-Term Care Insurance premium (介護保険) in JPY.
+    /// Ages 40-64: zero (bundled into NHI). Ages 65+: separate municipal premium.
+    pub kaigo_hoken: f64,
 }
 
 /// The monthly income breakdown.
@@ -144,7 +147,65 @@ impl CashFlowEngine {
             )
         };
 
-        let fixed_costs = nhi_cost + nenkin_cost + restax_cost + re_cost;
+        // ── Stage 10 — Long-Term Care Insurance (介護保険 / Kaigo Hoken) ────
+        let kaigo_cost = if self.cfg.kaigo_hoken_enabled {
+            let age = current_date.years_since(self.cfg.birth_date).unwrap_or(0) as i32;
+            if age >= 65 {
+                // Age 65+: separate municipal premium based on pension income.
+                // Use the user's custom brackets or default to Sagamihara 2026.
+                let default_brackets = crate::engine::tax::kaigo_hoken::KaigoHokenBrackets::sagamihara_2026();
+                let brackets = self.cfg.kaigo_hoken_brackets.as_ref()
+                    .unwrap_or(&default_brackets);
+
+                // Compute annual pension income for bracket lookup.
+                // This is a simplified approximation — the full implementation should
+                // aggregate all pension income sources (Nenkin, FERS, SS) at year-end.
+                // For monthly breakdown, we use a snapshot estimate.
+                let annual_pension_estimate = {
+                    // Nenkin income (if started)
+                    let nenkin_annual = if age >= self.cfg.nenkin_income_start_age as i32 {
+                        self.cfg.nenkin_income_monthly_jpy * 12.0
+                    } else {
+                        0.0
+                    };
+                    // FERS pension (if started) converted to JPY
+                    let fers_annual = if current_date >= self.cfg.fers_start_date {
+                        self.calculate_fers_monthly(current_date.year()) * 12.0 * fx
+                    } else {
+                        0.0
+                    };
+                    // SS pension (if started) converted to JPY
+                    let ss_annual = if age >= self.cfg.ss_start_age as i32 {
+                        self.cfg.ss_monthly_usd * 12.0 * fx
+                    } else {
+                        0.0
+                    };
+                    nenkin_annual + fers_annual + ss_annual
+                };
+
+                let annual_premium = crate::engine::tax::kaigo_hoken::calculate_age_65_plus_premium_annual(
+                    annual_pension_estimate,
+                    brackets,
+                );
+                let monthly_premium = annual_premium / 12.0;
+
+                // Optional: add projected out-of-pocket care costs
+                let care_cost = crate::engine::tax::kaigo_hoken::projected_out_of_pocket_care(
+                    age,
+                    self.cfg.kaigo_care_scenario,
+                );
+
+                monthly_premium + care_cost
+            } else {
+                // Ages 40-64: bundled into NHI (already in nhi_cost), so return 0 here.
+                // Ages <40: no Kaigo Hoken charge.
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        let fixed_costs = nhi_cost + nenkin_cost + restax_cost + re_cost + kaigo_cost;
         ExpenseBreakdown {
             total_desired: base_desired + fixed_costs + edu_cost,
             base_desired,
@@ -154,6 +215,7 @@ impl CashFlowEngine {
             restax: restax_cost,
             education: edu_cost,
             real_estate: re_cost,
+            kaigo_hoken: kaigo_cost,
         }
     }
 
@@ -482,6 +544,10 @@ mod tests {
             mc_correlation_matrix: std::collections::HashMap::new(),
             // Stage 09 defaults
             crypto_tax_enabled: true,
+            // Stage 10 defaults
+            kaigo_hoken_enabled: true,
+            kaigo_hoken_brackets: None,
+            kaigo_care_scenario: crate::engine::tax::kaigo_hoken::CareScenario::None,
         }
     }
 

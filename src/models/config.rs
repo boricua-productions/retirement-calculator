@@ -997,4 +997,19 @@ pub struct Config {
     /// Example: { "US Equity": { "USD/JPY": -0.40, "US Bond": -0.10 } }
     #[serde(default)]
     pub mc_correlation_matrix: HashMap<String, HashMap<String, f64>>,
+
+    // ── Stage 10 — Long-Term Care Insurance (介護保険 / Kaigo Hoken) ─────────
+    /// When true (default), model the age-65+ Kaigo Hoken premium as a separate
+    /// expense line. Ages 40-64 premium is bundled into NHI (already modeled).
+    /// Disable to revert to legacy behavior (no separate charge after age 65).
+    #[serde(default = "default_true")]
+    pub kaigo_hoken_enabled: bool,
+    /// Custom bracket schedule for age-65+ Kaigo Hoken premium calculation.
+    /// When None, uses the prefecture-default schedule (Sagamihara 2026).
+    #[serde(default)]
+    pub kaigo_hoken_brackets: Option<crate::engine::tax::kaigo_hoken::KaigoHokenBrackets>,
+    /// Care need scenario for optional out-of-pocket cost projection.
+    /// None = premium only; Low/Medium/High add projected care draws.
+    #[serde(default)]
+    pub kaigo_care_scenario: crate::engine::tax::kaigo_hoken::CareScenario,
 }

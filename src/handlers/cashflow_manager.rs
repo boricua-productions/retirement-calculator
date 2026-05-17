@@ -182,15 +182,25 @@ fn manage_monthly_cashflow_defensive(
     let exp = cf_engine.get_expenses_breakdown(current_date, fx);
     let nhi_delta = compute_nhi_delta(state, cfg, yr, mo, &exp);
 
-    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.education + exp.real_estate;
+    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.education + exp.real_estate + exp.kaigo_hoken;
     state.stats.year_exp_base      += exp.base_desired;
     state.stats.year_exp_nhi       += exp.nhi + nhi_delta;
     state.stats.year_exp_nenkin    += exp.nenkin;
     state.stats.year_exp_restax    += exp.restax;
     state.stats.year_real_estate_exp_jpy += exp.real_estate;
+    // Stage 10: kaigo_hoken includes both premium + optional care costs.
+    // For detailed reporting, compute the care component separately.
+    if cfg.kaigo_hoken_enabled {
+        let age = yr - cfg.birth_date.year();
+        let care_cost_monthly = crate::engine::tax::kaigo_hoken::projected_out_of_pocket_care(
+            age, cfg.kaigo_care_scenario
+        );
+        state.stats.year_kaigo_premium_jpy += exp.kaigo_hoken - care_cost_monthly;
+        state.stats.year_kaigo_care_jpy += care_cost_monthly;
+    }
 
-    let target_base_jpy = exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.real_estate;
-    let target_min_jpy  = exp.base_floor   + nhi_delta + exp.nenkin + exp.restax + exp.real_estate;
+    let target_base_jpy = exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.real_estate + exp.kaigo_hoken;
+    let target_min_jpy  = exp.base_floor   + nhi_delta + exp.nenkin + exp.restax + exp.real_estate + exp.kaigo_hoken;
 
     // ── V7.3 — Tier 2.5: Education Fund draw (BYPASS main waterfall) ─────────
     // Education-tagged expenses pull from the dedicated Education bucket first.
@@ -517,12 +527,21 @@ fn manage_monthly_cashflow_cautious(
     let exp = cf_engine.get_expenses_breakdown(current_date, state.current_fx);
     let nhi_delta = compute_nhi_delta(state, cfg, yr, mo, &exp);
 
-    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.real_estate;
+    state.stats.year_total_exp_jpy += exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.real_estate + exp.kaigo_hoken;
     state.stats.year_exp_base      += exp.base_desired;
     state.stats.year_exp_nhi       += exp.nhi + nhi_delta;
     state.stats.year_exp_nenkin    += exp.nenkin;
     state.stats.year_exp_restax    += exp.restax;
     state.stats.year_real_estate_exp_jpy += exp.real_estate;
+    // Stage 10: kaigo_hoken includes both premium + optional care costs.
+    if cfg.kaigo_hoken_enabled {
+        let age = yr - cfg.birth_date.year();
+        let care_cost_monthly = crate::engine::tax::kaigo_hoken::projected_out_of_pocket_care(
+            age, cfg.kaigo_care_scenario
+        );
+        state.stats.year_kaigo_premium_jpy += exp.kaigo_hoken - care_cost_monthly;
+        state.stats.year_kaigo_care_jpy += care_cost_monthly;
+    }
 
     // DC Payout (converted to USD for the cautious legacy path).
     let dc_payout_usd = compute_dc_payout_usd(state, cfg, current_date);
@@ -530,7 +549,7 @@ fn manage_monthly_cashflow_cautious(
     let total_new_money_usd = pension_net_usd + state.current_month_div_net_usd + dc_payout_usd;
     let total_new_money_jpy = total_new_money_usd * state.current_fx;
 
-    let desired_spend_jpy = exp.base_desired + nhi_delta + exp.nenkin + exp.restax;
+    let desired_spend_jpy = exp.base_desired + nhi_delta + exp.nenkin + exp.restax + exp.kaigo_hoken;
     let floor_spend_jpy   = exp.base_floor   + nhi_delta + exp.nenkin + exp.restax;
 
     let actual_spend_jpy = if total_new_money_jpy >= desired_spend_jpy {
@@ -1425,6 +1444,7 @@ mod v73_tests {
             nhi: 0.0, nenkin: 0.0, restax: 0.0,
             education: 25_000.0,
             real_estate: 0.0,
+            kaigo_hoken: 0.0,
         };
         assert_eq!(exp.education, 25_000.0);
     }

@@ -323,6 +323,10 @@ fn estate_planning_config() -> Config {
         mc_correlation_matrix: std::collections::HashMap::new(),
         // Stage 09 defaults
         crypto_tax_enabled: true,
+        // Stage 10 defaults
+        kaigo_hoken_enabled: true,
+        kaigo_hoken_brackets: None,
+        kaigo_care_scenario: retirement_calculator::engine::tax::kaigo_hoken::CareScenario::None,
     }
 }
 

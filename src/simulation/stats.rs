@@ -126,6 +126,10 @@ pub struct AnnualStats {
     pub year_real_estate_exp_jpy: f64,
     /// Stage 06 — Total HELOC drawn this year (USD). Tier 7.5 draws only.
     pub year_heloc_draw_usd: f64,
+    /// Stage 10 — Annual age-65+ Kaigo Hoken premium paid this year (JPY).
+    pub year_kaigo_premium_jpy: f64,
+    /// Stage 10 — Annual projected out-of-pocket care costs (JPY, based on CareScenario).
+    pub year_kaigo_care_jpy: f64,
 }
 
 impl AnnualStats {

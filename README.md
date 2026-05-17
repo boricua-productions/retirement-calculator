@@ -101,6 +101,21 @@ says otherwise. For optional income streams, use `0` when that income does not a
 | **Spike Year Annual Total** | Manual first post-retirement annual NHI total. |
 | **Ongoing Annual Total** | Manual annual NHI total after the spike year. |
 
+#### Long-Term Care Insurance (介護保険 / Kaigo Hoken)
+
+Japan mandates Long-Term Care Insurance for all residents starting at **age 40**:
+
+- **Ages 40–64**: premium is bundled into NHI (already modeled in the NHI Settings above via the nursing-care component)
+- **Ages 65+**: premium is **separate** from NHI and computed against pension income brackets set by your municipality (typically 9 tiers, base ~¥30k/yr at the bottom tier, ¥150k+ at the top)
+
+| Field | What it is for |
+|-------|----------------|
+| **Model Long-Term Care Insurance** | When enabled (default), the simulator charges the age-65+ municipal premium as a separate expense line. Disable to revert to legacy behavior (no separate charge after 65). |
+| **Kaigo Hoken Brackets** | Custom income-bracket schedule for age-65+ premium calculation. When not specified, uses Sagamihara 2026 defaults. |
+| **Care Need Scenario** | Projects optional out-of-pocket care costs beyond the insurance premium: `None` (premium only), `Low` (~¥20k/month from age 75), `Medium` (~¥40k/month from age 75), `High` (~¥80k/month from age 80, stress-test aid). |
+
+The model automatically handles the smooth transition at age 65: the NHI nursing-care component is dropped, and the age-65+ Kaigo Hoken premium replaces it on a separate expense line so you see one continuous "Long-Term Care" charge throughout your retirement.
+
 #### Tax Strategy, Filing, and Location
 
 | Field | What it is for |
