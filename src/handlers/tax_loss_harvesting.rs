@@ -99,9 +99,10 @@ pub fn harvest_losses(state: &mut SimState, cfg: &Config) {
             let jpy_proceeds   = lot.qty * price * fx;
             let jpy_loss       = (jpy_basis_sold - jpy_proceeds).max(0.0);
 
-            state.japan_loss_carryforward_jpy += jpy_loss;
             // US capital loss offsets current-year gains (net into year_cap_gains as negative).
             state.stats.year_cap_gains -= loss_usd;
+            // V8.0 — JPY loss accumulates in year_japan_cap_loss_jpy; the 3-year
+            // ledger is updated via japan_loss_ledger.roll() in handle_new_year.
             state.stats.year_japan_cap_loss_jpy += jpy_loss;
 
             info!("   [TLH] Harvested ${:.2} USD loss / ¥{:.0} JPY loss on {} (lot {:?})",

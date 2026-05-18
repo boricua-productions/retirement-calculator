@@ -391,13 +391,9 @@ impl SimulationController {
         }
 
         // V7.5 — Defect 1.1: decay Japan capital-loss carry-forward by 1 year.
-        // Accumulate this year's losses, then add to the rolling carry-forward.
-        // The carry-forward is a single rolling sum — losses older than 3 years are
-        // implicitly expired by the fact that gains in the same span have offset them.
+        // V8.0 — Roll the 3-year capital-loss ledger per 租特法 37条の12の2.
         let new_loss = self.state.stats.year_japan_cap_loss_jpy;
-        if new_loss > 0.0 {
-            self.state.japan_loss_carryforward_jpy += new_loss;
-        }
+        self.state.japan_loss_ledger.roll(new_loss);
 
         // Reset annual accumulators.
         self.state.stats.reset();
