@@ -5,6 +5,34 @@ use crate::models::assets::Account;
 use crate::models::snapshot::{AnnualSnapshot, PficDriftWarning, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
 use super::stats::AnnualStats;
 
+/// V8.0 — Rolling 3-year Japan capital-loss carry-forward ledger.
+/// Per 租税特別措置法 第37条の12の2 (Measures Act Art. 37-12-2), realized losses
+/// can offset gains in the same year and the three subsequent calendar years.
+#[derive(Debug, Default, Clone)]
+pub struct JapanLossLedger {
+    /// Losses realized exactly 1 year ago (still within the carry-forward window).
+    pub year_minus_1: f64,
+    /// Losses realized exactly 2 years ago.
+    pub year_minus_2: f64,
+    /// Losses realized exactly 3 years ago (last eligible year).
+    pub year_minus_3: f64,
+}
+
+impl JapanLossLedger {
+    /// Total carry-forward available against this year's gains (JPY).
+    pub fn total(&self) -> f64 {
+        self.year_minus_1 + self.year_minus_2 + self.year_minus_3
+    }
+
+    /// Advance the ledger one year: discard year_minus_3 (expired), shift older
+    /// slots down, and load the current year's loss into year_minus_1.
+    pub fn roll(&mut self, current_year_loss: f64) {
+        self.year_minus_3 = self.year_minus_2;
+        self.year_minus_2 = self.year_minus_1;
+        self.year_minus_1 = current_year_loss.max(0.0);
+    }
+}
+
 /// The complete mutable simulation state.
 /// Passed by `&mut` reference to all handlers, eliminating the circular reference
 /// anti-pattern from the Python implementation.
@@ -60,11 +88,9 @@ pub struct SimState {
     /// V7.6 — General-basket FTC carryover (IRC §904(c)). FERS, SS, SSDI, RSU.
     pub ftc_carryover_general_usd: f64,
 
-    // ── V7.5 — Japan Capital-Loss Carry-Forward ───────────────────────────────────
-    /// Rolling 3-year Japan capital-loss carry-forward (JPY, unsigned magnitude).
-    /// Subtracted from investment-income basis in NHI and resident-tax calculations.
-    /// Decayed by 1 year each January; set to zero once the carry-forward window expires.
-    pub japan_loss_carryforward_jpy: f64,
+    // ── V8.0 — Japan 3-Year Capital-Loss Ledger ───────────────────────────────────
+    /// Per 租税特別措置法 第37条の12の2: losses carry forward up to 3 years.
+    pub japan_loss_ledger: JapanLossLedger,
 
     // ── V7.5 — Estate Planning (Gift Sink) ───────────────────────────────────────
     /// Cumulative JPY routed to the Tier 9 Gift Sink (held outside the waterfall).
@@ -179,7 +205,7 @@ impl SimState {
             ftc_carryover_usd: 0.0,
             ftc_carryover_passive_usd: 0.0,
             ftc_carryover_general_usd: 0.0,
-            japan_loss_carryforward_jpy: 0.0,
+            japan_loss_ledger: JapanLossLedger::default(),
             gift_sink_jpy: 0.0,
             nhi_ninki_keizoku_months_remaining: 0,
             total_forced_liquidations_usd: 0.0,
@@ -210,5 +236,57 @@ impl SimState {
             pfic_mtm_jpy_history: HashMap::new(),
             outstanding_heloc_usd: 0.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JapanLossLedger;
+
+    #[test]
+    fn japan_loss_ledger_roll_and_total() {
+        let mut l = JapanLossLedger::default();
+        assert_eq!(l.total(), 0.0);
+
+        l.roll(1_000_000.0);
+        assert_eq!(l.year_minus_1, 1_000_000.0);
+        assert_eq!(l.total(), 1_000_000.0);
+
+        l.roll(2_000_000.0);
+        assert_eq!(l.year_minus_1, 2_000_000.0);
+        assert_eq!(l.year_minus_2, 1_000_000.0);
+        assert_eq!(l.total(), 3_000_000.0);
+
+        l.roll(500_000.0);
+        assert_eq!(l.year_minus_1, 500_000.0);
+        assert_eq!(l.year_minus_2, 2_000_000.0);
+        assert_eq!(l.year_minus_3, 1_000_000.0);
+        assert_eq!(l.total(), 3_500_000.0);
+
+        // Fourth roll: year_minus_3 (the oldest 1M) is discarded.
+        l.roll(0.0);
+        assert_eq!(l.year_minus_1, 0.0);
+        assert_eq!(l.year_minus_2, 500_000.0);
+        assert_eq!(l.year_minus_3, 2_000_000.0);
+        assert_eq!(l.total(), 2_500_000.0);
+    }
+
+    #[test]
+    fn japan_loss_ledger_negative_input_clamped_to_zero() {
+        let mut l = JapanLossLedger::default();
+        l.roll(-500_000.0);
+        assert_eq!(l.year_minus_1, 0.0);
+        assert_eq!(l.total(), 0.0);
+    }
+
+    #[test]
+    fn japan_loss_ledger_three_year_decay() {
+        let mut l = JapanLossLedger::default();
+        l.roll(1_000_000.0); // Y1
+        l.roll(0.0);          // Y2: loss moves to year_minus_2
+        l.roll(0.0);          // Y3: loss moves to year_minus_3
+        assert_eq!(l.total(), 1_000_000.0, "3-year-old loss still within window");
+        l.roll(0.0);          // Y4: loss falls off year_minus_3 → expired
+        assert_eq!(l.total(), 0.0, "4-year-old loss must be discarded");
     }
 }
