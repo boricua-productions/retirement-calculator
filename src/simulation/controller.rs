@@ -818,7 +818,12 @@ impl SimulationController {
         let annual_ssdi = self.state.stats.year_ssdi_gross_usd;
         let ssdi_taxable = if annual_ssdi > 0.0 {
             let provisional_income = base_ord + 0.5 * annual_ssdi;
-            ssdi_combined_income_taxable_portion(provisional_income, annual_ssdi)
+            ssdi_combined_income_taxable_portion(
+                provisional_income,
+                annual_ssdi,
+                &self.tax_engine.rules.filing_status,
+                true,  // assume MFS pairs live together unless tracked elsewhere
+            )
         } else {
             0.0
         };
