@@ -45,6 +45,36 @@ pub fn lookup_resident_tax_rates(prefecture: &str, city: &str) -> ResidentTaxRat
     }
 }
 
+// ─── V8.1 NHI rate lookup ─────────────────────────────────────────────────────
+
+/// V8.1 — Confidence label for a (prefecture, city) NHI rate lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NhiRateProvenance {
+    /// The rates are the actual official schedule for this municipality.
+    Authoritative,
+    /// The rates are the nationwide-standard estimate (Sagamihara 2026 used as
+    /// the proxy). User should verify against their city office.
+    Estimate,
+}
+
+/// V8.1 — Look up an NHI rate schedule for the given prefecture/city.
+/// Initially only Sagamihara has authoritative data; everything else returns
+/// the same schedule labeled `Estimate` so the UI can flag the difference.
+/// Extend over time as more municipalities are researched.
+pub fn nhi_rates_for(prefecture: &str, city: &str) -> (crate::models::config::NhiCalculatedRates, NhiRateProvenance) {
+    match (prefecture.trim(), city.trim()) {
+        ("Kanagawa", "Sagamihara") => (
+            crate::models::config::NhiCalculatedRates::sagamihara_2026(),
+            NhiRateProvenance::Authoritative,
+        ),
+        // Add more municipalities here as their official rate sheets are researched.
+        _ => (
+            crate::models::config::NhiCalculatedRates::sagamihara_2026(),
+            NhiRateProvenance::Estimate,
+        ),
+    }
+}
+
 // ─── Prefecture list (all 47, north → south) ─────────────────────────────────
 
 pub const ALL_PREFECTURES: &[&str] = &[

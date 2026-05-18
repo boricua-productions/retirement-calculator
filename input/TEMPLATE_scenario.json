@@ -40,6 +40,16 @@
     "base_monthly_expenses_jpy": 1016744,
     "min_monthly_expenses_jpy": 600000,
 
+    "_help_expenses_detailed_mode": "When true, the UI/loader treats expense_categories as the source of truth and derives base/min monthly expenses from the category sums. When false (default), base_monthly_expenses_jpy and min_monthly_expenses_jpy are used directly.",
+    "expenses_detailed_mode": false,
+
+    "_help_min_expense_buffer": "Buffer added to the computed minimum in detailed mode. Pick ONE: fixed JPY/month, or a percentage of the essentials sum (e.g. 0.10 = +10%). Both default to 0.",
+    "min_expense_buffer_jpy": 0,
+    "min_expense_buffer_pct": 0,
+
+    "_help_expense_categories": "Per-category breakdown. Each entry: { name, kind ('essential' | 'discretional'), amount_jpy, frequency_months (1=monthly, 12=annual, 24=biennial, 60=every-5yr), end_date (YYYY-MM-DD, optional), note (optional) }. Always persisted (even when expenses_detailed_mode is false) so toggling the UI does not destroy data.",
+    "expense_categories": [],
+
     "_help_nhi_spike": "First 18-month NHI premium after retirement (high due to prior executive income). Can be adjusted for NHI income-spike effects.",
     "nhi_spike_monthly_jpy": 73333,
 

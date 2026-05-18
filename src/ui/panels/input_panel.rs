@@ -385,6 +385,14 @@ pub struct InputPanelState {
     pub accounts: Vec<InvestmentAccountRow>,
     // ── RSU Awards (multi-tranche) ────────────────────────────────────────────
     pub rsu_awards: Vec<RsuRow>,
+    // ── V8.1 Detailed expense entry ──────────────────────────────────────────
+    pub expenses_detailed_mode: bool,
+    pub expense_categories:     Vec<ExpenseCategoryRow>,
+    /// "none" | "jpy" | "pct"
+    pub min_buffer_mode:        String,
+    pub min_buffer_jpy_value:   String,
+    /// Percent shown to user (e.g. "10.0" for 10%). Persisted as decimal fraction.
+    pub min_buffer_pct_value:   String,
     // ── NHI Settings ─────────────────────────────────────────────────────────
     /// true = Automatic (Calculated rate schedule); false = Manual (fixed amounts)
     pub nhi_calculated_mode:    bool,
@@ -399,6 +407,12 @@ pub struct InputPanelState {
     pub nhi_cap_support:        String,
     pub nhi_cap_nursing:        String,
     pub nhi_include_us_income:  bool,
+    /// V8.1 — Last-applied NHI rate provenance. Drives the badge under the "Apply"
+    /// button. Session-only; not persisted to JSON.
+    pub nhi_rate_provenance: crate::engine::tax::japan_regions::NhiRateProvenance,
+    /// V8.1 — Cache of "we last auto-populated the NHI rate fields for this
+    /// (prefecture, city)". Session-only; not persisted to JSON.
+    pub nhi_rates_applied_for: Option<(String, String)>,
     // Manual mode fields (annual totals in JPY)
     pub nhi_spike_total_jpy:    String,
     pub nhi_ongoing_total_jpy:  String,
@@ -442,6 +456,30 @@ pub struct HeirEntry {
     pub name:         String,
     pub birth_date:   String,
     pub relationship: HeirRelationship,
+}
+
+/// V8.1 — A single editable row in the detailed expense category table.
+#[derive(Debug, Clone)]
+pub struct ExpenseCategoryRow {
+    pub name:             String,
+    pub kind:             crate::models::expense::CategoryKind,
+    pub amount_jpy:       String,
+    pub frequency_months: String,
+    pub end_date:         String,   // "YYYY-MM-DD" or ""
+    pub note:             String,
+}
+
+impl Default for ExpenseCategoryRow {
+    fn default() -> Self {
+        Self {
+            name:             String::new(),
+            kind:             crate::models::expense::CategoryKind::Essential,
+            amount_jpy:       "0".into(),
+            frequency_months: "1".into(),
+            end_date:         String::new(),
+            note:             String::new(),
+        }
+    }
 }
 
 impl Default for InputPanelState {
@@ -529,6 +567,11 @@ impl Default for InputPanelState {
             va_smc_variant:     String::new(),
             accounts:           vec![InvestmentAccountRow::default()],
             rsu_awards:         Vec::new(),
+            expenses_detailed_mode: false,
+            expense_categories:     Vec::new(),
+            min_buffer_mode:        "none".into(),
+            min_buffer_jpy_value:   "0".into(),
+            min_buffer_pct_value:   "0.0".into(),
             nhi_calculated_mode:    true,
             nhi_medical_rate:       "8.46".into(),
             nhi_support_rate:       "2.04".into(),
@@ -540,6 +583,8 @@ impl Default for InputPanelState {
             nhi_cap_support:        "240000".into(),
             nhi_cap_nursing:        "170000".into(),
             nhi_include_us_income:  false,
+            nhi_rate_provenance: crate::engine::tax::japan_regions::NhiRateProvenance::Estimate,
+            nhi_rates_applied_for: None,
             nhi_spike_total_jpy:    "0".into(),
             nhi_ongoing_total_jpy:  "0".into(),
             kaigo_hoken_enabled: true,
@@ -1099,6 +1144,33 @@ impl InputPanelState {
             va_smc_variant: str_val("va_smc_variant", ""),
             accounts,
             rsu_awards,
+            expenses_detailed_mode: sets["expenses_detailed_mode"].as_bool().unwrap_or(false),
+            expense_categories: if let Value::Array(arr) = &sets["expense_categories"] {
+                arr.iter().filter_map(|v| {
+                    let obj = v.as_object()?;
+                    let kind = match obj.get("kind").and_then(|x| x.as_str()).unwrap_or("essential") {
+                        "discretional" | "discretionary" => crate::models::expense::CategoryKind::Discretional,
+                        _ => crate::models::expense::CategoryKind::Essential,
+                    };
+                    Some(ExpenseCategoryRow {
+                        name:             obj.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        kind,
+                        amount_jpy:       obj.get("amount_jpy").and_then(|x| x.as_f64()).map(|f| format!("{:.0}", f)).unwrap_or_else(|| "0".into()),
+                        frequency_months: obj.get("frequency_months").and_then(|x| x.as_u64()).map(|n| n.to_string()).unwrap_or_else(|| "1".into()),
+                        end_date:         obj.get("end_date").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        note:             obj.get("note").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    })
+                }).collect()
+            } else { Vec::new() },
+            min_buffer_jpy_value: num_str("min_expense_buffer_jpy", "0"),
+            min_buffer_pct_value: sets["min_expense_buffer_pct"].as_f64().map(|f| format!("{:.2}", f * 100.0)).unwrap_or_else(|| "0.0".into()),
+            min_buffer_mode: {
+                let jpy = sets["min_expense_buffer_jpy"].as_f64().unwrap_or(0.0);
+                let pct = sets["min_expense_buffer_pct"].as_f64().unwrap_or(0.0);
+                if jpy > 0.0 { "jpy".into() }
+                else if pct > 0.0 { "pct".into() }
+                else { "none".into() }
+            },
             nhi_calculated_mode,
             nhi_medical_rate,
             nhi_support_rate,
@@ -1110,6 +1182,16 @@ impl InputPanelState {
             nhi_cap_support,
             nhi_cap_nursing,
             nhi_include_us_income,
+            nhi_rate_provenance: {
+                let p = sets["prefecture"].as_str().unwrap_or("");
+                let c = sets["city"].as_str().unwrap_or("");
+                crate::engine::tax::japan_regions::nhi_rates_for(p, c).1
+            },
+            nhi_rates_applied_for: {
+                let p = sets["prefecture"].as_str().unwrap_or("").to_string();
+                let c = sets["city"].as_str().unwrap_or("").to_string();
+                if !p.is_empty() && !c.is_empty() { Some((p, c)) } else { None }
+            },
             nhi_spike_total_jpy,
             nhi_ongoing_total_jpy,
             kaigo_hoken_enabled: bool_val("kaigo_hoken_enabled", true),
@@ -1172,8 +1254,10 @@ impl InputPanelState {
         if bad_f64(&self.inflation_us)    { bad.insert("inflation_us"); }
         if bad_f64(&self.inflation_japan) { bad.insert("inflation_japan"); }
 
-        if bad_pos(&self.base_expense_jpy) { bad.insert("base_expense_jpy"); }
-        if bad_pos(&self.min_expense_jpy)  { bad.insert("min_expense_jpy"); }
+        if !self.expenses_detailed_mode {
+            if bad_pos(&self.base_expense_jpy) { bad.insert("base_expense_jpy"); }
+            if bad_pos(&self.min_expense_jpy)  { bad.insert("min_expense_jpy"); }
+        }
         if bad_f64(&self.nhi_first_year_monthly_jpy) { bad.insert("nhi_first_year_monthly_jpy"); }
 
         if bad_optional_f64(&self.fers_monthly_usd) { bad.insert("fers_monthly_usd"); }
@@ -1263,8 +1347,103 @@ impl InputPanelState {
             set_f64!("usd_jpy_rate",         self.usd_jpy_rate);
             set_f64!("inflation_us_cpi",     self.inflation_us);
             set_f64!("inflation_japan_cpi",  self.inflation_japan);
-            set_f64!("base_monthly_expenses_jpy", self.base_expense_jpy);
-            set_f64!("min_monthly_expenses_jpy",  self.min_expense_jpy);
+            // V8.1 — In detailed mode the categories are authoritative.
+            if self.expenses_detailed_mode {
+                let (essentials_sum, discretional_sum, _expired_skipped): (f64, f64, usize) =
+                    self.expense_categories.iter().fold((0.0_f64, 0.0_f64, 0usize), |(e, d, x), c| {
+                        if looks_like_reserved_category(&c.name) { return (e, d, x); }
+                        let sim_start = chrono::NaiveDate::parse_from_str(&self.start_date, "%Y-%m-%d").ok();
+                        let cat_end = chrono::NaiveDate::parse_from_str(c.end_date.trim(), "%Y-%m-%d").ok();
+                        if let (Some(s), Some(end)) = (sim_start, cat_end) {
+                            if end < s { return (e, d, x + 1); }
+                        }
+                        let amt = c.amount_jpy.parse::<f64>().unwrap_or(0.0);
+                        let freq = c.frequency_months.parse::<u32>().unwrap_or(1).max(1) as f64;
+                        let monthly = amt / freq;
+                        match c.kind {
+                            crate::models::expense::CategoryKind::Essential    => (e + monthly, d, x),
+                            crate::models::expense::CategoryKind::Discretional => (e, d + monthly, x),
+                        }
+                    });
+
+                let buffer_jpy: f64;
+                let mut buf_jpy_for_json = 0.0_f64;
+                let mut buf_pct_for_json = 0.0_f64;
+                match self.min_buffer_mode.as_str() {
+                    "jpy" => {
+                        buf_jpy_for_json = self.min_buffer_jpy_value.parse::<f64>().unwrap_or(0.0);
+                        buffer_jpy = buf_jpy_for_json;
+                    }
+                    "pct" => {
+                        buf_pct_for_json = (self.min_buffer_pct_value.parse::<f64>().unwrap_or(0.0)) / 100.0;
+                        buffer_jpy = essentials_sum * buf_pct_for_json;
+                    }
+                    _ => { buffer_jpy = 0.0; }
+                }
+
+                let base_sum = essentials_sum + discretional_sum;
+                let min_sum  = essentials_sum + buffer_jpy;
+
+                if let Some(n) = serde_json::Number::from_f64(base_sum) {
+                    settings.insert("base_monthly_expenses_jpy".into(), Value::Number(n));
+                }
+                if let Some(n) = serde_json::Number::from_f64(min_sum) {
+                    settings.insert("min_monthly_expenses_jpy".into(), Value::Number(n));
+                }
+                if let Some(n) = serde_json::Number::from_f64(buf_jpy_for_json) {
+                    settings.insert("min_expense_buffer_jpy".into(), Value::Number(n));
+                }
+                if let Some(n) = serde_json::Number::from_f64(buf_pct_for_json) {
+                    settings.insert("min_expense_buffer_pct".into(), Value::Number(n));
+                }
+            } else {
+                set_f64!("base_monthly_expenses_jpy", self.base_expense_jpy);
+                set_f64!("min_monthly_expenses_jpy",  self.min_expense_jpy);
+                settings.insert("min_expense_buffer_jpy".into(), Value::Number(0.into()));
+                settings.insert("min_expense_buffer_pct".into(), Value::Number(0.into()));
+            }
+
+            set_bool!("expenses_detailed_mode", self.expenses_detailed_mode);
+
+            // Always persist categories — never destroy user data on save.
+            // Drop any row matching the engine-reserved deny-list (NHI / 住民税).
+            {
+                let cats: Vec<Value> = self.expense_categories.iter().filter_map(|c| {
+                    if c.name.trim().is_empty()
+                        && c.amount_jpy.trim().is_empty()
+                        && c.note.trim().is_empty()
+                        && c.end_date.trim().is_empty() {
+                        return None;
+                    }
+                    if looks_like_reserved_category(&c.name) {
+                        return None;
+                    }
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("name".into(), Value::String(c.name.clone()));
+                    obj.insert("kind".into(), Value::String(match c.kind {
+                        crate::models::expense::CategoryKind::Essential    => "essential",
+                        crate::models::expense::CategoryKind::Discretional => "discretional",
+                    }.into()));
+                    if let Ok(f) = c.amount_jpy.parse::<f64>() {
+                        if let Some(n) = serde_json::Number::from_f64(f) {
+                            obj.insert("amount_jpy".into(), Value::Number(n));
+                        }
+                    }
+                    let freq = c.frequency_months.parse::<u32>().unwrap_or(1).max(1);
+                    obj.insert("frequency_months".into(), Value::Number((freq as u64).into()));
+                    if !c.end_date.trim().is_empty() {
+                        obj.insert("end_date".into(), Value::String(c.end_date.clone()));
+                    } else {
+                        obj.insert("end_date".into(), Value::Null);
+                    }
+                    if !c.note.trim().is_empty() {
+                        obj.insert("note".into(), Value::String(c.note.clone()));
+                    }
+                    Some(Value::Object(obj))
+                }).collect();
+                settings.insert("expense_categories".into(), Value::Array(cats));
+            }
+
             set_f64!("nhi_spike_monthly_jpy", self.nhi_first_year_monthly_jpy);
             set_str!("rsu_tax_handling", self.rsu_tax_handling);
             set_bool!("rsu_sell_to_cover_realism", self.rsu_sell_to_cover_realism);
@@ -2197,14 +2376,95 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
 
         // ── Expenses ─────────────────────────────────────────────────────────────
         section(ui, "Monthly Expenses (JPY)");
-        grid(ui, "g_exp", |ui| {
-            vfield_tt(ui, "Base Monthly",               &mut state.base_expense_jpy,          "e.g. 1000000", !errors.contains("base_expense_jpy"),
-                "Base household burn rate before NHI / resident-tax. Inflated by Japan CPI each year.");
-            vfield_tt(ui, "Minimum Monthly",            &mut state.min_expense_jpy,           "e.g. 600000",  !errors.contains("min_expense_jpy"),
-                "Floor expenses if dividends/bridge run low. Drives forced-liquidation thresholds.");
-            vfield_tt(ui, "NHI Spike Monthly (yr 1-2)", &mut state.nhi_first_year_monthly_jpy,"e.g. 73333",   !errors.contains("nhi_first_year_monthly_jpy"),
-                "国民健康保険スパイク: first-post-retirement-year NHI premium based on prior-year salary. Manual override; the calculated NHI engine handles ongoing years.");
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Entry mode:").strong());
+            let simple = !state.expenses_detailed_mode;
+            if ui.radio(simple, "Simple (bundled totals)").clicked() {
+                if state.expenses_detailed_mode {
+                    let (b, m) = derived_totals_jpy(state);
+                    state.base_expense_jpy = format!("{:.0}", b);
+                    state.min_expense_jpy  = format!("{:.0}", m);
+                }
+                state.expenses_detailed_mode = false;
+            }
+            if ui.radio(!simple, "Detailed (by category)").clicked() {
+                if state.expense_categories.is_empty() {
+                    state.expense_categories = default_category_rows();
+                }
+                state.expenses_detailed_mode = true;
+            }
         });
+        ui.add_space(4.0);
+
+        if !state.expenses_detailed_mode {
+            grid(ui, "g_exp", |ui| {
+                vfield_tt(ui, "Base Monthly",               &mut state.base_expense_jpy,          "e.g. 1000000", !errors.contains("base_expense_jpy"),
+                    "Base household burn rate before NHI / resident-tax. Inflated by Japan CPI each year.");
+                vfield_tt(ui, "Minimum Monthly",            &mut state.min_expense_jpy,           "e.g. 600000",  !errors.contains("min_expense_jpy"),
+                    "Floor expenses if dividends/bridge run low. Drives forced-liquidation thresholds.");
+                vfield_tt(ui, "NHI Spike Monthly (yr 1-2)", &mut state.nhi_first_year_monthly_jpy,"e.g. 73333",   !errors.contains("nhi_first_year_monthly_jpy"),
+                    "国民健康保険スパイク: first-post-retirement-year NHI premium based on prior-year salary.");
+            });
+        } else {
+            egui::Frame::group(ui.style())
+                .fill(Color32::from_rgba_unmultiplied(255, 200, 50, 25))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(255, 200, 50)))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("ℹ NHI and Japan resident tax are NOT entered here.").strong()
+                        .color(Color32::from_rgb(255, 220, 120)));
+                    ui.label(RichText::new(
+                        "Both are computed dynamically by the engine: NHI from the dedicated \
+                         \"NHI Settings\" section below (prefecture + city + prior-year income drive \
+                         the spike and ongoing premium); resident tax from the Japan Location section. \
+                         Adding either as a category would double-count — names matching the deny-list \
+                         are flagged at save time."
+                    ).small().color(Color32::from_rgb(220, 220, 220)));
+                });
+            ui.add_space(6.0);
+
+            use crate::models::expense::CategoryKind;
+            render_category_group(ui, state, CategoryKind::Essential,
+                "Essential Expenses (contribute to BOTH base and minimum)");
+            render_min_buffer_controls(ui, state);
+            ui.add_space(8.0);
+            render_category_group(ui, state, CategoryKind::Discretional,
+                "Discretional Expenses (contribute to base ONLY)");
+
+            let totals = compute_breakdown(state);
+            ui.add_space(8.0);
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.label(RichText::new("Derived monthly totals").strong());
+                ui.label(format!("Essential subtotal:    \u{00a5}{:>14}", format_jpy(totals.essentials)));
+                ui.label(format!("+ Buffer ({}):         \u{00a5}{:>14}",
+                    match state.min_buffer_mode.as_str() {
+                        "jpy" => "fixed",
+                        "pct" => "%",
+                        _     => "none",
+                    },
+                    format_jpy(totals.buffer)));
+                ui.label(RichText::new(format!(
+                    "= Minimum monthly:     \u{00a5}{:>14}",
+                    format_jpy(totals.min))).strong().color(Color32::from_rgb(255, 200, 100)));
+                ui.label(format!("Discretional subtotal: \u{00a5}{:>14}", format_jpy(totals.discretional)));
+                ui.label(RichText::new(format!(
+                    "= Base monthly:        \u{00a5}{:>14}",
+                    format_jpy(totals.base))).strong().color(Color32::from_rgb(120, 200, 120)));
+            });
+
+            if totals.min > totals.base {
+                ui.label(RichText::new(
+                    "⚠ Minimum exceeds Base — your essentials + buffer are larger than your full budget."
+                ).color(Color32::from_rgb(255, 180, 50)));
+            }
+
+            ui.add_space(6.0);
+            grid(ui, "g_exp_nhi_only", |ui| {
+                vfield_tt(ui, "NHI Spike Monthly (yr 1-2)", &mut state.nhi_first_year_monthly_jpy,
+                    "e.g. 73333", !errors.contains("nhi_first_year_monthly_jpy"),
+                    "国民健康保険スパイク: first-post-retirement-year NHI premium based on prior-year salary.");
+            });
+        }
 
         // ── NHI Settings ─────────────────────────────────────────────────────────
         section(ui, "NHI Settings (National Health Insurance)");
@@ -2225,19 +2485,73 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         });
         ui.add_space(6.0);
 
-        if state.nhi_calculated_mode {
-            if ui.small_button("Load Sagamihara 2026 Defaults").clicked() {
-                let d = NhiCalculatedRates::sagamihara_2026();
-                state.nhi_medical_rate       = format!("{:.2}", d.medical_rate       * 100.0);
-                state.nhi_support_rate       = format!("{:.2}", d.elderly_support_rate * 100.0);
-                state.nhi_nursing_rate       = format!("{:.2}", d.nursing_care_rate   * 100.0);
-                state.nhi_per_capita_medical = format!("{:.0}", d.per_capita_medical);
-                state.nhi_per_capita_support = format!("{:.0}", d.per_capita_support);
-                state.nhi_per_capita_nursing = format!("{:.0}", d.per_capita_nursing);
-                state.nhi_cap_medical        = format!("{:.0}", d.cap_medical);
-                state.nhi_cap_support        = format!("{:.0}", d.cap_support);
-                state.nhi_cap_nursing        = format!("{:.0}", d.cap_nursing);
+        // V8.1 — Location-change nudge: if the global location has drifted from the
+        // last-applied NHI location, show a non-modal prompt (does NOT auto-overwrite).
+        {
+            let location_changed = matches!(
+                &state.nhi_rates_applied_for,
+                Some((p, c)) if (p.as_str(), c.as_str()) != (state.prefecture.as_str(), state.city.as_str())
+            );
+            if location_changed {
+                egui::Frame::group(ui.style())
+                    .fill(Color32::from_rgba_unmultiplied(80, 160, 240, 25))
+                    .stroke(egui::Stroke::new(1.0, Color32::from_rgb(80, 160, 240)))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("ℹ Japan Location changed.").strong());
+                            ui.label(format!("NHI rates below are still those of {} / {}.",
+                                state.nhi_rates_applied_for.as_ref().map(|(p,_)| p.as_str()).unwrap_or("—"),
+                                state.nhi_rates_applied_for.as_ref().map(|(_,c)| c.as_str()).unwrap_or("—")));
+                            if ui.button("Re-apply for current location").clicked() {
+                                apply_nhi_rates_from_location(state);
+                            }
+                            if ui.small_button("Keep manual rates").clicked() {
+                                state.nhi_rates_applied_for = Some((state.prefecture.clone(), state.city.clone()));
+                            }
+                        });
+                    });
+                ui.add_space(6.0);
             }
+        }
+
+        if state.nhi_calculated_mode {
+            let location_set = !state.prefecture.is_empty() && !state.city.is_empty();
+
+            ui.horizontal(|ui| {
+                let pref_label = if state.prefecture.is_empty() { "(no prefecture)" } else { state.prefecture.as_str() };
+                let city_label = if state.city.is_empty()       { "(no city)"       } else { state.city.as_str() };
+                ui.label(RichText::new(format!("Location: {} / {}", pref_label, city_label))
+                    .small().color(if location_set { Color32::GRAY } else { Color32::from_rgb(255, 150, 100) }))
+                    .on_hover_text("Read from the Japan Location section above. Change it there to switch municipalities.");
+
+                let apply_btn = ui.add_enabled(location_set,
+                    egui::Button::new("Apply NHI rates for selected city"));
+                if apply_btn.clicked() {
+                    apply_nhi_rates_from_location(state);
+                }
+            });
+
+            if !location_set {
+                ui.label(RichText::new(
+                    "⚠ Select a prefecture and city in the Japan Location section above to enable \
+                     location-driven NHI rates. Until then the rate fields keep their last manually-entered values."
+                ).small().color(Color32::from_rgb(255, 180, 50)));
+            }
+
+            // Provenance badge.
+            match state.nhi_rate_provenance {
+                crate::engine::tax::japan_regions::NhiRateProvenance::Authoritative => {
+                    ui.label(RichText::new("✓ Authoritative — official schedule for this municipality.")
+                        .small().color(Color32::from_rgb(120, 220, 120)));
+                }
+                crate::engine::tax::japan_regions::NhiRateProvenance::Estimate => {
+                    ui.label(RichText::new(
+                        "⚠ Estimate — using the nationwide-standard (Sagamihara 2026) schedule as a proxy. \
+                         Confirm with your city office and override the fields below if your municipality differs."
+                    ).small().color(Color32::from_rgb(255, 200, 50)));
+                }
+            }
+
             ui.add_space(4.0);
 
             egui::Grid::new("g_nhi_auto")
@@ -4292,6 +4606,232 @@ fn account_sim_key(account_type: &str) -> &'static str {
         "iDeCo"             => "iDeCo",
         _                   => "Taxable",
     }
+}
+
+// ─── V8.1 Detailed expense helpers ───────────────────────────────────────────
+
+struct ExpenseBreakdownTotals {
+    essentials:   f64,
+    discretional: f64,
+    buffer:       f64,
+    min:          f64,
+    base:         f64,
+}
+
+fn compute_breakdown(state: &InputPanelState) -> ExpenseBreakdownTotals {
+    use crate::models::expense::CategoryKind;
+    let sim_start = chrono::NaiveDate::parse_from_str(&state.start_date, "%Y-%m-%d").ok();
+    let (mut essentials, mut discretional) = (0.0_f64, 0.0_f64);
+    for c in &state.expense_categories {
+        if looks_like_reserved_category(&c.name) { continue; }
+        let cat_end = chrono::NaiveDate::parse_from_str(c.end_date.trim(), "%Y-%m-%d").ok();
+        if let (Some(s), Some(end)) = (sim_start, cat_end) {
+            if end < s { continue; }
+        }
+        let amt = c.amount_jpy.parse::<f64>().unwrap_or(0.0);
+        let freq = c.frequency_months.parse::<u32>().unwrap_or(1).max(1) as f64;
+        let monthly = amt / freq;
+        match c.kind {
+            CategoryKind::Essential    => essentials    += monthly,
+            CategoryKind::Discretional => discretional  += monthly,
+        }
+    }
+    let buffer = match state.min_buffer_mode.as_str() {
+        "jpy" => state.min_buffer_jpy_value.parse::<f64>().unwrap_or(0.0),
+        "pct" => essentials * (state.min_buffer_pct_value.parse::<f64>().unwrap_or(0.0) / 100.0),
+        _     => 0.0,
+    };
+    ExpenseBreakdownTotals {
+        essentials,
+        discretional,
+        buffer,
+        min:  essentials + buffer,
+        base: essentials + discretional,
+    }
+}
+
+fn derived_totals_jpy(state: &InputPanelState) -> (f64, f64) {
+    let t = compute_breakdown(state);
+    (t.base, t.min)
+}
+
+fn render_min_buffer_controls(ui: &mut Ui, state: &mut InputPanelState) {
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Minimum buffer (FX / surprises):").strong());
+        if ui.radio(state.min_buffer_mode == "none", "None").clicked() {
+            state.min_buffer_mode = "none".into();
+        }
+        if ui.radio(state.min_buffer_mode == "jpy", "Fixed JPY/mo:").clicked() {
+            state.min_buffer_mode = "jpy".into();
+        }
+        ui.add_enabled(state.min_buffer_mode == "jpy",
+            egui::TextEdit::singleline(&mut state.min_buffer_jpy_value).desired_width(90.0));
+        if ui.radio(state.min_buffer_mode == "pct", "% of essentials:").clicked() {
+            state.min_buffer_mode = "pct".into();
+        }
+        ui.add_enabled(state.min_buffer_mode == "pct",
+            egui::TextEdit::singleline(&mut state.min_buffer_pct_value).desired_width(60.0));
+        ui.label("%");
+    });
+}
+
+fn render_category_group(
+    ui: &mut Ui,
+    state: &mut InputPanelState,
+    kind: crate::models::expense::CategoryKind,
+    title: &str,
+) {
+    use crate::models::expense::CategoryKind;
+    ui.add_space(6.0);
+    ui.label(RichText::new(title).strong().color(Color32::from_rgb(180, 220, 255)));
+    ui.separator();
+
+    let grid_id = match kind {
+        CategoryKind::Essential    => "g_exp_cats_essential",
+        CategoryKind::Discretional => "g_exp_cats_discretional",
+    };
+
+    egui::Grid::new(grid_id)
+        .num_columns(6)
+        .spacing([10.0, 4.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Category").strong());
+            ui.label(RichText::new("Amount (JPY)").strong());
+            ui.label(RichText::new("Every N months").strong());
+            ui.label(RichText::new("End date").strong()).on_hover_text("Optional YYYY-MM-DD. Empty = ongoing for life of simulation.");
+            ui.label(RichText::new("Note").strong());
+            ui.label("");
+            ui.end_row();
+
+            let mut delete_idx: Option<usize> = None;
+            let mut move_idx:   Option<usize> = None;
+            for (i, cat) in state.expense_categories.iter_mut().enumerate() {
+                if cat.kind != kind { continue; }
+                let reserved = looks_like_reserved_category(&cat.name);
+                if reserved {
+                    Frame::none()
+                        .fill(Color32::from_rgba_unmultiplied(180, 30, 30, 60))
+                        .stroke(egui::Stroke::new(1.5, Color32::from_rgb(220, 60, 60)))
+                        .show(ui, |ui| {
+                            ui.add(egui::TextEdit::singleline(&mut cat.name).desired_width(220.0))
+                                .on_hover_text("⚠ This name matches an engine-computed stream (NHI / 住民税). It will be stripped on save to prevent double-counting.");
+                        });
+                } else {
+                    ui.add(egui::TextEdit::singleline(&mut cat.name).desired_width(220.0));
+                }
+                ui.add(egui::TextEdit::singleline(&mut cat.amount_jpy).desired_width(100.0).hint_text("0"));
+                ui.add(egui::TextEdit::singleline(&mut cat.frequency_months).desired_width(60.0).hint_text("1"));
+                ui.add(egui::TextEdit::singleline(&mut cat.end_date).desired_width(110.0).hint_text("YYYY-MM-DD"));
+                ui.add(egui::TextEdit::singleline(&mut cat.note).desired_width(220.0));
+                ui.horizontal(|ui| {
+                    let label = match kind {
+                        CategoryKind::Essential    => "\u{2192} Disc",
+                        CategoryKind::Discretional => "\u{2192} Ess",
+                    };
+                    if ui.small_button(label).on_hover_text("Move to the other group").clicked() {
+                        move_idx = Some(i);
+                    }
+                    if ui.small_button("\u{2715}").on_hover_text("Remove this category").clicked() {
+                        delete_idx = Some(i);
+                    }
+                });
+                ui.end_row();
+            }
+            if let Some(i) = delete_idx { state.expense_categories.remove(i); }
+            if let Some(i) = move_idx {
+                state.expense_categories[i].kind = match state.expense_categories[i].kind {
+                    CategoryKind::Essential    => CategoryKind::Discretional,
+                    CategoryKind::Discretional => CategoryKind::Essential,
+                };
+            }
+        });
+
+    if ui.small_button(format!("+ Add {}", match kind {
+        CategoryKind::Essential    => "essential",
+        CategoryKind::Discretional => "discretional",
+    })).clicked() {
+        state.expense_categories.push(ExpenseCategoryRow {
+            kind,
+            ..ExpenseCategoryRow::default()
+        });
+    }
+}
+
+fn default_category_rows() -> Vec<ExpenseCategoryRow> {
+    use crate::models::expense::CategoryKind;
+    let mk = |name: &str, kind: CategoryKind, amt: &str, freq: &str, note: &str| ExpenseCategoryRow {
+        name: name.into(),
+        kind,
+        amount_jpy: amt.into(),
+        frequency_months: freq.into(),
+        end_date: String::new(),
+        note: note.into(),
+    };
+    vec![
+        mk("House Loan Repayment",                    CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Land Loan Repayment",                     CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Land & House Taxes",                      CategoryKind::Essential,    "0",     "12",  "Fixed asset tax \u{2014} billed annually"),
+        mk("Home Fire & Earthquake Insurance",        CategoryKind::Essential,    "321530","60",  "5-year premium"),
+        mk("Monthly Electric Bill",                   CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Monthly Water & Sewage Bill",             CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Monthly Phone Bill (3 lines)",            CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Monthly Internet Bill",                   CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Monthly Car Insurance",                   CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Car Shaken",                              CategoryKind::Essential,    "0",     "24",  "Biennial mandatory inspection"),
+        mk("Monthly Groceries",                       CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Personal & Home Care",                    CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Baseline Pet Care",                       CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Monthly Car Gas",                         CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Monthly Car Maintenance",                 CategoryKind::Essential,    "0",      "1",  ""),
+        mk("Dining Out & Take-Away",                  CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Clothing & Footwear",                     CategoryKind::Discretional, "0",      "1",  ""),
+        mk("General Retail & Hobbies",                CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Child Extracurricular School & Activities",CategoryKind::Discretional,"0",      "1",  ""),
+        mk("Other Child Costs",                       CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Digital Subscriptions & Apps",            CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Haircut / Hair Salon",                    CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Social Gift Giving & Events",             CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Monthly Fun Fund (JPY)",                  CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Medical Emergency Buffer",                CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Senior Pet Vet Fund",                     CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Monthly Car Replacement Fund",            CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Monthly Home Maintenance Fund",           CategoryKind::Discretional, "0",      "1",  ""),
+        mk("Annual Travel Fund",                      CategoryKind::Discretional, "0",     "12",  ""),
+    ]
+}
+
+fn format_jpy(v: f64) -> String {
+    let n = v.round() as i64;
+    let s = n.abs().to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 { out.push(','); }
+        out.push(*b as char);
+    }
+    if n < 0 { format!("-{}", out) } else { out }
+}
+
+// looks_like_reserved_category is defined in models::expense and re-used here.
+fn looks_like_reserved_category(name: &str) -> bool {
+    crate::models::expense::looks_like_reserved_category(name)
+}
+
+fn apply_nhi_rates_from_location(state: &mut InputPanelState) {
+    let (rates, prov) = crate::engine::tax::japan_regions::nhi_rates_for(&state.prefecture, &state.city);
+    state.nhi_medical_rate       = format!("{:.2}", rates.medical_rate             * 100.0);
+    state.nhi_support_rate       = format!("{:.2}", rates.elderly_support_rate     * 100.0);
+    state.nhi_nursing_rate       = format!("{:.2}", rates.nursing_care_rate        * 100.0);
+    state.nhi_per_capita_medical = format!("{:.0}", rates.per_capita_medical);
+    state.nhi_per_capita_support = format!("{:.0}", rates.per_capita_support);
+    state.nhi_per_capita_nursing = format!("{:.0}", rates.per_capita_nursing);
+    state.nhi_cap_medical        = format!("{:.0}", rates.cap_medical);
+    state.nhi_cap_support        = format!("{:.0}", rates.cap_support);
+    state.nhi_cap_nursing        = format!("{:.0}", rates.cap_nursing);
+    state.nhi_rate_provenance    = prov;
+    state.nhi_rates_applied_for  = Some((state.prefecture.clone(), state.city.clone()));
 }
 
 fn section(ui: &mut Ui, title: &str) {
