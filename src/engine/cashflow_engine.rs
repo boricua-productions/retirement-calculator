@@ -554,6 +554,9 @@ mod tests {
             kaigo_hoken_enabled: true,
             kaigo_hoken_brackets: None,
             kaigo_care_scenario: crate::engine::tax::kaigo_hoken::CareScenario::None,
+            // V8.0 defaults
+            primary_taxpayer_visa: crate::models::config::VisaType::Table1,
+            model_active_phase_resident_tax: false,
         }
     }
 

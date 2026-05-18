@@ -21,7 +21,7 @@ use retirement_calculator::models::assets::{
 use retirement_calculator::models::config::{
     BufferFundingTiming,
     Config, FamilyUnit, NhiModel, ShockOrdering, SpouseProfile, TaxProtocol, TaxRules,
-    VaDependentStatus, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy,
+    VaDependentStatus, VisaType, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy,
     UsTaxStrategy, InvestmentLocation, RsuSellToCoverPolicy,
 };
 use retirement_calculator::simulation::controller::SimulationController;
@@ -176,6 +176,8 @@ fn pfic_config(track_drift: bool) -> Config {
         kaigo_hoken_enabled: true,
         kaigo_hoken_brackets: None,
         kaigo_care_scenario: retirement_calculator::engine::tax::kaigo_hoken::CareScenario::None,
+        primary_taxpayer_visa: retirement_calculator::models::config::VisaType::Table1,
+        model_active_phase_resident_tax: false,
     }
 }
 
@@ -351,4 +353,68 @@ fn test_pfic_drift_warnings_suppressed_when_tracking_disabled() {
         "With track_pfic_basis_drift=false, drift monitoring is off — \
          no warnings should be emitted regardless of actual drift.",
     );
+}
+
+/// (D) V8.0 — Table1 visa is exempt from Exit Tax per IT Act Art. 60-2.
+/// Even with 10+ years residency and assets above ¥100M, Table1 never triggers.
+/// Table2 with identical conditions does trigger.
+#[test]
+fn test_visa_table1_exempt_from_exit_tax() {
+    // JPY-denominated DC account with ¥200M → above the ¥100M exit-tax threshold.
+    let make_large_accounts = || {
+        let price_jpy = 10_000.0;
+        let mut asset = Asset {
+            ticker: "NISA_FUND".into(),
+            price: price_jpy,
+            yield_rate: 0.0,
+            growth_rate: 0.05,
+            currency: Currency::Jpy,
+            category: AssetCategory::Growth,
+            drip_enabled: false,
+            dividend_reinvest_target: None,
+            custom_growth_rate: None,
+            avg_jpy_basis_per_share: price_jpy,
+            dividend_months: vec![],
+            dividend_currency: DividendCurrency::Jpy,
+            pfic_regime: PficRegime::default(),
+            pfic_prior_year_fmv_per_share: 0.0,
+            pfic_prior_year_fmv_per_share_jpy: 0.0,
+            pfic_mtm_loss_carryforward_usd: 0.0,
+            pfic_qef_election_year: None,
+            asset_class: AssetClass::default(),
+            return_profile: None,
+            crypto_staking_apr: 0.0,
+            lots: Vec::new(),
+        };
+        // 20,000 units × ¥10,000 = ¥200M
+        asset.add_lot(iso(2025, 12, 31), 20_000.0, 20_000.0 * price_jpy);
+        let mut acc = Account::new_with_meta(
+            "DC",
+            Currency::Jpy,
+            AccountLocation::Japan,
+            AccountJurisdiction::Both,
+        );
+        acc.assets.insert("NISA_FUND".into(), asset);
+        let mut accounts = HashMap::new();
+        accounts.insert("DC".into(), acc);
+        accounts
+    };
+
+    // Table1: never triggers even above ¥100M threshold.
+    let mut cfg_table1 = pfic_config(true);
+    cfg_table1.japan_residency_start_date = Some(iso(2015, 1, 1)); // 10+ years by sim start
+    cfg_table1.primary_taxpayer_visa = VisaType::Table1;
+    let results1 = SimulationController::new(cfg_table1, make_large_accounts()).run();
+    for snap in &results1.annual_summary {
+        assert!(!snap.exit_tax_triggered,
+            "Table1 visa should never trigger exit tax (year {})", snap.year);
+    }
+
+    // Table2: same conditions triggers.
+    let mut cfg_table2 = pfic_config(true);
+    cfg_table2.japan_residency_start_date = Some(iso(2015, 1, 1));
+    cfg_table2.primary_taxpayer_visa = VisaType::Table2;
+    let results2 = SimulationController::new(cfg_table2, make_large_accounts()).run();
+    let any_triggered = results2.annual_summary.iter().any(|s| s.exit_tax_triggered);
+    assert!(any_triggered, "Table2 visa with ≥5 years residency and ≥¥100M should trigger exit tax");
 }

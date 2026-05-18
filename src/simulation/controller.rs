@@ -1135,6 +1135,11 @@ impl SimulationController {
 
     // ── V7.5 — Exit Tax Monitor ──────────────────────────────────────────────
     fn evaluate_exit_tax_trigger(&self, yr: i32) -> (bool, f64) {
+        use crate::models::config::VisaType;
+        // V8.0 — Table 1 visas exempt per IT Act Art. 60-2.
+        if self.cfg.primary_taxpayer_visa == VisaType::Table1 {
+            return (false, 0.0);
+        }
         const THRESHOLD_JPY: f64 = 100_000_000.0;
         let start = match self.cfg.japan_residency_start_date {
             Some(d) => d,

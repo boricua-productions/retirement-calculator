@@ -178,6 +178,8 @@ fn base_cfg() -> Config {
         kaigo_hoken_enabled: true,
         kaigo_hoken_brackets: None,
         kaigo_care_scenario: retirement_calculator::engine::tax::kaigo_hoken::CareScenario::None,
+        primary_taxpayer_visa: retirement_calculator::models::config::VisaType::Table1,
+        model_active_phase_resident_tax: false,
     }
 }
 
