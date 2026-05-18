@@ -349,6 +349,11 @@ impl SimulationController {
         }
 
         // ── Year-end tax true-up (December, post-retirement) ──────────────────
+        // V8.0 Invariant per Spec §5 (Order-of-Execution):
+        //   1. Distributions & realized cap-gains complete before TLH.
+        //   2. TLH (§1091 wash-sale aware, skips crypto per Notice 2014-21) runs pre-waterfall.
+        //   3. Year-end tax true-up (basket FTC + §70103 senior dedn) computes before T4.
+        //   4. True-up liabilities feed the waterfall as expenses, draining buffers first.
         if mo == 12 && self.state.date >= self.cfg.retirement_date {
             self.finalize_year_taxes(yr);
         }
