@@ -381,6 +381,24 @@ impl Asset {
         self.lots.insert(pos, lot);
     }
 
+    /// V8.0 — Add a new lot AND update the JPY weighted-average basis per
+    /// 総平均法に準ずる方法 (Japan Income Tax Order Art. 119-2).
+    ///
+    /// `basis` is the total cost basis of the new lot in the account's currency
+    /// (USD for US accounts, JPY for JPY accounts).
+    /// `fx_at_purchase` converts basis to JPY: pass `state.current_fx` for USD
+    /// accounts, or `1.0` for JPY-denominated accounts.
+    pub fn add_lot_with_fx(&mut self, purchase_date: NaiveDate, qty: f64, basis: f64, fx_at_purchase: f64) {
+        let prior_qty = self.qty();
+        let prior_jpy_total = prior_qty * self.avg_jpy_basis_per_share;
+        let new_jpy_total = basis * fx_at_purchase;
+        let new_total_qty = prior_qty + qty;
+        if new_total_qty > 0.0 {
+            self.avg_jpy_basis_per_share = (prior_jpy_total + new_jpy_total) / new_total_qty;
+        }
+        self.add_lot(purchase_date, qty, basis);
+    }
+
     /// V7.6 — Apply a Return-of-Capital event. ROC is non-taxable in the year
     /// received and reduces both USD and JPY cost basis proportionally across
     /// all FIFO lots. Any excess above total basis is returned as an LTCG
@@ -569,6 +587,33 @@ impl Account {
         amount
     }
 
+    /// V8.0 — Buy with JPY-basis tracking. Like `buy` but also updates
+    /// `avg_jpy_basis_per_share` via the 総平均法 weighted-average formula.
+    /// Pass `state.current_fx` for USD accounts, `1.0` for JPY accounts.
+    pub fn buy_with_fx(
+        &mut self,
+        ticker: &str,
+        amount: f64,
+        purchase_date: NaiveDate,
+        fallback_price: f64,
+        fallback_growth: f64,
+        fx_at_purchase: f64,
+    ) -> f64 {
+        if amount <= 0.0 {
+            return 0.0;
+        }
+        let asset = self.assets.entry(ticker.to_string()).or_insert_with(|| {
+            Asset::new(ticker, fallback_price, 0.0, fallback_growth)
+        });
+        let price = asset.price;
+        if price <= 0.0 {
+            return 0.0;
+        }
+        let qty = amount / price;
+        asset.add_lot_with_fx(purchase_date, qty, amount, fx_at_purchase);
+        amount
+    }
+
     /// Sell `amount_to_sell` (in account currency) of `ticker` using FIFO.
     /// Returns the gain breakdown.
     pub fn sell_value(
@@ -684,4 +729,22 @@ fn subtract_one_year(date: NaiveDate) -> NaiveDate {
     NaiveDate::from_ymd_opt(date.year() - 1, date.month(), date.day())
         .or_else(|| NaiveDate::from_ymd_opt(date.year() - 1, date.month(), date.day() - 1))
         .unwrap_or(date)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moving_average_jpy_basis_weighted_correctly() {
+        let mut a = Asset::new("VTI", 250.0, 0.015, 0.07);
+        // Tranche 1: 100 sh @ $200 basis, fx=¥150 → JPY basis = $200 × 150 = ¥30,000/sh
+        a.add_lot_with_fx(NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(), 100.0, 20_000.0, 150.0);
+        assert!((a.avg_jpy_basis_per_share - 30_000.0).abs() < 0.01);
+
+        // Tranche 2: 100 sh @ $250 basis, fx=¥160 → JPY basis = $250 × 160 = ¥40,000/sh
+        // Weighted avg = (100×30,000 + 100×40,000) / 200 = ¥35,000/sh
+        a.add_lot_with_fx(NaiveDate::from_ymd_opt(2021, 1, 1).unwrap(), 100.0, 25_000.0, 160.0);
+        assert!((a.avg_jpy_basis_per_share - 35_000.0).abs() < 0.01);
+    }
 }

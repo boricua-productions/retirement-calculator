@@ -82,13 +82,15 @@ pub fn execute_roth_rebalance(state: &mut SimState, cfg: &Config) {
             info!("   [Roth Rebalance] Buying VTI: ${:.2}", vti_buy);
             let p = MarketDataService::fallback_price("VTI");
             let g = cfg.growth_rates_annual.get("VTI").copied().unwrap_or(0.08);
-            state.accounts.get_mut("Roth").unwrap().buy("VTI", vti_buy, current_date, p, g);
+            let fx = state.current_fx;
+            state.accounts.get_mut("Roth").unwrap().buy_with_fx("VTI", vti_buy, current_date, p, g, fx);
         }
         if schd_buy > 0.0 {
             info!("   [Roth Rebalance] Buying SCHD: ${:.2}", schd_buy);
             let p = MarketDataService::fallback_price("SCHD");
             let g = cfg.growth_rates_annual.get("SCHD").copied().unwrap_or(0.09);
-            state.accounts.get_mut("Roth").unwrap().buy("SCHD", schd_buy, current_date, p, g);
+            let fx = state.current_fx;
+            state.accounts.get_mut("Roth").unwrap().buy_with_fx("SCHD", schd_buy, current_date, p, g, fx);
         }
     }
 

@@ -179,8 +179,9 @@ pub fn handle_rsu_vesting(
             .unwrap_or_else(|| MarketDataService::fallback_growth(&ticker));
 
         let fallback_price = price;
+        let fx = state.current_fx;
         if let Some(taxable) = state.accounts.get_mut("Taxable") {
-            taxable.buy(&ticker, buy_amount, current_date, fallback_price, growth_rate);
+            taxable.buy_with_fx(&ticker, buy_amount, current_date, fallback_price, growth_rate, fx);
             // V7.7 — Attach RSU return profile to the new Asset if none is set yet.
             if let Some(profile) = rsu_overrides.and_then(|a| a.return_profile.clone()) {
                 if let Some(asset) = taxable.assets.get_mut(&ticker) {

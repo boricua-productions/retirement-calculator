@@ -611,9 +611,10 @@ fn manage_monthly_cashflow_cautious(
                 let vti_g    = cfg.growth_rates_annual.get("VTI").copied().unwrap_or(0.08);
                 let schd_p   = MarketDataService::fallback_price("SCHD");
                 let schd_g   = cfg.growth_rates_annual.get("SCHD").copied().unwrap_or(0.09);
+                let fx = state.current_fx;
                 if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                    let spent_vti  = taxable.buy("VTI",  vti_amt,  current_date, vti_p,  vti_g);
-                    let spent_schd = taxable.buy("SCHD", schd_amt, current_date, schd_p, schd_g);
+                    let spent_vti  = taxable.buy_with_fx("VTI",  vti_amt,  current_date, vti_p,  vti_g,  fx);
+                    let spent_schd = taxable.buy_with_fx("SCHD", schd_amt, current_date, schd_p, schd_g, fx);
                     state.bridge_fund_usd -= spent_vti + spent_schd;
                 }
             }
@@ -666,9 +667,10 @@ fn deposit_usd_surplus(
     let vti_g    = cfg.growth_rates_annual.get("VTI").copied().unwrap_or(0.08);
     let schd_p   = MarketDataService::fallback_price("SCHD");
     let schd_g   = cfg.growth_rates_annual.get("SCHD").copied().unwrap_or(0.09);
+    let fx = state.current_fx;
     if let Some(taxable) = state.accounts.get_mut("Taxable") {
-        let spent_vti  = taxable.buy("VTI",  vti_amt,  current_date, vti_p,  vti_g);
-        let spent_schd = taxable.buy("SCHD", schd_amt, current_date, schd_p, schd_g);
+        let spent_vti  = taxable.buy_with_fx("VTI",  vti_amt,  current_date, vti_p,  vti_g,  fx);
+        let spent_schd = taxable.buy_with_fx("SCHD", schd_amt, current_date, schd_p, schd_g, fx);
         state.bridge_fund_usd -= spent_vti + spent_schd;
     }
 }

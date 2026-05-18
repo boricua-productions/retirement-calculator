@@ -301,9 +301,10 @@ pub fn handle_transition(
                 let price = MarketDataService::fallback_price(ticker);
                 let growth = cfg.growth_rates_annual.get(*ticker).copied()
                     .unwrap_or_else(|| MarketDataService::fallback_growth(ticker));
+                let fx = state.current_fx;
                 let spent = state.accounts.get_mut("Taxable")
                     .expect("Taxable account must exist for rebalance buy")
-                    .buy(ticker, buy_amount, current_date, price, growth);
+                    .buy_with_fx(ticker, buy_amount, current_date, price, growth, fx);
                 let qty_bought = if price > 0.0 { spent / price } else { 0.0 };
                 buys_snapshot.push(BuyRecord { ticker: ticker.to_string(), qty_bought, cost: spent });
                 cash_for_reinvest -= spent;
@@ -321,8 +322,9 @@ pub fn handle_transition(
             let price = MarketDataService::fallback_price(primary);
             let growth = cfg.growth_rates_annual.get(primary).copied()
                 .unwrap_or_else(|| MarketDataService::fallback_growth(primary));
+            let fx = state.current_fx;
             let spent = state.accounts.get_mut("Taxable").unwrap()
-                .buy(primary, cash_for_reinvest, current_date, price, growth);
+                .buy_with_fx(primary, cash_for_reinvest, current_date, price, growth, fx);
             let qty_bought = if price > 0.0 { spent / price } else { 0.0 };
             buys_snapshot.push(BuyRecord { ticker: primary.to_string(), qty_bought, cost: spent });
         }
