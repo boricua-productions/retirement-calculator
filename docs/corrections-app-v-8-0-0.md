@@ -207,3 +207,31 @@ To avoid processing discrepancies, multi-currency rounding drops, or cash shortf
 
 * **System Invariant 1:** The engine must never process portfolio rebalancing distributions or liquidation events for a year until all incoming dividend components (ROC basis tracking, special allocations) have completed their execution passes for that period.  
 * **System Invariant 2:** All calculated federal, state, and local true-up tax liabilities must feed back into the cashflow waterfall as prioritizing expenses *before* the month closes. This guarantees that buffer balances accurately maintain the cash liquidity needed for upcoming tax obligations.
+---
+
+## Implementation Status (V8.0.0)
+
+All sections have been implemented except:
+
+- **§3.2 (US State Tax → Japan FTC Pool)** is **DEFERRED**.
+  
+  **Rationale:** The current engine models only US-side FTC (Japan→US credit per IRC §901/§904). Building Japan-side FTC infrastructure to credit US state tax against Japan's national/prefectural income tax requires:
+  1. A separate Japan-side FTC calculation engine
+  2. Treaty Article 23 dual-limitation formula implementation
+  3. Japan Income Tax Act Article 95 foreign tax deduction scaffolding
+  
+  This represents a Stage 14 initiative and is out of scope for V8.0.0 remediation. The gap is tracked as a TODO in `fixes-v-8-0-0.md`.
+
+**Implemented sections:**
+- §1.1: Resident Tax Cadence (Tokubetsu vs Futsu Choushuu) ✅
+- §1.2: 2026 Baseline Parameter Sync ✅
+- §2.1: 2026 Standard Deduction / Filing Status ✅
+- §2.2: IRC §70103 Enhanced Senior Deduction ✅
+- §2.3: SSDI Combined Income Multi-Bracket Selector ✅
+- §2.4: IRC §904(c) FIFO FTC Carryover Queue ✅
+- §3.1: Japan Total Moving Average (総平均法) ✅
+- §3.3: Japan 3-Year Capital Loss Ledger ✅
+- §3.4: Reconstruction Surcharge Sunset (2038) ✅
+- §3.5: Visa Classification Exit Tax Filter ✅
+- §4.1: Japan Spousal Mitigation (Article 19-2) ✅
+- §5: Order-of-Execution Invariants (documented) ✅
