@@ -481,24 +481,24 @@ pub struct TaxRules {
 
 impl Default for TaxRules {
     fn default() -> Self {
-        // 2024 MFJ federal brackets (matching Python defaults)
+        // V8.0 — 2026 MFJ federal brackets (OBBBA indexed values)
         Self {
             filing_status: "Married Filing Jointly".into(),
             us_state_code: "None".into(),
             us_state_rate: 0.0,
-            std_deduction: 35_000.0,
+            std_deduction: 32_200.0,
             ltcg_0_limit: 115_000.0,
             ltcg_15_limit: 700_000.0,
             niit_threshold: 250_000.0,
             niit_rate: 0.038,
             senior_addon_per_person: 1_550.0,
             brackets: vec![
-                (23_200.0, 0.10),
-                (94_300.0, 0.12),
-                (201_050.0, 0.22),
-                (383_900.0, 0.24),
-                (487_450.0, 0.32),
-                (731_200.0, 0.35),
+                (23_850.0, 0.10),         // V8.0 — 2026 indexed MFJ brackets
+                (96_950.0, 0.12),
+                (206_700.0, 0.22),
+                (394_600.0, 0.24),
+                (501_050.0, 0.32),
+                (752_700.0, 0.35),
                 (f64::INFINITY, 0.37),
             ],
         }

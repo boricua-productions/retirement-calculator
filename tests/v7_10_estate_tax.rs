@@ -68,12 +68,11 @@ fn japan_estate_1b_top_bracket() {
 
 // ─── US estate tax unit tests ─────────────────────────────────────────────────
 
-/// (B-1) Post-sunset 2026: $15M estate → $7M exclusion → 40% × $8M = $3.2M.
+/// (B-1) Post-sunset 2026: $15M estate → $15M exclusion (OBBBA) → $0 tax.
 #[test]
 fn us_estate_post_sunset_2026() {
     let tax = compute_us_estate_tax(15_000_000.0, 2026);
-    let expected = (15_000_000.0 - 7_000_000.0) * 0.40;
-    assert!((tax - expected).abs() < 1.0, "got ${:.0}", tax);
+    assert!((tax - 0.0).abs() < 1.0, "got ${:.0}", tax);
 }
 
 /// (B-2) Pre-sunset 2024: $12M estate → below $13.61M exclusion → $0.

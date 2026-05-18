@@ -84,8 +84,8 @@ fn us_estate_exclusion(year: i32) -> f64 {
         // TCJA era: ~$13.61M in 2024, indexed at ~2.8 % per year.
         13_610_000.0 * (1.028_f64).powi((year - 2024).max(0))
     } else {
-        // Post-sunset: ~$7M in 2026, indexed at 2.8 % per year thereafter.
-        7_000_000.0 * (1.028_f64).powi((year - 2026).max(0))
+        // V8.0 — 2026 Unified Credit Guidelines (OBBBA permanent extension).
+        15_000_000.0 * (1.028_f64).powi((year - 2026).max(0))
     }
 }
 
@@ -336,11 +336,11 @@ mod tests {
         assert_eq!(tax, 0.0);
     }
 
-    /// US estate tax: $20M estate in 2026 (post-sunset, $7M exclusion).
+    /// US estate tax: $20M estate in 2026 (OBBBA permanent extension, $15M exclusion).
     #[test]
     fn us_estate_post_sunset() {
         let tax = compute_us_estate_tax(20_000_000.0, 2026);
-        let expected = (20_000_000.0 - 7_000_000.0) * 0.40;
+        let expected = (20_000_000.0 - 15_000_000.0) * 0.40;
         assert!((tax - expected).abs() < 1.0);
     }
 

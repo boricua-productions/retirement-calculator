@@ -788,12 +788,13 @@ impl SimulationController {
             let dec31 = NaiveDate::from_ymd_opt(yr, 12, 31).unwrap();
             age_on(birth, dec31) < 18
         }).count() as u32;
-        let tax = JapanTaxEngine::calculate_income_tax(
+        let tax = JapanTaxEngine::calculate_income_tax_for_year(
             gross_earned_jpy,
             0.0,
             soc_ins_paid,
             age,
             num_dependents,
+            yr,
         );
         self.state.stats.year_japan_income_tax_jpy = tax;
     }

@@ -109,21 +109,29 @@ impl JapanTaxEngine {
     }
 
     /// V7.7 — Calculates Japan income tax (所得税) for working years.
-    ///
-    /// Formula:
-    ///   net_salary  = max(0, salary - employment_deduction)
-    ///   net_pension = max(0, pension - pension_deduction)
-    ///   basis       = net_salary + net_pension
-    ///   basic_deduction  = ¥480,000 (income tax; cf. resident tax ¥430,000)
-    ///   spouse_deduction = ¥380,000 × num_dependents (income ≤ ¥9M)
-    ///   taxable = max(0, basis − basic − spouse − social_insurance)
-    ///   tax = bracket lookup + reconstruction surcharge (× 1.021)
+    /// Delegates to `calculate_income_tax_for_year` with year 2026.
     pub fn calculate_income_tax(
         gross_salary_jpy: f64,
         gross_pension_jpy: f64,
         social_insurance_paid_jpy: f64,
         age: i32,
         num_dependents: u32,
+    ) -> f64 {
+        Self::calculate_income_tax_for_year(
+            gross_salary_jpy, gross_pension_jpy, social_insurance_paid_jpy, age, num_dependents, 2026,
+        )
+    }
+
+    /// V8.0 — Year-aware Japan income tax (所得税). Applies the reconstruction
+    /// surcharge (復興特別所得税, +2.1%) only through TY 2037 per 東日本大震災
+    /// からの復興のための施策を実施するために必要な財源の確保に関する特別措置法.
+    pub fn calculate_income_tax_for_year(
+        gross_salary_jpy: f64,
+        gross_pension_jpy: f64,
+        social_insurance_paid_jpy: f64,
+        age: i32,
+        num_dependents: u32,
+        current_year: i32,
     ) -> f64 {
         let net_salary  = (gross_salary_jpy  - Self::employment_deduction(gross_salary_jpy)).max(0.0);
         let net_pension = (gross_pension_jpy - Self::pension_deduction(gross_pension_jpy, age)).max(0.0);
@@ -160,8 +168,9 @@ impl JapanTaxEngine {
             taxable * 0.45 - 4_796_000.0
         };
 
-        // 2.1% reconstruction surcharge (復興特別所得税).
-        base_tax * 1.021
+        // Reconstruction surcharge (復興特別所得税) sunsets after TY 2037.
+        let surcharge = if current_year <= 2037 { 1.021 } else { 1.000 };
+        base_tax * surcharge
     }
 
     /// Estimates resident tax for the year immediately following retirement.
@@ -346,5 +355,15 @@ mod tests {
     #[test]
     fn test_nhi_estimate_zero_fers() {
         assert_eq!(JapanTaxEngine::estimate_nhi_from_fers(0.0), 0.0);
+    }
+
+    #[test]
+    fn reconstruction_surcharge_sunsets_after_2037() {
+        let pre  = JapanTaxEngine::calculate_income_tax_for_year(
+            10_000_000.0, 0.0, 0.0, 50, 0, 2037);
+        let post = JapanTaxEngine::calculate_income_tax_for_year(
+            10_000_000.0, 0.0, 0.0, 50, 0, 2038);
+        assert!(post < pre);
+        assert!((pre / post - 1.021).abs() < 0.001);
     }
 }
