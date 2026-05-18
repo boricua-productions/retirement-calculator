@@ -892,6 +892,18 @@ impl SimulationController {
         let saved_std_deduction = self.tax_engine.rules.std_deduction;
         self.tax_engine.rules.std_deduction += senior_bonus;
 
+        // V8.0 — §70103 Enhanced Senior Deduction (temporary, TY 2025–2028).
+        if yr <= 2028 {
+            let eligible: u32 =
+                (if user_age >= 65 { 1 } else { 0 })
+                + (if spouse_is_senior { 1 } else { 0 });
+            let magi_est = total_ord + total_cap;
+            let extra = crate::engine::tax::us_tax::enhanced_senior_deduction_2026(
+                eligible, magi_est, &self.tax_engine.rules.filing_status,
+            );
+            self.tax_engine.rules.std_deduction += extra;
+        }
+
         // Sync Japan resident tax accumulator from the expense tracker.
         self.state.stats.year_japan_res_tax_jpy = self.state.stats.year_exp_restax;
 
