@@ -132,8 +132,11 @@ impl CashFlowEngine {
                 } else if rule.name.contains("Education") {
                     edu_cost += rule.amount_jpy;
                 } else {
-                    base_desired += rule.amount_jpy;
-                    base_floor += rule.amount_jpy;
+                    let amt = if rule.inflate { rule.amount_jpy * inflation } else { rule.amount_jpy };
+                    base_desired += amt;
+                    if rule.apply_to_floor {
+                        base_floor += amt;
+                    }
                 }
             }
         }
@@ -411,6 +414,10 @@ mod tests {
             min_expense_jpy: 600_000.0,
             nhi_spike_monthly_jpy: 73_333.0,
             nhi_model: crate::models::config::NhiModel::default(),
+            expenses_detailed_mode: false,
+            expense_categories: vec![],
+            min_expense_buffer_jpy: 0.0,
+            min_expense_buffer_pct: 0.0,
             war_chest_enabled: true,
             war_chest_funding_timing: crate::models::config::BufferFundingTiming::AtRetirement,
             war_chest_ramp_months: 24,

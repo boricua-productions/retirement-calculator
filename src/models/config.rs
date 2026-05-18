@@ -648,6 +648,28 @@ pub struct Config {
     #[serde(skip)]
     pub nhi_model: NhiModel,
 
+    // ── V8.1 Detailed Expense Categories ────────────────────────────────────────
+    /// V8.1 — When true, the UI treats `expense_categories` as the source of truth.
+    /// The engine still consumes `base_expense_jpy` / `min_expense_jpy` (which the
+    /// save path keeps in sync as sums). Default false (legacy direct entry).
+    #[serde(default)]
+    pub expenses_detailed_mode: bool,
+
+    /// V8.1 — Per-category breakdown for the detailed entry mode. Always persisted
+    /// so toggling the mode in the UI never destroys data.
+    #[serde(default)]
+    pub expense_categories: Vec<crate::models::expense::ExpenseCategory>,
+
+    /// V8.1 — Buffer added to `min_expense_jpy` in detailed mode. Fixed JPY/mo
+    /// (`min_expense_buffer_jpy`) XOR percentage of essentials sum
+    /// (`min_expense_buffer_pct`). Use whichever is non-zero; if both are non-zero,
+    /// JPY wins (UI enforces single-choice). Default both 0.
+    #[serde(default)]
+    pub min_expense_buffer_jpy: f64,
+    /// V8.1 — Decimal fraction of essentials sum to add as buffer (e.g., 0.10 = +10%).
+    #[serde(default)]
+    pub min_expense_buffer_pct: f64,
+
     // ── War Chest ───────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]
     pub war_chest_enabled: bool,

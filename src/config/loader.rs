@@ -239,6 +239,15 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         ));
     }
 
+    // V8.1 — Synthetic stop-rules for detailed expense categories with end dates.
+    // These are regenerated on every load so the saved JSON stays clean (only the
+    // human-edited expense_categories array is persisted, not the derived rules).
+    {
+        let cats_snapshot: Vec<crate::models::expense::ExpenseCategory> =
+            parse_expense_categories(&sets["expense_categories"]);
+        expense_rules.extend(synthetic_stop_rules_from_categories(&cats_snapshot, start_date, end_date));
+    }
+
     // ── RSU awards ────────────────────────────────────────────────────────────
     let mut rsu_awards: Vec<RsuAward> = Vec::new();
     if let Value::Array(arr) = &data["rsu_awards"] {
@@ -561,6 +570,10 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         min_expense_jpy:  get_f64("min_monthly_expenses_jpy",    600_000.0),
         nhi_spike_monthly_jpy,
         nhi_model,
+        expenses_detailed_mode: get_bool("expenses_detailed_mode", false),
+        expense_categories:     parse_expense_categories(&sets["expense_categories"]),
+        min_expense_buffer_jpy: get_f64("min_expense_buffer_jpy", 0.0),
+        min_expense_buffer_pct: get_f64("min_expense_buffer_pct", 0.0),
         war_chest_enabled: get_bool("war_chest_enabled", true),
         war_chest_funding_timing: get_buffer_timing("war_chest_funding_timing"),
         war_chest_ramp_months: get_u32("war_chest_ramp_months", 24),
@@ -1289,4 +1302,66 @@ fn add_years_naive(date: NaiveDate, years: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(date.year() + years as i32, date.month(), date.day())
         .or_else(|| NaiveDate::from_ymd_opt(date.year() + years as i32, date.month(), date.day() - 1))
         .unwrap_or(date)
+}
+
+// ─── V8.1 Detailed expense category helpers ───────────────────────────────────
+
+fn parse_expense_categories(v: &serde_json::Value) -> Vec<crate::models::expense::ExpenseCategory> {
+    use crate::models::expense::{ExpenseCategory, CategoryKind};
+    let Some(arr) = v.as_array() else { return Vec::new(); };
+    arr.iter().filter_map(|item| {
+        let obj = item.as_object()?;
+        let kind = match obj.get("kind").and_then(|x| x.as_str()).unwrap_or("essential") {
+            "discretional" | "discretionary" => CategoryKind::Discretional,
+            _ => CategoryKind::Essential,
+        };
+        Some(ExpenseCategory {
+            name:             obj.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            kind,
+            amount_jpy:       obj.get("amount_jpy").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            frequency_months: obj.get("frequency_months").and_then(|x| x.as_u64()).map(|n| n.max(1) as u32).unwrap_or(1),
+            end_date:         obj.get("end_date").and_then(|x| x.as_str())
+                                  .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
+            note:             obj.get("note").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        })
+    }).collect()
+}
+
+fn synthetic_stop_rules_from_categories(
+    categories: &[crate::models::expense::ExpenseCategory],
+    sim_start: chrono::NaiveDate,
+    sim_end: chrono::NaiveDate,
+) -> Vec<ExpenseRule> {
+    use crate::models::expense::CategoryKind;
+    use chrono::Datelike;
+
+    let mut out = Vec::new();
+    for cat in categories {
+        let Some(end) = cat.end_date else { continue; };
+        if end < sim_start || end > sim_end { continue; }
+
+        // Stop rule starts on the first of the month AFTER `end`.
+        let next_month = if end.month() == 12 {
+            chrono::NaiveDate::from_ymd_opt(end.year() + 1, 1, 1)
+        } else {
+            chrono::NaiveDate::from_ymd_opt(end.year(), end.month() + 1, 1)
+        };
+        let Some(start) = next_month else { continue; };
+        if start > sim_end { continue; }
+
+        let monthly = cat.effective_monthly_jpy();
+        if monthly <= 0.0 { continue; }
+
+        out.push(ExpenseRule {
+            // Generic-name (no NHI/Nenkin/ResTax/Education keyword) so engine
+            // routes to the base/floor branch in cashflow_engine.rs.
+            name: format!("CategoryStop:{}", cat.name),
+            amount_jpy: -monthly,
+            start_date: start,
+            end_date: sim_end,
+            apply_to_floor: matches!(cat.kind, CategoryKind::Essential),
+            inflate: true,
+        });
+    }
+    out
 }
