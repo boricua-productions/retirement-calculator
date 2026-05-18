@@ -169,15 +169,17 @@ fn basket_ftc_does_not_leak_pfic_credit_to_general() {
     // Japan tax: $100k all passive (transactional CG-style), $0 general.
     // §904 passive limit will cap the credit far below $100k since the
     // passive share of income is only 30k / 80k ≈ 37.5%.
-    let lib = engine.calculate_liability_with_basket_ftc(
-        2024,
-        50_000.0,   // general_ord (FERS)
-        30_000.0,   // passive_ord (PFIC §1296)
-        0.0,        // stcg
-        0.0,        // ltcg
-        100_000.0,  // japan_tax_passive_usd (huge)
-        0.0,        // japan_tax_general_usd
-    );
+    use retirement_calculator::engine::tax::us_tax::UsTaxInput;
+    let input = UsTaxInput {
+        year: 2024,
+        gross_ord_general: 50_000.0,   // general_ord (FERS)
+        gross_ord_passive: 30_000.0,   // passive_ord (PFIC §1296)
+        gross_st_cap: 0.0,              // stcg
+        gross_lt_cap: 0.0,              // ltcg
+        japan_tax_passive_usd: 100_000.0,  // japan_tax_passive_usd (huge)
+        japan_tax_general_usd: 0.0,     // japan_tax_general_usd
+    };
+    let lib = engine.calculate_liability_with_basket_ftc(&input);
 
     // Same scenario via the lumped FTC: $100k Japan tax against $80k total income.
     let lumped = engine.calculate_liability_with_ftc(

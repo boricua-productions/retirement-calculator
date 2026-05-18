@@ -185,6 +185,25 @@ pub fn lifetime_gifting_optimiser(
 
 // ─── EstatePlanningEngine ────────────────────────────────────────────────────
 
+/// Estate tax calculation context containing final simulation state.
+#[derive(Debug, Clone)]
+pub struct EstateTaxContext {
+    /// Final taxable portfolio value (USD).
+    pub brokerage_usd: f64,
+    /// Final Roth IRA value (USD).
+    pub roth_usd: f64,
+    /// Final Japan DC/NISA/iDeCo value (JPY).
+    pub dc_jpy: f64,
+    /// Final real-estate equity (JPY).
+    pub real_estate_equity_jpy: f64,
+    /// Final real-estate equity (USD).
+    pub real_estate_equity_usd: f64,
+    /// Final USD/JPY exchange rate.
+    pub final_fx: f64,
+    /// Calendar year of death event.
+    pub death_year: i32,
+}
+
 /// Full estate-planning projection at end-of-horizon (or death_date).
 pub struct EstatePlanningEngine;
 
@@ -192,31 +211,19 @@ impl EstatePlanningEngine {
     /// Compute the estate-tax projection from the last simulation state.
     ///
     /// # Arguments
-    /// * `brokerage_usd`  — Final taxable portfolio value (USD).
-    /// * `roth_usd`       — Final Roth IRA value (USD).
-    /// * `dc_jpy`         — Final Japan DC/NISA/iDeCo value (JPY).
-    /// * `real_estate_equity_jpy` — Final real-estate equity (JPY).
-    /// * `real_estate_equity_usd` — Final real-estate equity (USD).
-    /// * `final_fx`       — Final USD/JPY rate.
-    /// * `death_year`     — Calendar year of the event.
-    /// * `cfg`            — Simulation configuration.
+    /// * `context` — Estate tax calculation context containing asset values and exchange rate.
+    /// * `cfg`     — Simulation configuration (heir structure, jurisdiction settings).
     pub fn project_at_death(
-        brokerage_usd: f64,
-        roth_usd: f64,
-        dc_jpy: f64,
-        real_estate_equity_jpy: f64,
-        real_estate_equity_usd: f64,
-        final_fx: f64,
-        death_year: i32,
+        context: &EstateTaxContext,
         cfg: &Config,
     ) -> crate::models::snapshot::EstateSummary {
         use crate::models::snapshot::EstateSummary;
 
         // ── Total estate in both currencies ───────────────────────────────────
-        let us_assets_usd = brokerage_usd + roth_usd + real_estate_equity_usd;
-        let japan_assets_jpy = dc_jpy + real_estate_equity_jpy;
-        let total_usd = us_assets_usd + japan_assets_jpy / final_fx.max(1.0);
-        let total_jpy = total_usd * final_fx;
+        let us_assets_usd = context.brokerage_usd + context.roth_usd + context.real_estate_equity_usd;
+        let japan_assets_jpy = context.dc_jpy + context.real_estate_equity_jpy;
+        let total_usd = us_assets_usd + japan_assets_jpy / context.final_fx.max(1.0);
+        let total_jpy = total_usd * context.final_fx;
 
         // ── Heirs & shares ────────────────────────────────────────────────────
         let heir_count = cfg.heirs.len().max(1) as u32;
@@ -274,27 +281,27 @@ impl EstatePlanningEngine {
         };
 
         // ── US Estate Tax ─────────────────────────────────────────────────────
-        let us_tax_usd = compute_us_estate_tax(total_usd, death_year);
+        let us_tax_usd = compute_us_estate_tax(total_usd, context.death_year);
 
         // ── Treaty credit ─────────────────────────────────────────────────────
         // Japan-situs fraction: JP DC/NISA + JP real estate / total estate
-        let japan_situs_usd = japan_assets_jpy / final_fx.max(1.0);
+        let japan_situs_usd = japan_assets_jpy / context.final_fx.max(1.0);
         let japan_situs_fraction = if total_usd > 0.0 {
             (japan_situs_usd / total_usd).clamp(0.0, 1.0)
         } else {
             1.0
         };
-        let japan_tax_usd = japan_tax_jpy / final_fx.max(1.0);
+        let japan_tax_usd = japan_tax_jpy / context.final_fx.max(1.0);
         let treaty_credit_usd = compute_treaty_credit(japan_tax_usd, us_tax_usd, japan_situs_fraction);
         let net_us_tax_usd = (us_tax_usd - treaty_credit_usd).max(0.0);
 
         // ── Net wealth to heirs ───────────────────────────────────────────────
         let total_tax_usd = japan_tax_usd + net_us_tax_usd;
         let net_to_heirs_usd = (total_usd - total_tax_usd).max(0.0);
-        let net_to_heirs_jpy = net_to_heirs_usd * final_fx;
+        let net_to_heirs_jpy = net_to_heirs_usd * context.final_fx;
 
         EstateSummary {
-            year: death_year,
+            year: context.death_year,
             total_estate_jpy: total_jpy,
             total_estate_usd: total_usd,
             japan_sozoku_zei_jpy: japan_tax_jpy,
@@ -410,13 +417,16 @@ mod tests {
         // Spouse share = 100% → ¥114M → bracket tax ≈ ¥31.7M
         // Article 19-2 credit ceiling = max(¥114M, ¥160M) = ¥160M → bracket tax ≈ ¥48.5M
         // Since credit (¥48.5M) > liability (¥31.7M), net = ¥0
-        let summary = EstatePlanningEngine::project_at_death(
-            150_000_000.0 / 150.0, // brokerage_usd
-            0.0, 0.0, 0.0, 0.0,
-            150.0, // fx
-            2026,
-            &cfg,
-        );
+        let context = EstateTaxContext {
+            brokerage_usd: 150_000_000.0 / 150.0,
+            roth_usd: 0.0,
+            dc_jpy: 0.0,
+            real_estate_equity_jpy: 0.0,
+            real_estate_equity_usd: 0.0,
+            final_fx: 150.0,
+            death_year: 2026,
+        };
+        let summary = EstatePlanningEngine::project_at_death(&context, &cfg);
         assert!(summary.japan_sozoku_zei_jpy < 1.0,
             "Spouse-only estate under ¥160M should have zero tax after Article 19-2 credit, got ¥{:.0}",
             summary.japan_sozoku_zei_jpy);
@@ -451,13 +461,16 @@ mod tests {
         //   Spouse net = max(¥38.9M - ¥48.5M, 0) = ¥0
         //   Child = ¥38.9M (unchanged)
         //   Total ≈ ¥38.9M
-        let summary = EstatePlanningEngine::project_at_death(
-            300_000_000.0 / 150.0, // brokerage_usd
-            0.0, 0.0, 0.0, 0.0,
-            150.0, // fx
-            2026,
-            &cfg,
-        );
+        let context = EstateTaxContext {
+            brokerage_usd: 300_000_000.0 / 150.0,
+            roth_usd: 0.0,
+            dc_jpy: 0.0,
+            real_estate_equity_jpy: 0.0,
+            real_estate_equity_usd: 0.0,
+            final_fx: 150.0,
+            death_year: 2026,
+        };
+        let summary = EstatePlanningEngine::project_at_death(&context, &cfg);
         // Expect roughly half the pre-credit tax (child's liability only).
         // Actual: ¥34.6M (child's portion after spousal credit fully absorbs spouse's liability).
         let expected_approx = 34_600_000.0;

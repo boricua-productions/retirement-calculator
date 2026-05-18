@@ -140,7 +140,7 @@ pub fn handle_contributions(
             continue;
         }
         let freq = rule.frequency_months.max(1);
-        if mo % freq != 0 {
+        if !mo.is_multiple_of(freq) {
             continue;
         }
         let ticker = &rule.ticker;
@@ -218,25 +218,24 @@ pub fn handle_contributions(
     }
 
     // Reduce VTI contribution by the total skim amount (cash building has priority)
-    if total_skim_usd > 0.0 && !skip_first_month {
-        if let Some(taxable) = state.accounts.get_mut("Taxable") {
-            let ticker = &cfg.monthly_contribution_ticker;
-            // Find the most recent buy of this ticker today and reduce it
-            if let Some(asset) = taxable.assets.get_mut(ticker) {
-                if let Some(last_lot) = asset.lots.last_mut() {
-                    if last_lot.purchase_date == current_date {
-                        let reduction = total_skim_usd.min(last_lot.basis);
-                        let shares_to_remove = reduction / (last_lot.basis / last_lot.qty);
-                        last_lot.qty -= shares_to_remove;
-                        last_lot.basis -= reduction;
-                        state.stats.year_monthly_contribution -= reduction;
+    if total_skim_usd > 0.0 && !skip_first_month
+        && let Some(taxable) = state.accounts.get_mut("Taxable")
+    {
+        let ticker = &cfg.monthly_contribution_ticker;
+        // Find the most recent buy of this ticker today and reduce it
+        if let Some(asset) = taxable.assets.get_mut(ticker)
+            && let Some(last_lot) = asset.lots.last_mut()
+            && last_lot.purchase_date == current_date
+        {
+            let reduction = total_skim_usd.min(last_lot.basis);
+            let shares_to_remove = reduction / (last_lot.basis / last_lot.qty);
+            last_lot.qty -= shares_to_remove;
+            last_lot.basis -= reduction;
+            state.stats.year_monthly_contribution -= reduction;
 
-                        // If the lot is now empty or nearly empty, remove it
-                        if last_lot.qty < 0.001 {
-                            asset.lots.pop();
-                        }
-                    }
-                }
+            // If the lot is now empty or nearly empty, remove it
+            if last_lot.qty < 0.001 {
+                asset.lots.pop();
             }
         }
     }

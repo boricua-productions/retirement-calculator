@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 ///
 /// This module handles the age-65+ premium calculation and optional out-of-pocket
 /// care cost projections.
-
 /// Stage 10 — Care need scenario for optional out-of-pocket cost projection.
 ///
 /// Drives the projected late-life care expenses beyond the insurance premium.

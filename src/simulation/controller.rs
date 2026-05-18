@@ -95,16 +95,16 @@ impl SimulationController {
                 let death_year = self.cfg.death_date
                     .unwrap_or(self.cfg.end_date)
                     .year();
-                let summary = EstatePlanningEngine::project_at_death(
-                    last.brokerage_usd,
-                    last.roth_usd,
-                    last.dc_jpy,
-                    last.real_estate_equity_jpy,
-                    last.real_estate_equity_usd,
-                    last.usd_jpy,
+                let context = crate::engine::tax::estate_tax::EstateTaxContext {
+                    brokerage_usd: last.brokerage_usd,
+                    roth_usd: last.roth_usd,
+                    dc_jpy: last.dc_jpy,
+                    real_estate_equity_jpy: last.real_estate_equity_jpy,
+                    real_estate_equity_usd: last.real_estate_equity_usd,
+                    final_fx: last.usd_jpy,
                     death_year,
-                    &self.cfg,
-                );
+                };
+                let summary = EstatePlanningEngine::project_at_death(&context, &self.cfg);
                 Some(summary)
             } else {
                 None
@@ -990,15 +990,18 @@ impl SimulationController {
             UsTaxStrategy::FeieAndFtc => self.tax_engine.calculate_liability_with_feie_ftc(
                 yr, earned_ord, unearned_ord, 0.0, total_cap, effective_japan_tax_usd,
             ),
-            UsTaxStrategy::FtcOnly => self.tax_engine.calculate_liability_with_basket_ftc(
-                yr,
-                general_ord,
-                passive_ord,
-                0.0,
-                total_cap,
-                effective_passive_usd,
-                effective_general_usd,
-            ),
+            UsTaxStrategy::FtcOnly => {
+                let input = crate::engine::tax::us_tax::UsTaxInput {
+                    year: yr,
+                    gross_ord_general: general_ord,
+                    gross_ord_passive: passive_ord,
+                    gross_st_cap: 0.0,
+                    gross_lt_cap: total_cap,
+                    japan_tax_passive_usd: effective_passive_usd,
+                    japan_tax_general_usd: effective_general_usd,
+                };
+                self.tax_engine.calculate_liability_with_basket_ftc(&input)
+            }
         };
 
         // Restore std_deduction (senior add-on is per-year, not permanently inflated).

@@ -8,7 +8,6 @@
 ///
 /// All other 47 prefectures and their major cities use the standard 10% rate.
 /// Source: National Tax Agency (NTA) and municipal tax ordinances.
-
 /// Resident tax rates for a specific prefecture / city combination.
 #[derive(Debug, Clone)]
 pub struct ResidentTaxRates {
