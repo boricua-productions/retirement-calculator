@@ -323,26 +323,35 @@ impl TaxEngine {
 
 // ─── SSDI Combined Income Tax Rule ────────────────────────────────────────────
 
-/// Computes the taxable portion of annual SSDI income under the IRS Combined Income rule.
-///
-/// Formula (MFJ thresholds — identical for SSDI and SS retirement benefits):
-///   provisional_income = AGI_before_SSDI + 0.5 × annual_ssdi
-///   • PI ≤ $32K  → 0% of SSDI is taxable
-///   • $32K < PI ≤ $44K → min(50% × (PI − $32K), 50% × annual_ssdi)
-///   • PI > $44K  → min(85% × annual_ssdi, $6,000 + 85% × (PI − $44K))
+/// V8.0 — Computes the taxable portion of annual SSDI income under the IRS Combined Income rule.
+/// Filing-status-aware: uses IRC §86 thresholds per filing status.
 ///
 /// Caller passes `provisional_income` (already includes the 0.5× SSDI term).
-pub fn ssdi_combined_income_taxable_portion(provisional_income: f64, annual_ssdi: f64) -> f64 {
-    if annual_ssdi <= 0.0 {
-        return 0.0;
-    }
-    if provisional_income <= 32_000.0 {
+/// `lived_with_spouse_during_year` applies only to MFS — when true the $0/$0 "spousal
+/// lived-together" penalty applies (forces 85% of SSDI taxable regardless of PI).
+pub fn ssdi_combined_income_taxable_portion(
+    provisional_income: f64,
+    annual_ssdi: f64,
+    filing_status: &str,
+    lived_with_spouse_during_year: bool,
+) -> f64 {
+    if annual_ssdi <= 0.0 { return 0.0; }
+    let (low, high) = match filing_status {
+        "Married Filing Jointly"  => (32_000.0, 44_000.0),
+        "Single" | "Head of Household" => (25_000.0, 34_000.0),
+        "Married Filing Separately" => {
+            if lived_with_spouse_during_year { (0.0, 0.0) }
+            else { (25_000.0, 34_000.0) }
+        }
+        _ => (32_000.0, 44_000.0),  // safe MFJ default
+    };
+    if provisional_income <= low {
         0.0
-    } else if provisional_income <= 44_000.0 {
-        ((provisional_income - 32_000.0) * 0.5).min(annual_ssdi * 0.5)
+    } else if provisional_income <= high {
+        ((provisional_income - low) * 0.5).min(annual_ssdi * 0.5)
     } else {
-        let tier1 = 6_000.0_f64; // 0.5 × min($12K spread, SSDI) = 0.5 × $12K = $6K (cap)
-        let tier2 = (provisional_income - 44_000.0) * 0.85;
+        let tier1 = (high - low) * 0.5;
+        let tier2 = (provisional_income - high) * 0.85;
         (tier1 + tier2).min(annual_ssdi * 0.85)
     }
 }
@@ -628,39 +637,56 @@ mod tests {
     #[test]
     fn test_ssdi_zero_income() {
         // No SSDI → always 0 taxable
-        assert_eq!(ssdi_combined_income_taxable_portion(50_000.0, 0.0), 0.0);
+        assert_eq!(ssdi_combined_income_taxable_portion(50_000.0, 0.0, "Married Filing Jointly", true), 0.0);
     }
 
     #[test]
     fn test_ssdi_below_32k_threshold() {
-        // PI ≤ $32K → 0% taxable regardless of SSDI amount
-        let taxable = ssdi_combined_income_taxable_portion(30_000.0, 18_000.0);
+        // MFJ PI ≤ $32K → 0% taxable regardless of SSDI amount
+        let taxable = ssdi_combined_income_taxable_portion(30_000.0, 18_000.0, "Married Filing Jointly", true);
         assert_eq!(taxable, 0.0);
     }
 
     #[test]
     fn test_ssdi_partial_50pct_bracket() {
-        // PI = $38K (between $32K and $44K), annual SSDI = $24K
+        // MFJ PI = $38K (between $32K and $44K), annual SSDI = $24K
         // taxable = min(0.5*(38K-32K), 0.5*24K) = min(3_000, 12_000) = 3_000
-        let taxable = ssdi_combined_income_taxable_portion(38_000.0, 24_000.0);
+        let taxable = ssdi_combined_income_taxable_portion(38_000.0, 24_000.0, "Married Filing Jointly", true);
         assert!((taxable - 3_000.0).abs() < 0.01, "taxable={}", taxable);
     }
 
     #[test]
     fn test_ssdi_fully_85pct_taxable() {
-        // PI = $60K (above $44K), annual SSDI = $24K
-        // tier1 = 6_000, tier2 = (60K - 44K)*0.85 = 13_600 → sum = 19_600
+        // MFJ PI = $60K (above $44K), annual SSDI = $24K
+        // tier1 = (44K-32K)*0.5=6_000, tier2 = (60K-44K)*0.85=13_600 → sum=19_600
         // cap = 0.85*24K = 20_400 → taxable = 19_600
-        let taxable = ssdi_combined_income_taxable_portion(60_000.0, 24_000.0);
+        let taxable = ssdi_combined_income_taxable_portion(60_000.0, 24_000.0, "Married Filing Jointly", true);
         assert!((taxable - 19_600.0).abs() < 0.01, "taxable={}", taxable);
     }
 
     #[test]
     fn test_ssdi_capped_at_85pct() {
-        // Very high PI: tier1+tier2 would exceed 85% cap
+        // MFJ very high PI: tier1+tier2 would exceed 85% cap
         // PI = $200K, SSDI = $12K → 85% cap = $10_200
-        // tier1=6_000, tier2=(200K-44K)*0.85=132_600 → 138_600 > 10_200 → capped at 10_200
-        let taxable = ssdi_combined_income_taxable_portion(200_000.0, 12_000.0);
+        let taxable = ssdi_combined_income_taxable_portion(200_000.0, 12_000.0, "Married Filing Jointly", true);
         assert!((taxable - 10_200.0).abs() < 0.01, "taxable={}", taxable);
+    }
+
+    #[test]
+    fn test_ssdi_single_lower_thresholds() {
+        // Single PI = $30K (between $25K and $34K), SSDI = $20K
+        // taxable = min(0.5*(30K-25K), 0.5*20K) = min(2_500, 10_000) = 2_500
+        let taxable = ssdi_combined_income_taxable_portion(30_000.0, 20_000.0, "Single", false);
+        assert!((taxable - 2_500.0).abs() < 0.01, "taxable={}", taxable);
+        // Single PI ≤ $25K → 0
+        assert_eq!(ssdi_combined_income_taxable_portion(24_000.0, 20_000.0, "Single", false), 0.0);
+    }
+
+    #[test]
+    fn test_ssdi_mfs_lived_with_spouse_fully_taxable() {
+        // MFS lived-with-spouse: thresholds (0, 0) → all PI above 0 → 85% immediately
+        // PI = $1K, SSDI = $10K → tier1=(0-0)*0.5=0, tier2=1000*0.85=850 → capped at 8_500
+        let taxable = ssdi_combined_income_taxable_portion(1_000.0, 10_000.0, "Married Filing Separately", true);
+        assert!((taxable - 850.0).abs() < 0.01, "taxable={}", taxable);
     }
 }
