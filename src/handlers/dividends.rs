@@ -189,8 +189,9 @@ pub fn handle_dividends(
                                 .unwrap_or_else(|| ev.ticker.clone());
                             let fp = MarketDataService::fallback_price(&target);
                             let fg = MarketDataService::fallback_growth(&target);
+                            let fx = state.current_fx;
                             if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                                taxable.buy(&target, ev.gross, current_date, fp, fg);
+                                taxable.buy_with_fx(&target, ev.gross, current_date, fp, fg, fx);
                             }
                         } else {
                             div_net_usd += ev.gross;
@@ -201,7 +202,8 @@ pub fn handle_dividends(
                             let fp = MarketDataService::fallback_price(&ev.ticker);
                             let fg = MarketDataService::fallback_growth(&ev.ticker);
                             if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                                taxable.buy(&ev.ticker, ev.gross, current_date, fp, fg);
+                                // JPY dividend reinvested into JPY-priced asset: fx=1.0 keeps basis in JPY.
+                                taxable.buy_with_fx(&ev.ticker, ev.gross, current_date, fp, fg, 1.0);
                             }
                         } else {
                             div_net_jpy += ev.gross;
@@ -323,8 +325,9 @@ fn process_taxable_dist_event(
                 if ev.drip_enabled || is_schd_pivot {
                     let fp = MarketDataService::fallback_price(&reinvest_ticker);
                     let fg = MarketDataService::fallback_growth(&reinvest_ticker);
+                    let fx = state.current_fx;
                     if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                        taxable.buy(&reinvest_ticker, gross, current_date, fp, fg);
+                        taxable.buy_with_fx(&reinvest_ticker, gross, current_date, fp, fg, fx);
                     }
                 } else {
                     net_usd_add += gross;
@@ -361,7 +364,7 @@ fn process_taxable_dist_event(
                     let fp = MarketDataService::fallback_price(&ev.ticker);
                     let fg = MarketDataService::fallback_growth(&ev.ticker);
                     if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                        taxable.buy(&ev.ticker, gross, current_date, fp, fg);
+                        taxable.buy_with_fx(&ev.ticker, gross, current_date, fp, fg, 1.0);
                     }
                 } else {
                     net_jpy_add += gross;
@@ -402,8 +405,9 @@ fn process_drip_account(state: &mut SimState, current_date: NaiveDate, mo: u32, 
         if ev.gross > 0.0 {
             let fp = MarketDataService::fallback_price(&ev.ticker);
             let fg = MarketDataService::fallback_growth(&ev.ticker);
+            // V8.0 — DRIP uses the account's native FX rate (Roth/DC are USD, so use fx).
             if let Some(acc) = state.accounts.get_mut(name) {
-                acc.buy(&ev.ticker, ev.gross, current_date, fp, fg);
+                acc.buy_with_fx(&ev.ticker, ev.gross, current_date, fp, fg, fx);
             }
         }
     }

@@ -56,8 +56,9 @@ pub fn handle_contributions(
                 .copied()
                 .unwrap_or_else(|| MarketDataService::fallback_growth(ticker));
 
+            let fx = state.current_fx;
             if let Some(taxable) = state.accounts.get_mut("Taxable") {
-                taxable.buy(ticker, vti_contribution, current_date, fallback_p, fallback_g);
+                taxable.buy_with_fx(ticker, vti_contribution, current_date, fallback_p, fallback_g, fx);
             }
             state.stats.year_monthly_contribution += vti_contribution;
         }
@@ -97,6 +98,7 @@ pub fn handle_contributions(
         .unwrap_or_else(|| MarketDataService::fallback_growth(target));
 
     if !nra_mfs_roth_blocked {
+        let fx = state.current_fx;
         if yr == cfg.start_date.year() {
             // First year of simulation: contribute remaining limit in the first month.
             if mo == cfg.start_date.month() {
@@ -111,25 +113,25 @@ pub fn handle_contributions(
                         yr, remaining, state.ira_limit, cfg.roth_contribution_so_far
                     );
                     if let Some(roth) = state.accounts.get_mut("Roth") {
-                        roth.buy(target, remaining, current_date, roth_fallback_p, roth_fallback_g);
+                        roth.buy_with_fx(target, remaining, current_date, roth_fallback_p, roth_fallback_g, fx);
                     }
                 }
             }
         } else if mo == 1 {
             // Subsequent years: contribute full limit in January.
             if let Some(roth) = state.accounts.get_mut("Roth") {
-                roth.buy(target, state.ira_limit, current_date, roth_fallback_p, roth_fallback_g);
+                roth.buy_with_fx(target, state.ira_limit, current_date, roth_fallback_p, roth_fallback_g, fx);
             }
         }
     }
 
     // ── 3. Japan DC / iDeCo monthly contribution (JPY denominated) ────────────
-    // DC account uses JPY, so no FX conversion needed.
+    // DC account uses JPY, so fx=1.0 keeps basis in JPY.
     let dc_ticker = "TAWARA";
     let dc_fallback_p = MarketDataService::fallback_price(dc_ticker);
     let dc_fallback_g = cfg.dc_growth_rate;
     if let Some(dc) = state.accounts.get_mut("DC") {
-        dc.buy(dc_ticker, cfg.dc_monthly_jpy, current_date, dc_fallback_p, dc_fallback_g);
+        dc.buy_with_fx(dc_ticker, cfg.dc_monthly_jpy, current_date, dc_fallback_p, dc_fallback_g, 1.0);
     }
 
     // ── 4. User-defined accumulation rules (V6.0) ─────────────────────────────
@@ -147,8 +149,9 @@ pub fn handle_contributions(
             .unwrap_or_else(|| cfg.growth_rates_annual.get(ticker.as_str())
                 .copied()
                 .unwrap_or_else(|| MarketDataService::fallback_growth(ticker)));
+        let fx = state.current_fx;
         if let Some(acc) = state.accounts.get_mut(&rule.account) {
-            acc.buy(ticker, rule.monthly_amount, current_date, price, growth);
+            acc.buy_with_fx(ticker, rule.monthly_amount, current_date, price, growth, fx);
             state.stats.year_monthly_contribution += rule.monthly_amount;
         }
     }

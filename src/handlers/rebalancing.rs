@@ -95,7 +95,7 @@ pub fn handle_rebalancing(state: &mut SimState, cfg: &Config) {
             .unwrap_or_else(|| MarketDataService::fallback_growth(ticker));
 
         if let Some(acc) = state.accounts.get_mut("Taxable") {
-            acc.buy(ticker, buy_amount, current_date, price, growth);
+            acc.buy_with_fx(ticker, buy_amount, current_date, price, growth, fx);
         }
         proceeds -= buy_amount;
         info!("   [Rebalance] Bought ${:.0} of {}", buy_amount, ticker);
@@ -205,8 +205,11 @@ pub fn execute_account_rebalance_strategy(
             .copied()
             .unwrap_or_else(|| MarketDataService::fallback_growth(ticker));
 
+        let account_fx = state.accounts.get(account_name)
+            .map(|a| if matches!(a.currency, crate::models::assets::Currency::Jpy) { 1.0 } else { fx })
+            .unwrap_or(fx);
         if let Some(acc) = state.accounts.get_mut(account_name) {
-            acc.buy(ticker, buy_amount, current_date, price, growth);
+            acc.buy_with_fx(ticker, buy_amount, current_date, price, growth, account_fx);
         }
         proceeds -= buy_amount;
         info!("   [AcctRebalance:{}] Bought ${:.0} of {}", account_name, buy_amount, ticker);
