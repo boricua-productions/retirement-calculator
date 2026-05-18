@@ -37,7 +37,7 @@ impl RsuEngine {
 
             // vesting_months_total (in months) takes precedence over vesting_years.
             let effective_years: u32 = award.vesting_months_total
-                .map(|m| (m + 11) / 12)
+                .map(|m| m.div_ceil(12))
                 .unwrap_or(award.vesting_years);
 
             if effective_years == 0
@@ -82,18 +82,14 @@ impl RsuEngine {
                         continue;
                     }
 
-                    if let Some(ret) = retirement_date {
-                        if vesting_date >= ret {
-                            continue;
-                        }
+                    if let Some(ret) = retirement_date && vesting_date >= ret {
+                        continue;
                     }
 
                     // Cliff accumulation: skip events before the cliff end date.
-                    if let Some(cliff_end) = cliff_end_opt {
-                        if !cliff_triggered && vesting_date < cliff_end {
-                            cliff_skipped += 1;
-                            continue;
-                        }
+                    if let Some(cliff_end) = cliff_end_opt && !cliff_triggered && vesting_date < cliff_end {
+                        cliff_skipped += 1;
+                        continue;
                     }
 
                     let shares = if !cliff_triggered {
@@ -141,20 +137,16 @@ impl RsuEngine {
 
         // Move shares from unvested → vested as events occur.
         for event in &self.vesting_schedule {
-            if event.date <= as_of {
-                if let Some(status) = summary.get_mut(&event.ticker) {
-                    status.vested += event.shares;
-                    status.unvested -= event.shares;
-                }
+            if event.date <= as_of && let Some(status) = summary.get_mut(&event.ticker) {
+                status.vested += event.shares;
+                status.unvested -= event.shares;
             }
         }
 
         // After retirement, all remaining unvested shares are forfeited.
-        if let Some(ret) = self.retirement_date {
-            if as_of >= ret {
-                for status in summary.values_mut() {
-                    status.unvested = 0.0;
-                }
+        if let Some(ret) = self.retirement_date && as_of >= ret {
+            for status in summary.values_mut() {
+                status.unvested = 0.0;
             }
         }
 

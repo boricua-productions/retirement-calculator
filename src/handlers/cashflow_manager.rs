@@ -738,13 +738,11 @@ fn compute_dc_payout_jpy(state: &mut SimState, cfg: &Config, current_date: Naive
     if !state.dc_payout_active && current_date >= payout_eligibility {
         info!("   >>> EVENT: DC Payout Triggered at Age {} ({})", cfg.dc_payout_start_age, cfg.dc_payout_method);
         state.dc_payout_active = true;
-        if cfg.dc_payout_method == "LUMP_SUM" {
-            if let Some(dc_acc) = state.accounts.get_mut("DC") {
-                let g = dc_acc.liquidate_all(current_date);
-                state.dc_months_remaining = 0;
-                info!("        Action: Lump Sum Payout ¥{:.0}", g.proceeds);
-                return g.proceeds;  // proceeds already in JPY
-            }
+        if cfg.dc_payout_method == "LUMP_SUM" && let Some(dc_acc) = state.accounts.get_mut("DC") {
+            let g = dc_acc.liquidate_all(current_date);
+            state.dc_months_remaining = 0;
+            info!("        Action: Lump Sum Payout ¥{:.0}", g.proceeds);
+            return g.proceeds;  // proceeds already in JPY
         }
     }
 
@@ -778,14 +776,12 @@ fn compute_dc_payout_usd(state: &mut SimState, cfg: &Config, current_date: Naive
     if !state.dc_payout_active && current_date >= payout_eligibility {
         info!("   >>> EVENT: DC Payout Triggered at Age {} ({})", cfg.dc_payout_start_age, cfg.dc_payout_method);
         state.dc_payout_active = true;
-        if cfg.dc_payout_method == "LUMP_SUM" {
-            if let Some(dc_acc) = state.accounts.get_mut("DC") {
-                let g = dc_acc.liquidate_all(current_date);
-                let usd = g.proceeds / state.current_fx;
-                state.dc_months_remaining = 0;
-                info!("        Action: Lump Sum Payout ${:.2}", usd);
-                return usd;
-            }
+        if cfg.dc_payout_method == "LUMP_SUM" && let Some(dc_acc) = state.accounts.get_mut("DC") {
+            let g = dc_acc.liquidate_all(current_date);
+            let usd = g.proceeds / state.current_fx;
+            state.dc_months_remaining = 0;
+            info!("        Action: Lump Sum Payout ${:.2}", usd);
+            return usd;
         }
     }
 
@@ -1025,7 +1021,7 @@ fn compute_jido_teate_jpy(cfg: &Config, current_date: NaiveDate) -> f64 {
 /// the production logic without building a full `Config`.
 fn jido_teate_for(enabled: bool, child_birth: NaiveDate, on: NaiveDate) -> f64 {
     if !enabled { return 0.0; }
-    if on.month() % 2 != 0 { return 0.0; }
+    if !on.month().is_multiple_of(2) { return 0.0; }
 
     // The even-month payment covers the previous calendar month and the
     // current calendar month. Each is assessed at the rate applicable to the
@@ -1042,7 +1038,7 @@ fn monthly_jido_rate(child_birth: NaiveDate, month_start: NaiveDate) -> f64 {
     if (month_start.month(), month_start.day()) < (child_birth.month(), child_birth.day()) {
         age -= 1;
     }
-    if age < 0 || age >= 18 { return 0.0; }
+    if !(0..18).contains(&age) { return 0.0; }
     if age < 3 { 15_000.0 } else { 10_000.0 }
 }
 

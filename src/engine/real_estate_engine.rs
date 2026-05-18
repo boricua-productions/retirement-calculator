@@ -183,12 +183,12 @@ pub fn total_monthly_re_expense_jpy(
 
 /// Total net monthly rental income in JPY across all Japan holdings.
 pub fn total_monthly_rental_jpy(holdings: &[RealEstateHolding]) -> f64 {
-    holdings.iter().map(|h| monthly_rental_net_jpy(h)).sum()
+    holdings.iter().map(monthly_rental_net_jpy).sum()
 }
 
 /// Total net monthly rental income in USD across all US / international holdings.
 pub fn total_monthly_rental_usd(holdings: &[RealEstateHolding]) -> f64 {
-    holdings.iter().map(|h| monthly_rental_net_usd(h)).sum()
+    holdings.iter().map(monthly_rental_net_usd).sum()
 }
 
 /// Total real-estate equity in JPY (sum of Japan-property FMVs minus JPY mortgages).

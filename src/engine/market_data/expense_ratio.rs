@@ -155,7 +155,7 @@ pub fn validate(er: f64) -> Result<f64, String> {
     if !er.is_finite() {
         return Err(format!("non-finite value: {}", er));
     }
-    if er < 0.0001 || er > 0.05 {
+    if !(0.0001..=0.05).contains(&er) {
         return Err(format!("{:.4} out of plausible range [0.0001, 0.05]", er));
     }
     Ok(er)

@@ -812,12 +812,11 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             if let Value::Array(arr) = &sets["kaigo_hoken_brackets"] {
                 let mut brackets = Vec::new();
                 for item in arr {
-                    if let Value::Array(pair) = item {
-                        if pair.len() == 2 {
-                            if let (Some(upper), Some(premium)) = (pair[0].as_f64(), pair[1].as_f64()) {
-                                brackets.push((upper, premium));
-                            }
-                        }
+                    if let Value::Array(pair) = item
+                        && pair.len() == 2
+                        && let (Some(upper), Some(premium)) = (pair[0].as_f64(), pair[1].as_f64())
+                    {
+                        brackets.push((upper, premium));
                     }
                 }
                 if !brackets.is_empty() {
@@ -1218,7 +1217,7 @@ fn parse_real_estate(data: &Value) -> Vec<crate::models::real_estate::RealEstate
                 _             => MortgageCurrency::Jpy,
             };
             let start_date = m["start_date"].as_str()
-                .and_then(|s| parse_date(s))
+                .and_then(parse_date)
                 .unwrap_or_else(|| NaiveDate::from_ymd_opt(2010, 1, 1).unwrap());
             Some(MortgageTerms {
                 original_principal: f(m, "original_principal"),
@@ -1264,7 +1263,7 @@ fn parse_real_estate(data: &Value) -> Vec<crate::models::real_estate::RealEstate
             location,
             property_type,
             structure_type,
-            purchase_date:         item["purchase_date"].as_str().and_then(|d| parse_date(d)),
+            purchase_date:         item["purchase_date"].as_str().and_then(parse_date),
             purchase_price_jpy:    f(item, "purchase_price_jpy"),
             purchase_price_usd:    f(item, "purchase_price_usd"),
             current_fmv_jpy:       f(item, "current_fmv_jpy"),

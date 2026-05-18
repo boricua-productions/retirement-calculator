@@ -21,6 +21,28 @@ pub struct TaxLiability {
     pub feie_applied: bool,
 }
 
+/// US tax input for basket-separated FTC calculation (Form 1116).
+///
+/// Separates income and foreign taxes into passive and general baskets
+/// per IRC §904(d) to prevent cross-basket credit bleed.
+#[derive(Debug, Clone, Copy)]
+pub struct UsTaxInput {
+    /// Calendar year for tax calculation.
+    pub year: i32,
+    /// FERS / SS / SSDI / RSU vest (general basket).
+    pub gross_ord_general: f64,
+    /// PFIC §1296 MTM + interest + special distributions (passive basket).
+    pub gross_ord_passive: f64,
+    /// Short-term capital gains (passive basket).
+    pub gross_st_cap: f64,
+    /// Long-term capital gains + qualified dividends (passive basket).
+    pub gross_lt_cap: f64,
+    /// Japan tax paid on passive income (for FTC calculation).
+    pub japan_tax_passive_usd: f64,
+    /// Japan tax paid on general income (for FTC calculation).
+    pub japan_tax_general_usd: f64,
+}
+
 /// V7.5 — Defect 1.2: IRC §904 FTC basket separation.
 ///
 /// PFIC MTM income (§1296) is passive basket income under §904(d)(1)(B).
@@ -181,38 +203,26 @@ impl TaxEngine {
     /// and a general bucket (FERS, SS, SSDI, RSU vest), capping each at its
     /// own §904 limit so passive credit cannot bleed into the general basket
     /// and vice versa.
-    ///
-    /// `gross_ord_general` — FERS / SS / SSDI / RSU vest (general basket).
-    /// `gross_ord_passive` — PFIC §1296 MTM + interest + special distributions.
-    /// `gross_st_cap`      — short-term capital gains (passive).
-    /// `gross_lt_cap`      — long-term capital gains + dividends (passive).
-    /// `japan_tax_passive_usd` / `japan_tax_general_usd` — pre-split Japan tax.
     pub fn calculate_liability_with_basket_ftc(
         &self,
-        year: i32,
-        gross_ord_general: f64,
-        gross_ord_passive: f64,
-        gross_st_cap: f64,
-        gross_lt_cap: f64,
-        japan_tax_passive_usd: f64,
-        japan_tax_general_usd: f64,
+        input: &UsTaxInput,
     ) -> TaxLiability {
-        let total_ord = gross_ord_general + gross_ord_passive;
+        let total_ord = input.gross_ord_general + input.gross_ord_passive;
 
         // Step 1 — compute federal tax pre-FTC on the lumped income.
-        let pre_ftc = self.calculate_liability(year, total_ord, gross_st_cap, gross_lt_cap);
+        let pre_ftc = self.calculate_liability(input.year, total_ord, input.gross_st_cap, input.gross_lt_cap);
         // Federal portion before state and before any FTC. Equal to total_tax - state_tax.
         let federal_before_ftc = (pre_ftc.total_tax - pre_ftc.state_tax).max(0.0);
 
         // Step 2 — per-basket §904 limits.
-        let passive_income = gross_ord_passive + gross_st_cap + gross_lt_cap;
-        let general_income = gross_ord_general;
+        let passive_income = input.gross_ord_passive + input.gross_st_cap + input.gross_lt_cap;
+        let general_income = input.gross_ord_general;
         let (passive_lim, general_lim) =
             compute_ftc_basket_limits(federal_before_ftc, passive_income, general_income);
 
         // Step 3 — cap each basket's credit at its own §904 limit.
-        let passive_ftc = japan_tax_passive_usd.min(passive_lim);
-        let general_ftc = japan_tax_general_usd.min(general_lim);
+        let passive_ftc = input.japan_tax_passive_usd.min(passive_lim);
+        let general_ftc = input.japan_tax_general_usd.min(general_lim);
         let total_ftc   = passive_ftc + general_ftc;
 
         let federal_after_ftc = (federal_before_ftc - total_ftc).max(0.0);
@@ -311,10 +321,8 @@ impl TaxEngine {
         // Sentinel-missing fallback: if any income remains after walking every
         // bracket, the table lacks the required `INFINITY` cap. Tax the residual
         // at the top finite rate so we don't under-collect.
-        if remaining > 0.0 {
-            if let Some(&(_, top_rate)) = self.rules.brackets.last() {
-                tax += remaining * top_rate;
-            }
+        if remaining > 0.0 && let Some(&(_, top_rate)) = self.rules.brackets.last() {
+            tax += remaining * top_rate;
         }
 
         tax
