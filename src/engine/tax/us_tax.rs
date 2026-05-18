@@ -356,6 +356,35 @@ pub fn ssdi_combined_income_taxable_portion(
     }
 }
 
+// ─── §70103 Enhanced Senior Deduction ─────────────────────────────────────────
+
+/// V8.0 — OBBBA §70103 Temporary Enhanced Senior Deduction (TY 2025–2028).
+/// Returns the additive deduction pool in USD after the 6% MAGI phase-out.
+///
+/// * `eligible_seniors` — count of taxpayer + spouse who reach age ≥ 65 by Dec 31.
+/// * `magi` — Modified Adjusted Gross Income (USD).
+/// * `filing_status` — "Married Filing Jointly" or other.
+pub fn enhanced_senior_deduction_2026(
+    eligible_seniors: u32,
+    magi: f64,
+    filing_status: &str,
+) -> f64 {
+    if eligible_seniors == 0 { return 0.0; }
+    let max_pool = 6_000.0 * eligible_seniors as f64;
+    let (threshold, floor_at) = if filing_status == "Married Filing Jointly" {
+        (150_000.0, 350_000.0)
+    } else {
+        (75_000.0, 175_000.0)
+    };
+    if magi <= threshold {
+        max_pool
+    } else if magi >= floor_at {
+        0.0
+    } else {
+        (max_pool - (magi - threshold) * 0.06).max(0.0)
+    }
+}
+
 // ─── Filing-Status Tax Rules ───────────────────────────────────────────────────
 
 impl TaxRules {
@@ -630,6 +659,41 @@ mod tests {
         let e = TaxEngine::new(rules);
         let result = e.calculate_liability(2024, 100_000.0, 0.0, 50_000.0);
         assert!(result.state_tax > 0.0);
+    }
+
+    // ── §70103 Enhanced Senior Deduction Tests ────────────────────────────────
+
+    #[test]
+    fn test_enhanced_senior_deduction_zero_seniors() {
+        assert_eq!(enhanced_senior_deduction_2026(0, 200_000.0, "Married Filing Jointly"), 0.0);
+    }
+
+    #[test]
+    fn test_enhanced_senior_deduction_one_senior_mfj_below_threshold() {
+        // MFJ, 1 senior, MAGI=$100K < $150K threshold → full $6,000
+        let d = enhanced_senior_deduction_2026(1, 100_000.0, "Married Filing Jointly");
+        assert!((d - 6_000.0).abs() < 0.01, "got {}", d);
+    }
+
+    #[test]
+    fn test_enhanced_senior_deduction_one_senior_mfj_phaseout() {
+        // MFJ, 1 senior, MAGI=$200K → 6,000 - (200K-150K)*0.06 = 6,000 - 3,000 = 3,000
+        let d = enhanced_senior_deduction_2026(1, 200_000.0, "Married Filing Jointly");
+        assert!((d - 3_000.0).abs() < 0.01, "got {}", d);
+    }
+
+    #[test]
+    fn test_enhanced_senior_deduction_mfj_above_floor() {
+        // MFJ, 2 seniors, MAGI=$350K (at floor) → $0
+        let d = enhanced_senior_deduction_2026(2, 350_000.0, "Married Filing Jointly");
+        assert_eq!(d, 0.0);
+    }
+
+    #[test]
+    fn test_enhanced_senior_deduction_single_phaseout() {
+        // Single, 1 senior, MAGI=$100K → 6,000 - (100K-75K)*0.06 = 6,000 - 1,500 = 4,500
+        let d = enhanced_senior_deduction_2026(1, 100_000.0, "Single");
+        assert!((d - 4_500.0).abs() < 0.01, "got {}", d);
     }
 
     // ── SSDI Combined Income Rule Tests ──────────────────────────────────────
