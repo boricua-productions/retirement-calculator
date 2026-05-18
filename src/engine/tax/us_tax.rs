@@ -1,8 +1,8 @@
 use crate::models::config::TaxRules;
 use std::collections::HashMap;
 
-/// 2026 Foreign Earned Income Exclusion annual limit (USD).
-pub const FEIE_LIMIT_2026: f64 = 126_500.0;
+/// 2026 Foreign Earned Income Exclusion annual limit (USD), IRC §911.
+pub const FEIE_LIMIT_2026: f64 = 132_900.0;
 
 /// US federal tax calculation result.
 #[derive(Debug, Default, Clone)]
@@ -350,42 +350,42 @@ pub fn ssdi_combined_income_taxable_portion(provisional_income: f64, annual_ssdi
 // ─── Filing-Status Tax Rules ───────────────────────────────────────────────────
 
 impl TaxRules {
-    /// Build 2024 IRS parameters for the given filing status.
+    /// Build 2026 IRS parameters for the given filing status.
     /// Brackets inflate annually via `TaxRules::inflate()`.
     pub fn for_filing_status(status: &str) -> TaxRules {
         match status {
             "Single" | "Married Filing Separately" => TaxRules {
                 filing_status: status.into(),
-                std_deduction: 14_600.0,
-                ltcg_0_limit:  47_025.0,
-                ltcg_15_limit: 518_900.0,
+                std_deduction: 16_100.0,
+                ltcg_0_limit:  47_025.0,       // V8.0 — 2026 indexed value
+                ltcg_15_limit: 518_900.0,      // V8.0 — keep
                 niit_threshold: 200_000.0,
                 senior_addon_per_person: 1_950.0,
                 brackets: vec![
-                    (11_600.0, 0.10),
-                    (47_150.0, 0.12),
-                    (100_525.0, 0.22),
-                    (191_950.0, 0.24),
-                    (243_725.0, 0.32),
-                    (609_350.0, 0.35),
+                    (11_925.0, 0.10),          // V8.0 — 2026 indexed
+                    (48_475.0, 0.12),
+                    (103_350.0, 0.22),
+                    (197_300.0, 0.24),
+                    (250_525.0, 0.32),
+                    (626_350.0, 0.35),
                     (f64::INFINITY, 0.37),
                 ],
                 ..TaxRules::default()
             },
             "Head of Household" => TaxRules {
                 filing_status: status.into(),
-                std_deduction: 21_900.0,
+                std_deduction: 24_150.0,
                 ltcg_0_limit:  63_000.0,
                 ltcg_15_limit: 551_350.0,
                 niit_threshold: 200_000.0,
                 senior_addon_per_person: 1_950.0,
                 brackets: vec![
-                    (16_550.0, 0.10),
-                    (63_100.0, 0.12),
-                    (100_500.0, 0.22),
-                    (191_950.0, 0.24),
-                    (243_700.0, 0.32),
-                    (609_350.0, 0.35),
+                    (17_000.0, 0.10),
+                    (64_850.0, 0.12),
+                    (103_350.0, 0.22),
+                    (197_300.0, 0.24),
+                    (250_500.0, 0.32),
+                    (626_350.0, 0.35),
                     (f64::INFINITY, 0.37),
                 ],
                 ..TaxRules::default()
@@ -508,26 +508,26 @@ mod tests {
     #[test]
     fn test_ltcg_all_in_0pct_bracket() {
         let e = engine();
-        // gross_ord=50_000, std_deduction=35_000 → ord_taxable=15_000 → floor=15_000
-        // ltcg_0_limit=115_000, space_0=100_000, gains at 0%=20_000 → 0 LTCG tax
-        // ordinary tax on 15_000: all in 10% bracket → 1_500
+        // gross_ord=50_000, std_deduction=32_200 → ord_taxable=17_800 → floor=17_800
+        // ltcg_0_limit=115_000, space_0=97_200, gains at 0%=20_000 → 0 LTCG tax
+        // ordinary tax on 17_800: all in 10% bracket → 1_780
         let result = e.calculate_liability(2024, 50_000.0, 0.0, 20_000.0);
         assert_eq!(result.breakdown["gains_at_0_pct"] as i64, 20_000);
         assert_eq!(result.breakdown["gains_at_15_pct"] as i64, 0);
-        assert!((result.total_tax - 1_500.0).abs() < 1.0, "total={}", result.total_tax);
+        assert!((result.total_tax - 1_780.0).abs() < 1.0, "total={}", result.total_tax);
     }
 
     #[test]
     fn test_ltcg_spans_0_and_15_brackets() {
         let e = engine();
-        // gross_ord=90_000, std_deduction=35_000 → ord_taxable=55_000 → floor=55_000
-        // ltcg_0_limit=115_000, space_0=60_000, gains_0=60_000, remaining=40_000 at 15%
+        // gross_ord=90_000, std_deduction=32_200 → ord_taxable=57_800 → floor=57_800
+        // ltcg_0_limit=115_000, space_0=57_200, gains_0=57_200, remaining=42_800 at 15%
         let result = e.calculate_liability(2024, 90_000.0, 0.0, 100_000.0);
-        assert!((result.breakdown["gains_at_0_pct"] - 60_000.0).abs() < 0.01);
-        assert!((result.breakdown["gains_at_15_pct"] - 40_000.0).abs() < 0.01);
-        // ordinary tax on 55_000: 23_200@10%=2_320, 31_800@12%=3_816 → 6_136
-        // LTCG tax: 40_000@15% = 6_000; total = 12_136
-        assert!((result.total_tax - 12_136.0).abs() < 5.0, "total={}", result.total_tax);
+        assert!((result.breakdown["gains_at_0_pct"] - 57_200.0).abs() < 0.01);
+        assert!((result.breakdown["gains_at_15_pct"] - 42_800.0).abs() < 0.01);
+        // ordinary tax on 57_800: 23_850@10%=2_385, 33_950@12%=4_074 → 6_459
+        // LTCG tax: 42_800@15% = 6_420; total = 12_879
+        assert!((result.total_tax - 12_879.0).abs() < 5.0, "total={}", result.total_tax);
     }
 
     #[test]
@@ -584,8 +584,8 @@ mod tests {
         assert!(single.std_deduction < mfj.std_deduction);
     }
 
-    /// NRA-MFS: MFS and Single share the same std_deduction (both ~$14,600 in 2024).
-    /// MFJ ($35,000) is more than double MFS ($14,600), confirming the halving effect.
+    /// NRA-MFS: MFS and Single share the same std_deduction (both $16,100 in 2026).
+    /// MFJ ($32,200) is exactly double MFS ($16,100).
     #[test]
     fn test_mfs_std_deduction_less_than_mfj() {
         let mfs = TaxRules::for_filing_status("Married Filing Separately");
