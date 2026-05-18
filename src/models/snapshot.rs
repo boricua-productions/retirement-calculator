@@ -321,6 +321,70 @@ pub struct RsuSellToCoverWarning {
     pub uncovered_usd: f64,
 }
 
+/// V8.0 — A single FTC lot in a §904(c) per-basket carryover queue.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FtcLot {
+    pub origin_year: u16,
+    pub remaining_credit_usd: f64,
+}
+
+/// V8.0 — Per-basket FIFO queue tracking §904(c) 10-year carryover lifetime.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FtcCarryoverQueue {
+    pub passive_basket: Vec<FtcLot>,
+    pub general_basket: Vec<FtcLot>,
+}
+
+impl FtcCarryoverQueue {
+    pub fn passive_total(&self) -> f64 {
+        self.passive_basket.iter().map(|l| l.remaining_credit_usd).sum()
+    }
+    pub fn general_total(&self) -> f64 {
+        self.general_basket.iter().map(|l| l.remaining_credit_usd).sum()
+    }
+    pub fn add_passive(&mut self, year: u16, credit: f64) {
+        if credit > 0.0 {
+            self.passive_basket.push(FtcLot { origin_year: year, remaining_credit_usd: credit });
+        }
+    }
+    pub fn add_general(&mut self, year: u16, credit: f64) {
+        if credit > 0.0 {
+            self.general_basket.push(FtcLot { origin_year: year, remaining_credit_usd: credit });
+        }
+    }
+    /// FIFO-consume up to `amount` from the passive basket; returns amount actually consumed.
+    pub fn consume_passive(&mut self, mut amount: f64) -> f64 {
+        let mut used = 0.0;
+        for lot in self.passive_basket.iter_mut() {
+            if amount <= 0.0 { break; }
+            let take = lot.remaining_credit_usd.min(amount);
+            lot.remaining_credit_usd -= take;
+            amount -= take;
+            used += take;
+        }
+        self.passive_basket.retain(|l| l.remaining_credit_usd > 1e-9);
+        used
+    }
+    /// FIFO-consume up to `amount` from the general basket; returns amount actually consumed.
+    pub fn consume_general(&mut self, mut amount: f64) -> f64 {
+        let mut used = 0.0;
+        for lot in self.general_basket.iter_mut() {
+            if amount <= 0.0 { break; }
+            let take = lot.remaining_credit_usd.min(amount);
+            lot.remaining_credit_usd -= take;
+            amount -= take;
+            used += take;
+        }
+        self.general_basket.retain(|l| l.remaining_credit_usd > 1e-9);
+        used
+    }
+    /// Evict any lot older than 10 years per IRC §904(c).
+    pub fn evict_expired(&mut self, current_year: u16) {
+        self.passive_basket.retain(|l| current_year.saturating_sub(l.origin_year) <= 10);
+        self.general_basket.retain(|l| current_year.saturating_sub(l.origin_year) <= 10);
+    }
+}
+
 /// All results produced by a complete simulation run.
 #[derive(Debug, Clone)]
 pub struct SimResults {
@@ -346,4 +410,49 @@ pub struct SimResults {
     /// Stage 07 — Estate tax summary computed at end of horizon.
     /// `None` when `enable_estate_planning` is false.
     pub estate_summary: Option<EstateSummary>,
+}
+
+#[cfg(test)]
+mod ftc_queue_tests {
+    use super::{FtcCarryoverQueue};
+
+    #[test]
+    fn fifo_consume_drains_oldest_lot_first() {
+        let mut q = FtcCarryoverQueue::default();
+        q.add_passive(2026, 1_000.0);
+        q.add_passive(2027, 2_000.0);
+        // Consume 600 — should drain from the 2026 lot only.
+        let consumed = q.consume_passive(600.0);
+        assert!((consumed - 600.0).abs() < 1e-9);
+        assert!((q.passive_total() - 2_400.0).abs() < 1e-9);
+        // Remaining 2026 lot = 400, 2027 lot = 2000.
+        assert_eq!(q.passive_basket.len(), 2);
+        assert!((q.passive_basket[0].remaining_credit_usd - 400.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn evict_expired_removes_lots_older_than_10_years() {
+        let mut q = FtcCarryoverQueue::default();
+        q.add_general(2016, 500.0);
+        q.add_general(2017, 300.0);
+        // At year 2027: 2016 lot is 11 years old → evicted; 2017 is 10 years → kept.
+        q.evict_expired(2027);
+        assert_eq!(q.general_basket.len(), 1);
+        assert_eq!(q.general_basket[0].origin_year, 2017);
+        // At year 2028: 2017 lot is 11 years → evicted.
+        q.evict_expired(2028);
+        assert_eq!(q.general_basket.len(), 0);
+    }
+
+    #[test]
+    fn passive_and_general_totals_independent() {
+        let mut q = FtcCarryoverQueue::default();
+        q.add_passive(2026, 1_000.0);
+        q.add_general(2026, 500.0);
+        assert!((q.passive_total() - 1_000.0).abs() < 1e-9);
+        assert!((q.general_total() - 500.0).abs() < 1e-9);
+        q.consume_passive(300.0);
+        assert!((q.passive_total() - 700.0).abs() < 1e-9);
+        assert!((q.general_total() - 500.0).abs() < 1e-9);
+    }
 }

@@ -972,12 +972,11 @@ impl SimulationController {
         // Stage 02: §6013(g) — Japan tax on spouse's income joins the general FTC basket.
         let japan_tax_general_usd = japan_tax_general_usd + spouse_japan_tax_usd;
 
-        // IRC §904(c) per-basket carryover: prior-year unused credits stay in their
-        // source basket so passive credit can never absorb general-basket liability.
-        let effective_passive_usd = japan_tax_passive_usd
-            + self.state.ftc_carryover_passive_usd;
-        let effective_general_usd = japan_tax_general_usd
-            + self.state.ftc_carryover_general_usd;
+        // V8.0 — IRC §904(c) FIFO carryover queue: evict lots older than 10 years.
+        self.state.ftc_queue.evict_expired(yr as u16);
+        // Effective credit pool = per-basket FIFO queue total + current-year credits.
+        let effective_passive_usd = self.state.ftc_queue.passive_total() + japan_tax_passive_usd;
+        let effective_general_usd = self.state.ftc_queue.general_total() + japan_tax_general_usd;
         // Lumped value retained for the FEIE path (legacy lumped FTC math).
         let effective_japan_tax_usd = effective_passive_usd + effective_general_usd;
 
@@ -1000,35 +999,35 @@ impl SimulationController {
         // Restore std_deduction (senior add-on is per-year, not permanently inflated).
         self.tax_engine.rules.std_deduction = saved_std_deduction;
 
-        // Per-basket unused FTC: each basket's surplus carries within that basket.
+        // V8.0 — IRC §904(c) FIFO carryover queue: consume oldest lots first.
         let passive_used = liability.breakdown.get("ftc_passive").copied().unwrap_or(0.0);
         let general_used = liability.breakdown.get("ftc_general").copied().unwrap_or(0.0);
-        // For the FEIE path, breakdown has only "ftc_applied"; fall back to proportional split.
-        let new_passive_co = if liability.feie_applied {
-            (effective_japan_tax_usd - liability.ftc_applied).max(0.0)
-                * if effective_japan_tax_usd > 0.0 {
-                    effective_passive_usd / effective_japan_tax_usd
-                } else { 1.0 }
+        // FEIE path: breakdown only has "ftc_applied"; compute per-basket used proportionally.
+        let (passive_used, general_used) = if liability.feie_applied && effective_japan_tax_usd > 0.0 {
+            let applied = liability.ftc_applied;
+            (applied * effective_passive_usd / effective_japan_tax_usd,
+             applied * effective_general_usd / effective_japan_tax_usd)
         } else {
-            (effective_passive_usd - passive_used).max(0.0)
+            (passive_used, general_used)
         };
-        let new_general_co = if liability.feie_applied {
-            (effective_japan_tax_usd - liability.ftc_applied).max(0.0)
-                * if effective_japan_tax_usd > 0.0 {
-                    effective_general_usd / effective_japan_tax_usd
-                } else { 0.0 }
-        } else {
-            (effective_general_usd - general_used).max(0.0)
-        };
-        let unused_ftc = new_passive_co + new_general_co;
+        // Consume from the FIFO queue first (oldest lots); whatever remains of
+        // current-year credits becomes a new lot with origin = this year.
+        let p_from_queue = self.state.ftc_queue.consume_passive(passive_used);
+        let g_from_queue = self.state.ftc_queue.consume_general(general_used);
+        let p_new_lot = (japan_tax_passive_usd - (passive_used - p_from_queue).max(0.0)).max(0.0);
+        let g_new_lot = (japan_tax_general_usd - (general_used - g_from_queue).max(0.0)).max(0.0);
+        self.state.ftc_queue.add_passive(yr as u16, p_new_lot);
+        self.state.ftc_queue.add_general(yr as u16, g_new_lot);
+        // Sync legacy scalar fields so existing reporters/snapshots continue to work.
+        self.state.ftc_carryover_passive_usd = self.state.ftc_queue.passive_total();
+        self.state.ftc_carryover_general_usd = self.state.ftc_queue.general_total();
+        let unused_ftc = self.state.ftc_carryover_passive_usd + self.state.ftc_carryover_general_usd;
         if unused_ftc > 0.0 {
             info!(
-                "   [FTC Carryover] Year {}: ${:.2} unused (passive ${:.2} / general ${:.2})",
-                yr, unused_ftc, new_passive_co, new_general_co,
+                "   [FTC Carryover] Year {}: ${:.2} carryforward (passive ${:.2} / general ${:.2})",
+                yr, unused_ftc, self.state.ftc_carryover_passive_usd, self.state.ftc_carryover_general_usd,
             );
         }
-        self.state.ftc_carryover_passive_usd = new_passive_co;
-        self.state.ftc_carryover_general_usd = new_general_co;
         self.state.ftc_carryover_usd = unused_ftc;
 
         self.state.stats.year_feie_applied = liability.feie_applied;

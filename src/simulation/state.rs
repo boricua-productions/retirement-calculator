@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use std::collections::HashMap;
 
 use crate::models::assets::Account;
-use crate::models::snapshot::{AnnualSnapshot, PficDriftWarning, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
+use crate::models::snapshot::{AnnualSnapshot, FtcCarryoverQueue, PficDriftWarning, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
 use super::stats::AnnualStats;
 
 /// V8.0 — Rolling 3-year Japan capital-loss carry-forward ledger.
@@ -87,6 +87,9 @@ pub struct SimState {
     pub ftc_carryover_passive_usd: f64,
     /// V7.6 — General-basket FTC carryover (IRC §904(c)). FERS, SS, SSDI, RSU.
     pub ftc_carryover_general_usd: f64,
+    /// V8.0 — IRC §904(c) FIFO carryover queue per basket (10-year lifetime).
+    /// The legacy scalar fields above are derived mirrors of this queue's totals.
+    pub ftc_queue: FtcCarryoverQueue,
 
     // ── V8.0 — Japan 3-Year Capital-Loss Ledger ───────────────────────────────────
     /// Per 租税特別措置法 第37条の12の2: losses carry forward up to 3 years.
@@ -205,6 +208,7 @@ impl SimState {
             ftc_carryover_usd: 0.0,
             ftc_carryover_passive_usd: 0.0,
             ftc_carryover_general_usd: 0.0,
+            ftc_queue: FtcCarryoverQueue::default(),
             japan_loss_ledger: JapanLossLedger::default(),
             gift_sink_jpy: 0.0,
             nhi_ninki_keizoku_months_remaining: 0,
