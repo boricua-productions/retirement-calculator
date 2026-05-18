@@ -1,4 +1,4 @@
-# Retirement Calculator — V7.11: Gradual Buffer Accumulation Edition
+# Retirement Calculator — V8.0.0: 2026 Tax Compliance & Architectural Hardening Edition
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 7.0.0 (Internal Logic: V7.11 — Gradual Buffer Accumulation)
+> **Version:** Cargo package 7.0.0 (Internal Logic: V8.0.0 — 2026 Tax Compliance & Architectural Hardening)
 ---
 
 ## Beginner Quick Start
@@ -327,9 +327,9 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 ---
 
-## V7.5–V7.6 Strategic Hardening — Cost Basis, Liquidation, and Compliance
+## V7.5–V8.0.0 Strategic Hardening — Cost Basis, Liquidation, and Compliance
 
-The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), and V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%).
+The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), and V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation).
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -434,6 +434,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V8.0.0** | 2026 Tax Compliance & Architectural Hardening — **Phase A: 2026 tax constants & TCJA sunset** (FEIE $132,900; MFJ std deduction $32,200; Single/MFS $16,100; HoH $24,150; US estate exclusion $15M OBBBA permanent extension; Japan reconstruction surcharge sunsets after TY 2037). **Phase B.1: Tokubetsu Choushuu cadence** — working-phase resident tax collected via 12 monthly installments (June→May) instead of 4 quarterly Futsu Choushuu chunks. **Phase B.2: §70103 enhanced senior deduction** — $6k/person ($12k MFJ) with 6% MAGI phase-out ($150k MFJ / $75k Single). **Phase B.3: SSDI multi-bracket selector** — filing-status-aware combined-income thresholds (MFJ $32k/$44k, Single $25k/$34k, MFS $0/$0). **Phase B.4: Visa-aware exit tax filter** — Japan exit tax (Art. 60-2) triggers only for Permanent Resident / Long-Term Resident visa holders, skipping work/spouse/student visas. **Phase C.1: Japan 3-year capital-loss ledger** — real `Vec<CapitalLossEntry>` with year+amount tracking and automatic expiry after 3 tax years (IT Act Art. 37-12-2). **Phase C.2: IRC §904(c) FIFO carryover queue** — 10-year FTC carryover with oldest-first consumption; `FtcCarryoverEntry` ledger replaces single `ftc_carryover_usd` scalar. **Phase D.1: Japan total moving average basis** — `TotalAverageBasisPool` (総平均法) replaces the legacy flat `avg_purchase_price_jpy` with proper share-weighted average that updates on every acquisition. **Phase E.1: Article 19-2 spousal mitigation** — Japan pension income for a non-Japanese spouse is mitigated under US-Japan Tax Treaty Art. 19-2 when `spouse_pension_treaty_exempt: true`. **Phase F: Execution order documentation** — canonical December sequence documented; §3.2 (US state tax → Japan FTC pool) deferred to Stage 14. 236 tests passing (125 unit + integration suites, plus 2 ignored live-network tests). |
 | **V7.11.1** | UI/UX Polish (Stage 13) — **Non-blocking auto-fetch with live timers**: All Yahoo Finance network calls (✨ buttons for positions, DC funds, RSUs, detailed profiles) now run in background threads using `std::thread::spawn` + `mpsc` channels. Live timer indicators (⏳ 3s) appear next to fetch buttons showing elapsed time. HTTP timeouts added (10s connect + 15s read = 25s max) via shared `ureq::Agent`. UI remains responsive during all fetch operations. **Rebalance schedule clarity**: Removed editable "Rebalance Date" field from Timing section (auto-set to `retirement_date` for backward compatibility with `handle_transition`). Replaced with read-only summary showing: global rebalancing status (enabled/disabled + frequency), per-position rebalance overrides with dates, and ⚠ amber warnings when any rebalance date occurs before retirement. All 31 integration tests passing; zero compile warnings. |
 | **V7.11** | Gradual Pre-Retirement Buffer Accumulation (Stage 12) — **Tax-efficient cash reserve building**: Instead of liquidating $50k–$200k of portfolio shares in one month at retirement (creating a substantial capital gains tax event compounded with final-year salary), the model can now **gradually divert monthly income** into cash reserves over a 12–36 month ramp period before retirement. **Funding Timing selector**: Each buffer (War Chest, Bridge Fund) independently chooses **"At Retirement"** (default, V7.10.1 behavior) or **"Gradually Before Retirement"**. **Configurable ramp periods**: Default 24 months for War Chest, 18 months for Bridge Fund; monthly skim = (target − already set aside) ÷ months remaining. **Contribution priority**: Cash building takes precedence over equity purchases — the monthly VTI/SCHD contribution is reduced by the skim amount; Roth and DC contributions are unaffected (use-it-or-lose-it limits preserved). **Transition transparency**: TransitionAllocation reports both "Pre-accumulated" and "Portfolio pull" amounts so users see the tax savings. **Annual tracking**: `AnnualSnapshot` gains `buffer_accumulation_jpy` and `buffer_accumulation_usd` to show year-by-year skim totals. **Backward compatible**: `"at_retirement"` default maintains exact V7.10.1 regression. JSON fields: `war_chest_funding_timing`, `war_chest_ramp_months`, `bridge_fund_funding_timing`, `bridge_fund_ramp_months`. All 108 unit tests + 31 integration tests passing. |
 | **V7.10.1** | Buffer Funding Selection (Stage 11A) — **Master toggles for cash buffers**: `war_chest_enabled` and `bridge_fund_enabled` (both default `true`) allow users to disable buffer funding at retirement when they already hold sufficient cash outside the model or when guaranteed income covers expenses from day one. **Pre-funded amount exposure**: New "Already Set Aside" UI fields expose `pre_funded_war_chest_jpy` and `pre_funded_bridge_usd` so users don't need to hand-edit JSON; the model liquidates portfolio shares only to cover the gap (Target − Pre-funded). **Waterfall respect**: When disabled, Tier 3 (War Chest) and Tier 6 (Bridge Fund) are bypassed in post-retirement cashflow; Dynamic regime (Mode B) buffer-gap calculations skip disabled buffers. **Transition Panel clarity**: Shows "$0 (disabled)" when a buffer is disabled instead of silently omitting the row. **Backward compatible**: Missing fields default to `true` (enabled) so existing scenarios fund both buffers as before. 2 new integration tests + all 108 unit tests passing. JSON round-trip verified. |
@@ -477,7 +478,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V7.9.9)](#16-hardening--compliance-v75--v799)
+16. [Hardening & Compliance (V7.5 → V8.0.0)](#16-hardening--compliance-v75--v800)
 
 ---
 
@@ -602,7 +603,7 @@ Manual mode is also available when you already know the exact annual NHI amounts
 
 ## 3. US Tax Strategy Engine
 
-### Capital gains brackets (2024 MFJ base, inflated annually by `inflation_us_cpi`)
+### Capital gains brackets (2026 MFJ base, inflated annually by `inflation_us_cpi`)
 
 | Bracket | Rate | 2024 MFJ threshold |
 |---------|------|---------------------|
@@ -636,7 +637,7 @@ Implemented in `src/engine/tax/us_tax.rs:calculate_liability_with_feie_ftc()`.
 
 ```text
 # Step 1 — FEIE exclusion (work income only, IRC §911)
-feie_exclusion       = min(gross_earned, $126,500)          ← 2026 IRS limit
+feie_exclusion       = min(gross_earned, $132,900)          ← 2026 IRS limit
 earned_after_feie    = gross_earned - feie_exclusion
 total_ord_after_feie = earned_after_feie + gross_unearned   ← pensions / benefits still taxed
 
@@ -679,6 +680,11 @@ computing the year's federal tax liability:
 
 The add-on is applied transiently (save → compute → restore) so it does not compound into
 future years' COLA inflation of the base standard deduction.
+
+**V8.0.0 — §70103 Enhanced Senior Deduction (TY 2025–2028):** In addition to the baseline add-on
+above, the OBBBA §70103 temporary enhanced deduction provides $6,000 per eligible senior (max
+$12,000 MFJ) with a 6% MAGI phase-out starting at $150,000 (MFJ) or $75,000 (Single/MFS/HoH).
+This stacks on top of the legacy add-on during the applicable tax years.
 
 ### Filing status options
 
@@ -833,13 +839,19 @@ starting at `nenkin_income_start_age` and represents the pension drawdown phase.
 | US taxable | Partial | IRS Pub 915 combined income rule: 0% / 50% / 85% tiers by provisional income |
 | Japan taxable | Yes | Treated as public pension (公的年金); routed through pension deduction (公的年金等控除) |
 
-**SSDI Combined Income rule** (MFJ thresholds):
+**SSDI Combined Income rule** (filing-status-aware thresholds, V8.0.0):
 
-| Provisional Income (PI = FERS + SS + 0.5 × SSDI in current implementation; excludes investment income). | Taxable SSDI |
+| Filing Status | Tier 1 (0% → 50%) | Tier 2 (50% → 85%) |
+|---------------|-------------------|---------------------|
+| Married Filing Jointly | $32,000 | $44,000 |
+| Single / Head of Household | $25,000 | $34,000 |
+| Married Filing Separately | $0 | $0 (all taxable) |
+
+| Provisional Income (PI = FERS + SS + 0.5 × SSDI; excludes investment income). | Taxable SSDI |
 |----------------------------------------------------------|-------------|
-| ≤ $32,000 | $0 |
-| $32,001 – $44,000 | `min(0.50 × (PI − $32,000), 0.50 × SSDI)` |
-| > $44,000 | `min(0.85 × SSDI, $6,000 + 0.85 × (PI − $44,000))` |
+| ≤ Tier 1 threshold | $0 |
+| Tier 1 – Tier 2 | `min(0.50 × (PI − Tier1), 0.50 × SSDI)` |
+| > Tier 2 | `min(0.85 × SSDI, $6,000 + 0.85 × (PI − Tier2))` |
 
 Only the taxable portion of SSDI is stacked on top of the ordinary income bracket floor;
 the non-taxable remainder is received free of federal tax.
@@ -1552,7 +1564,7 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**195/195 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
+**236 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
@@ -1818,7 +1830,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V7.9.9)
+## 16. Hardening & Compliance (V7.5 → V8.0.0)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
@@ -1839,7 +1851,12 @@ the UI with yellow highlighting and a hover tooltip;
 V7.9 completes the IRC §1296 MTM pipeline by adding a real §1296(d) loss carry-forward ledger,
 a dual-currency `MtmGainResult` that feeds the Japan resident-tax base for non-NISA/iDeCo
 accounts, and an annual JPY-basis drift monitor (`track_pfic_basis_drift`) that self-heals
-stale JPY basis entries and emits auditable `PficDriftWarning` records when drift exceeds 1%.
+stale JPY basis entries and emits auditable `PficDriftWarning` records when drift exceeds 1%;
+V8.0.0 brings full 2026 legal compliance (FEIE $132,900, corrected standard deductions, OBBBA
+estate exclusion, reconstruction surcharge sunset), architectural fixes (Tokubetsu Choushuu
+cadence, §70103 enhanced senior deduction with MAGI phase-out, filing-status-aware SSDI brackets,
+visa-aware exit tax), and data-structure upgrades (real 3-year capital-loss ledger, IRC §904(c)
+FIFO carryover queue, total moving average basis pool, Article 19-2 spousal mitigation).
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income
@@ -1905,6 +1922,54 @@ in `unpaid_rsu_tax_liability_usd`, is exposed via the new `RSUTaxShortfall_USD` 
 surfaces as a red banner on the Overview tab. Per-vest details (ticker, vest value, combined tax,
 deficit, uncovered amount) are captured as `RsuSellToCoverWarning` records. The
 `RsuSellToCoverPolicy::Permissive` mode preserves the legacy zeroing behaviour for parity tests.
+
+### Fix 8 — 2026 Tax Constants & TCJA Sunset *(V8.0.0 Phase A)*
+FEIE limit updated to $132,900 (IRC §911). MFJ standard deduction corrected to $32,200; Single/MFS
+to $16,100; HoH to $24,150. US estate exclusion set to $15M (OBBBA permanent extension). Japan
+reconstruction surcharge (復興特別所得税) sunsets after TY 2037 — the engine now passes the actual
+simulation year to `calculate_income_tax_for_year` and zeroes the surcharge post-2037.
+
+### Fix 9 — Resident Tax Tokubetsu Choushuu Cadence *(V8.0.0 Phase B.1)*
+Working-phase resident tax is now collected via *Tokubetsu Choushuu* (Special Collection) — 12
+monthly installments from June through May — matching the real payroll-deduction cadence for
+employed taxpayers. Retired-phase reverts to the 4-quarter *Futsu Choushuu* cycle (June/Aug/Oct/Jan).
+
+### Fix 10 — §70103 Enhanced Senior Deduction *(V8.0.0 Phase B.2)*
+Implements the OBBBA §70103 temporary enhanced senior deduction: $6,000 per eligible individual
+(max $12,000 MFJ) with a 6% MAGI phase-out starting at $150,000 (MFJ) or $75,000 (Single/MFS/HoH).
+Replaces the legacy +$1,550/$1,950 add-ons for the applicable tax years.
+
+### Fix 11 — SSDI Multi-Bracket Selector *(V8.0.0 Phase B.3)*
+Filing-status-aware combined-income thresholds: MFJ uses $32k/$44k breakpoints; Single/HoH uses
+$25k/$34k; MFS uses $0/$0 (all SSDI is taxable). Eliminates the prior defect that forced MFJ
+thresholds onto all filing statuses.
+
+### Fix 12 — Visa-Aware Exit Tax Filter *(V8.0.0 Phase B.4)*
+Japan's exit tax (Art. 60-2, 国外転出時課税) now triggers only for Permanent Resident or Long-Term
+Resident visa types. Work, spouse, student, and other short-term visa holders are exempt, matching
+NTA guidance that the 5-of-10-year residency test alone is insufficient without the qualifying
+visa status.
+
+### Fix 13 — Japan 3-Year Capital-Loss Ledger *(V8.0.0 Phase C.1)*
+Replaces the scalar loss tracker with a real `Vec<CapitalLossEntry>` carrying year and amount.
+Losses automatically expire after 3 tax years per IT Act Art. 37-12-2. Unexpired losses offset
+future JPY capital gains before NHI and resident-tax computation.
+
+### Fix 14 — IRC §904(c) FIFO Carryover Queue *(V8.0.0 Phase C.2)*
+The single `ftc_carryover_usd` scalar is replaced by a `Vec<FtcCarryoverEntry>` implementing a
+10-year FIFO queue. Each entry carries (year, amount); oldest credits are consumed first. Credits
+expire after 10 years per IRC §904(c).
+
+### Fix 15 — Japan Total Moving Average Basis *(V8.0.0 Phase D.1)*
+Introduces `TotalAverageBasisPool` (総平均法に準ずる方法) to replace the flat per-share
+`avg_purchase_price_jpy`. The pool tracks total cost and total shares; each acquisition updates
+the weighted average. This matches the NTA-required method for publicly traded securities held by
+individual investors.
+
+### Fix 16 — Article 19-2 Spousal Pension Mitigation *(V8.0.0 Phase E.1)*
+When `spouse_pension_treaty_exempt: true`, Japan pension income received by a non-Japanese spouse
+is mitigated under US-Japan Tax Treaty Article 19-2 (government service pension exemption for the
+contracting state). The mitigated amount is removed from the Japan resident-tax base.
 
 ---
 
