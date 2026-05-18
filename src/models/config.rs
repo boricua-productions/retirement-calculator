@@ -564,6 +564,21 @@ impl std::fmt::Display for HeirRelationship {
     }
 }
 
+/// V8.0 — Japan visa classification for Exit Tax eligibility.
+/// Per IT Act Art. 60-2, only Table 2 visa holders are subject to the
+/// 5-of-10-year residency test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VisaType {
+    /// Table 1 (work visas: engineer, intra-company transferee, etc.).
+    /// EXEMPT from Exit Tax regardless of years of residence.
+    #[default]
+    Table1,
+    /// Table 2 (Permanent Resident, Spouse of Japanese National, Long-Term Resident).
+    /// Subject to Exit Tax once 5-of-10-year residency test is met.
+    Table2,
+}
+
 /// Stage 07 — A single heir who will receive a share of the estate.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Heir {
@@ -894,6 +909,9 @@ pub struct Config {
     pub rebalance_frequency_months: u32,
 
     // ── V7.5 — Exit Tax Monitor ───────────────────────────────────────────────────
+    /// V8.0 — Visa type for Exit Tax evaluation. Defaults to Table1 (exempt).
+    #[serde(default)]
+    pub primary_taxpayer_visa: VisaType,
     /// Japan residency start date (used for Exit Tax 5-of-10 test per IT Act Art. 60-2).
     /// None disables the Exit Tax monitor.
     #[serde(default)]
@@ -1013,6 +1031,13 @@ pub struct Config {
     /// output and write the suggested amount into `annual_gift_jpy_per_recipient`.
     #[serde(default)]
     pub enable_gifting_optimiser: bool,
+
+    // ── V8.0 — Active-Phase Resident Tax Modeling ────────────────────────────
+    /// V8.0 — When true, model active-phase resident tax as a 12-month Tokubetsu
+    /// Choushuu (Special Collection) deduction. When false (default), assume
+    /// employer-withheld and net (legacy V7 behaviour).
+    #[serde(default)]
+    pub model_active_phase_resident_tax: bool,
 
     // ── Stage 08 — Correlated Monte Carlo ────────────────────────────────────
     /// When true, use correlated asset paths (multivariate normal) instead of

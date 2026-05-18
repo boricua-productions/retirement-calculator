@@ -835,6 +835,12 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             "high"   => crate::engine::tax::kaigo_hoken::CareScenario::High,
             _        => crate::engine::tax::kaigo_hoken::CareScenario::None,
         },
+        // V8.0 — Visa type for Exit Tax evaluation.
+        primary_taxpayer_visa: match sets["primary_taxpayer_visa"].as_str().unwrap_or("table1") {
+            "table2" => crate::models::config::VisaType::Table2,
+            _        => crate::models::config::VisaType::Table1,
+        },
+        model_active_phase_resident_tax: get_bool("model_active_phase_resident_tax", false),
     };
 
     // ── Stage 08: Validate correlation matrix if correlated paths are enabled ────
