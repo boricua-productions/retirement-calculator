@@ -314,6 +314,18 @@ impl SimulationController {
             }
         }
 
+        // ── V8.0 — Pre-retirement Tokubetsu Choushuu accumulation ────────────
+        // When model_active_phase_resident_tax is enabled, active ResTax expense
+        // rules are accumulated directly (the main cashflow manager only runs
+        // in retirement and would otherwise skip these rules entirely).
+        if self.state.date < self.cfg.retirement_date && self.cfg.model_active_phase_resident_tax {
+            let restax_this_month: f64 = self.cfg.expense_rules.iter()
+                .filter(|r| r.is_active_on(self.state.date) && r.name.contains("ResTax"))
+                .map(|r| r.amount_jpy)
+                .sum();
+            self.state.stats.year_exp_restax += restax_this_month;
+        }
+
         // ── Post-retirement cashflow management ───────────────────────────────
         if self.state.date >= self.cfg.retirement_date {
             let cfg = &self.cfg;
@@ -369,8 +381,12 @@ impl SimulationController {
         self.state.pfic_mtm_jpy_history.insert(prev_yr, self.state.stats.year_pfic_mtm_income_jpy);
 
         // Schedule Japan resident tax and NHI installments for the current year.
-        if self.state.date >= self.cfg.retirement_date {
+        // V8.0 — Pre-retirement active-phase resident tax is gated by model_active_phase_resident_tax.
+        let is_retired = self.state.date >= self.cfg.retirement_date;
+        if is_retired || self.cfg.model_active_phase_resident_tax {
             self.schedule_annual_resident_tax(yr);
+        }
+        if is_retired {
             self.schedule_annual_nhi(yr);
         }
 
@@ -625,21 +641,43 @@ impl SimulationController {
         );
 
         if tax_bill > 0.0 {
-            let inst = tax_bill / 4.0;
-            let new_rules = vec![
-                ExpenseRule::new(format!("ResTax {} Q1", current_year), inst,
-                    NaiveDate::from_ymd_opt(current_year, 6, 1).unwrap(),
-                    NaiveDate::from_ymd_opt(current_year, 6, 30).unwrap()),
-                ExpenseRule::new(format!("ResTax {} Q2", current_year), inst,
-                    NaiveDate::from_ymd_opt(current_year, 8, 1).unwrap(),
-                    NaiveDate::from_ymd_opt(current_year, 8, 31).unwrap()),
-                ExpenseRule::new(format!("ResTax {} Q3", current_year), inst,
-                    NaiveDate::from_ymd_opt(current_year, 10, 1).unwrap(),
-                    NaiveDate::from_ymd_opt(current_year, 10, 31).unwrap()),
-                ExpenseRule::new(format!("ResTax {} Q4", current_year), inst,
-                    NaiveDate::from_ymd_opt(current_year + 1, 1, 1).unwrap(),
-                    NaiveDate::from_ymd_opt(current_year + 1, 1, 31).unwrap()),
-            ];
+            let is_retired = self.state.date >= self.cfg.retirement_date;
+            let new_rules: Vec<ExpenseRule> = if is_retired {
+                // Futsu Choushuu (普通徴収): 4-quarter installments June–Jan+1.
+                let inst = tax_bill / 4.0;
+                vec![
+                    ExpenseRule::new(format!("ResTax {} Q1", current_year), inst,
+                        NaiveDate::from_ymd_opt(current_year, 6, 1).unwrap(),
+                        NaiveDate::from_ymd_opt(current_year, 6, 30).unwrap()),
+                    ExpenseRule::new(format!("ResTax {} Q2", current_year), inst,
+                        NaiveDate::from_ymd_opt(current_year, 8, 1).unwrap(),
+                        NaiveDate::from_ymd_opt(current_year, 8, 31).unwrap()),
+                    ExpenseRule::new(format!("ResTax {} Q3", current_year), inst,
+                        NaiveDate::from_ymd_opt(current_year, 10, 1).unwrap(),
+                        NaiveDate::from_ymd_opt(current_year, 10, 31).unwrap()),
+                    ExpenseRule::new(format!("ResTax {} Q4", current_year), inst,
+                        NaiveDate::from_ymd_opt(current_year + 1, 1, 1).unwrap(),
+                        NaiveDate::from_ymd_opt(current_year + 1, 1, 31).unwrap()),
+                ]
+            } else {
+                // V8.0 — Tokubetsu Choushuu (特別徴収): 12 equal monthly deductions
+                // June Y through May Y+1, mirroring employer payroll withholding.
+                let monthly = tax_bill / 12.0;
+                (0u32..12).map(|m_offset| {
+                    let abs_month = 6 + m_offset;
+                    let (yr_, mo_) = if abs_month <= 12 {
+                        (current_year, abs_month)
+                    } else {
+                        (current_year + 1, abs_month - 12)
+                    };
+                    let start = NaiveDate::from_ymd_opt(yr_, mo_, 1).unwrap();
+                    let end = start.with_day(28).unwrap();
+                    ExpenseRule::new(
+                        format!("ResTax {} M{:02}", current_year, m_offset + 1),
+                        monthly, start, end,
+                    )
+                }).collect()
+            };
             if current_year == self.cfg.retirement_date.year() + 1 {
                 info!("   [TAX] Scheduled Resident Tax: ¥{:.0} (Social Insurance paid: ¥{:.0})",
                     tax_bill, soc_ins_paid);
