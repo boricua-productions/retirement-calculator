@@ -46,12 +46,12 @@ fn install_noto_sans_jp(ctx: &egui::Context) {
 #[derive(Default, PartialEq, Eq)]
 enum Tab {
     #[default]
+    InputConfig,
     Overview,
+    Transition,
     Table,
     Charts,
     Rsu,
-    Transition,
-    InputConfig,
     Comparison,
 }
 
@@ -192,12 +192,12 @@ impl eframe::App for RetirementApp {
         // ── Central results panel (tabbed) ─────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.active_tab, Tab::InputConfig, "⚙ Input Config");
                 ui.selectable_value(&mut self.active_tab, Tab::Overview,    "📊 Overview");
+                ui.selectable_value(&mut self.active_tab, Tab::Transition,  "🔄 Transition");
                 ui.selectable_value(&mut self.active_tab, Tab::Table,       "📋 Annual Table");
                 ui.selectable_value(&mut self.active_tab, Tab::Charts,      "📈 Charts");
                 ui.selectable_value(&mut self.active_tab, Tab::Rsu,         "🗓 RSU Schedule");
-                ui.selectable_value(&mut self.active_tab, Tab::Transition,  "🔄 Transition");
-                ui.selectable_value(&mut self.active_tab, Tab::InputConfig, "⚙ Input Config");
                 ui.selectable_value(&mut self.active_tab, Tab::Comparison,  "🔀 Compare");
             });
             ui.separator();

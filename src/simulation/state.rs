@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use std::collections::HashMap;
 
 use crate::models::assets::Account;
-use crate::models::snapshot::{AnnualSnapshot, FtcCarryoverQueue, PficDriftWarning, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
+use crate::models::snapshot::{AccountSnapshotRow, AnnualSnapshot, FtcCarryoverQueue, PficDriftWarning, RsuSellToCoverWarning, SolvencyWarning, TransitionReport};
 use super::stats::AnnualStats;
 
 /// V8.0 — Rolling 3-year Japan capital-loss carry-forward ledger.
@@ -183,6 +183,10 @@ pub struct SimState {
     /// Total HELOC drawn across all properties (USD). Accumulates with each
     /// Tier 7.5 draw; never auto-repaid in this simulation model.
     pub outstanding_heloc_usd: f64,
+
+    // ── V8.2 — Per-account snapshots ─────────────────────────────────────────────
+    /// Populated at Retirement, each per-account Rebalance, and FinalYear.
+    pub account_snapshots: Vec<AccountSnapshotRow>,
 }
 
 impl SimState {
@@ -239,6 +243,7 @@ impl SimState {
             pfic_basis_drift_warnings: Vec::new(),
             pfic_mtm_jpy_history: HashMap::new(),
             outstanding_heloc_usd: 0.0,
+            account_snapshots: Vec::new(),
         }
     }
 }

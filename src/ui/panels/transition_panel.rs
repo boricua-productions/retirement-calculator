@@ -30,6 +30,11 @@ fn c2(n: f64) -> String {
 /// Renders the retirement transition rebalance report.
 pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
     ui.heading("Retirement Transition Report");
+    ui.label(
+        RichText::new("Account: 🇺🇸 Taxable Brokerage (US-domiciled)")
+            .strong()
+            .color(Color32::from_rgb(180, 220, 255)),
+    );
     ui.add_space(8.0);
 
     let Some(res) = results else {
@@ -62,17 +67,18 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
         .spacing([20.0, 4.0])
         .show(ui, |ui| {
             let total_source: f64 = t.sells.iter().map(|s| s.proceeds).sum();
-            ui.label(RichText::new("SOURCE: Portfolio liquidation").strong());
+            ui.label(RichText::new("SOURCE: Portfolio liquidation (🇺🇸 Taxable Brokerage)").strong());
             ui.label(format!("${}", c2(total_source)));
             ui.end_row();
 
-            ui.label("USE: US Capital Gains Tax");
+            ui.label("USE: 🇺🇸 US Capital Gains Tax");
             ui.label(format!("-${}  (Total: ${} | Pre-funded: ${})",
                 c2(alloc.us_tax_paid_from_portfolio), c2(alloc.us_tax_bill), c2(alloc.us_tax_pre)));
             ui.end_row();
 
             let wc_sym = if alloc.wc_currency == "USD" { "$" } else { "¥" };
-            ui.label("USE: War Chest Fill");
+            let wc_country = if alloc.wc_currency == "USD" { "🇺🇸 US" } else { "🇯🇵 Japan" };
+            ui.label(format!("USE: War Chest Fill ({})", wc_country));
             if alloc.wc_paid_from_portfolio_usd == 0.0 && alloc.wc_target == 0.0 {
                 ui.label("$0 (disabled)");
             } else {
@@ -81,7 +87,8 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
             }
             ui.end_row();
 
-            ui.label("USE: Bridge Fund Fill");
+            let bridge_country = if alloc.bridge_fund_currency == "USD" { "🇺🇸 US" } else { "🇯🇵 Japan" };
+            ui.label(format!("USE: Bridge Fund Fill ({})", bridge_country));
             if alloc.bridge_pull_usd == 0.0 && alloc.bridge_total_jpy == 0.0 {
                 ui.label("$0 (disabled)");
             } else {
@@ -98,8 +105,8 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
     ui.add_space(10.0);
 
     // C. Transactions.
-    ui.label(RichText::new("C. Transaction Log").strong());
-    ui.label("Sold:");
+    ui.label(RichText::new("C. Transaction Log — all entries occur in the 🇺🇸 Taxable Brokerage account").strong());
+    ui.label("Sold (assets liquidated from Taxable Brokerage):");
 
     ScrollArea::vertical().max_height(180.0).id_salt("sells_scroll").show(ui, |ui| {
         egui::Grid::new("sells_grid")
@@ -123,7 +130,7 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
     });
 
     ui.add_space(6.0);
-    ui.label("Bought:");
+    ui.label("Bought (assets purchased into Taxable Brokerage):");
     egui::Grid::new("buys_grid")
         .num_columns(3)
         .spacing([15.0, 3.0])
@@ -143,7 +150,7 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
     ui.add_space(10.0);
 
     // D. Tax breakdown.
-    ui.label(RichText::new("D. Estimated Tax Bills").strong());
+    ui.label(RichText::new("D. Estimated Tax Bills — by Country").strong());
     let bd = &alloc.us_tax_breakdown;
     egui::Grid::new("tax_breakdown_grid")
         .num_columns(2)
@@ -154,14 +161,14 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>) {
             let g20 = bd.get("gains_at_20_pct").copied().unwrap_or(0.0);
             let niit = bd.get("niit_on_gains").copied().unwrap_or(0.0);
 
-            ui.label("Gains @ 0%:"); ui.label(format!("${} → Tax: $0.00", c(_g0))); ui.end_row();
-            ui.label("Gains @ 15%:"); ui.label(format!("${} → Tax: ${}", c(g15), c2(g15 * 0.15))); ui.end_row();
-            ui.label("Gains @ 20%:"); ui.label(format!("${} → Tax: ${}", c(g20), c2(g20 * 0.20))); ui.end_row();
-            ui.label("NIIT:"); ui.label(format!("${}", c2(niit))); ui.end_row();
-            ui.label(RichText::new("Total US Tax Due:").strong());
+            ui.label("🇺🇸 US — Gains @ 0%:"); ui.label(format!("${} → Tax: $0.00", c(_g0))); ui.end_row();
+            ui.label("🇺🇸 US — Gains @ 15%:"); ui.label(format!("${} → Tax: ${}", c(g15), c2(g15 * 0.15))); ui.end_row();
+            ui.label("🇺🇸 US — Gains @ 20%:"); ui.label(format!("${} → Tax: ${}", c(g20), c2(g20 * 0.20))); ui.end_row();
+            ui.label("🇺🇸 US — NIIT (3.8% surtax):"); ui.label(format!("${}", c2(niit))); ui.end_row();
+            ui.label(RichText::new("🇺🇸 US — Total Federal Tax Due:").strong());
             ui.label(RichText::new(format!("${}", c2(alloc.us_tax_bill))).strong());
             ui.end_row();
-            ui.label(format!("Japan Resident Tax ({}+1):", t.date.year()));
+            ui.label(format!("🇯🇵 Japan — Resident Tax ({}+1):", t.date.year()));
             ui.label(format!("¥{}", c(alloc.jp_tax_bill)));
             ui.end_row();
         });

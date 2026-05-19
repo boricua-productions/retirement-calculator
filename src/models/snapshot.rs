@@ -385,6 +385,42 @@ impl FtcCarryoverQueue {
     }
 }
 
+/// V8.2 — Event type for per-account portfolio snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum AccountSnapshotEvent {
+    Retirement = 0,
+    Rebalance  = 1,
+    FinalYear  = 2,
+}
+
+/// V8.2 — One asset row within an `AccountSnapshotRow`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountAssetRow {
+    pub ticker: String,
+    pub quantity: f64,
+    pub price_native: f64,
+    pub market_value_native: f64,
+    /// Fraction of account value (0.0–1.0).
+    pub pct_of_account: f64,
+}
+
+/// V8.2 — One row per account, captured at a specific event date.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountSnapshotRow {
+    pub event: AccountSnapshotEvent,
+    pub date: chrono::NaiveDate,
+    pub account_name: String,
+    pub location: crate::models::assets::AccountLocation,
+    pub tax_jurisdiction: crate::models::assets::AccountJurisdiction,
+    /// "USD" or "JPY"
+    pub currency: String,
+    pub total_value_native: f64,
+    pub total_value_usd: f64,
+    pub total_value_jpy: f64,
+    pub composition: Vec<AccountAssetRow>,
+}
+
 /// All results produced by a complete simulation run.
 #[derive(Debug, Clone)]
 pub struct SimResults {
@@ -410,6 +446,8 @@ pub struct SimResults {
     /// Stage 07 — Estate tax summary computed at end of horizon.
     /// `None` when `enable_estate_planning` is false.
     pub estate_summary: Option<EstateSummary>,
+    /// V8.2 — Per-account snapshots at Retirement, each Rebalance, and FinalYear.
+    pub account_snapshots: Vec<AccountSnapshotRow>,
 }
 
 #[cfg(test)]

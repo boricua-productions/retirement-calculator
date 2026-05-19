@@ -39,7 +39,7 @@ use crate::models::assets::Account;
 use crate::models::config::{Config, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy};
 use crate::models::expense::ExpenseRule;
 use crate::engine::tax::estate_tax::EstatePlanningEngine;
-use crate::models::snapshot::{AnnualSnapshot, EstateSummary, SimResults};
+use crate::models::snapshot::{AccountAssetRow, AccountSnapshotEvent, AccountSnapshotRow, AnnualSnapshot, EstateSummary, SimResults};
 use super::state::SimState;
 
 /// The main simulation orchestrator.
@@ -137,6 +137,7 @@ impl SimulationController {
             effective_filing_status: self.cfg.tax_rules.filing_status.clone(),
             pfic_basis_drift_warnings: self.state.pfic_basis_drift_warnings,
             estate_summary: final_estate_summary,
+            account_snapshots: self.state.account_snapshots,
         }
     }
 
@@ -198,6 +199,9 @@ impl SimulationController {
                 &self.tax_engine,
             );
             self.state.transition_report = Some(report);
+            // V8.2 — capture post-rebalance account state at retirement date.
+            let ret_date = self.state.date;
+            self.capture_account_snapshots(AccountSnapshotEvent::Retirement, ret_date);
         }
 
         // ── Roth IRA rebalance at age 59.5 ───────────────────────────────────
@@ -303,6 +307,9 @@ impl SimulationController {
                     execute_account_rebalance_strategy(
                         &mut self.state, &self.cfg, &acct_name, &strategy,
                     );
+                    // V8.2 — capture all accounts after each per-account rebalance.
+                    let fire_date = self.state.date;
+                    self.capture_account_snapshots(AccountSnapshotEvent::Rebalance, fire_date);
                     if strategy.is_one_time {
                         if let Some(acct) = self.state.accounts.get_mut(&acct_name) {
                             if let Some(s) = &mut acct.rebalance_strategy {
@@ -1060,6 +1067,50 @@ impl SimulationController {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  V8.2 — Per-account snapshot capture
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Collect a snapshot row for every account and append to `state.account_snapshots`.
+    /// Builds the rows from an immutable borrow, then extends the vec — avoids
+    /// simultaneous mutable + immutable borrow of the same field.
+    fn capture_account_snapshots(&mut self, event: AccountSnapshotEvent, date: NaiveDate) {
+        let fx = self.state.current_fx;
+        let rows: Vec<AccountSnapshotRow> = self.state.accounts.iter().map(|(name, acct)| {
+            let total_native = acct.total_value(fx);
+            let (usd, jpy) = match acct.currency {
+                crate::models::assets::Currency::Usd => (total_native, total_native * fx),
+                crate::models::assets::Currency::Jpy => (total_native / fx, total_native),
+            };
+            let composition: Vec<AccountAssetRow> = acct.assets.iter().map(|(t, a)| {
+                let mv = a.market_value();
+                AccountAssetRow {
+                    ticker: t.clone(),
+                    quantity: a.qty(),
+                    price_native: a.price,
+                    market_value_native: mv,
+                    pct_of_account: if total_native > 0.0 { mv / total_native } else { 0.0 },
+                }
+            }).collect();
+            AccountSnapshotRow {
+                event,
+                date,
+                account_name: name.clone(),
+                location: acct.location,
+                tax_jurisdiction: acct.tax_jurisdiction,
+                currency: match acct.currency {
+                    crate::models::assets::Currency::Usd => "USD".into(),
+                    crate::models::assets::Currency::Jpy => "JPY".into(),
+                },
+                total_value_native: total_native,
+                total_value_usd: usd,
+                total_value_jpy: jpy,
+                composition,
+            }
+        }).collect();
+        self.state.account_snapshots.extend(rows);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  Annual snapshot
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -1189,6 +1240,12 @@ impl SimulationController {
             // Stage 07 — populated after the loop; None during the simulation run.
             estate_summary: None,
         });
+
+        // V8.2 — capture per-account snapshot for the final simulated year.
+        if yr == self.cfg.end_date.year() {
+            let date = NaiveDate::from_ymd_opt(yr, 12, 31).unwrap_or(self.state.date);
+            self.capture_account_snapshots(AccountSnapshotEvent::FinalYear, date);
+        }
     }
 
     // ── V7.5 — Exit Tax Monitor ──────────────────────────────────────────────
