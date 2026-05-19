@@ -1,10 +1,10 @@
-# Retirement Calculator — V8.4: Conservative-Default Cashflow Waterfall
+# Retirement Calculator — V8.5: War-Chest Cap Policy & 5-Level Retirement Verdict
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
 spouse, long-term resident, or permanent resident visas.
 
-> **Conservative Default Waterfall.** The V8.4 engine covers monthly expenses in this order:
+> **Conservative Default Waterfall.** The V8.5 engine covers monthly expenses in this order:
 > **(1) floor income** — all guaranteed income first: Nenkin, DC payouts, FERS, VA, SS, SSDI, and
 > rental income; **(2) Bridge Fund** (USD → JPY with FX penalty); **(3) War Chest** (JPY, no FX
 > cost); **(4) belt-tightening** — drop to minimum spend; **(5) HELOC draw**; **(6) stock
@@ -14,7 +14,11 @@ spouse, long-term resident, or permanent resident visas.
 > Bridge Fund. An Education-tagged stream bypasses the main waterfall through a dedicated Tier 2.5
 > bucket, a Tier 9 Estate Planning Gift Sink diverts annual surplus before buffering, and every
 > snapshot reports a Dividend Coverage Ratio so you can see year-by-year whether the portfolio is
-> self-funding.
+> self-funding. The war chest now enforces a **cap policy** — surplus that would push the balance
+> past the effective limit is reinvested in the Taxable portfolio rather than accumulated silently,
+> and the limit can grow by inflation, shrink by a set percentage, or empty itself on a chosen date.
+> The retirement verdict is a **5-level health tier** (Excellent / Strong / Adequate / Strained /
+> Unsustainable); only a fully exhausted portfolio is Unsustainable.
 
 The engine assumes ordinary Japan resident tax and National Health Insurance exposure unless a
 scenario explicitly changes the tax settings. It is not a SOFA, TRICARE, base-access, or
@@ -26,7 +30,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 8.4.0 (Internal Logic: V8.4 — Conservative-Default Cashflow Waterfall)
+> **Version:** Cargo package 8.5.0 (Internal Logic: V8.5 — War-Chest Cap Policy & 5-Level Retirement Verdict)
 ---
 
 ## Beginner Quick Start
@@ -306,6 +310,9 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | **War Chest Ramp Months** *(V7.11)* | Number of months before retirement to start gradual accumulation. Only used when Gradually Before Retirement is selected. Default: 24 months. Longer ramp = smaller monthly diversion but more months of missed market growth. |
 | **War Chest Target (JPY)** | Target JPY emergency reserve. The V8.4 waterfall taps this **after** Bridge Fund (no FX conversion needed). Only active when War Chest is enabled. |
 | **Already Set Aside (JPY)** *(V7.10.1)* | JPY already earmarked for the war chest (savings account, envelope, etc.). The model liquidates portfolio shares only to cover the gap: Target minus this amount. |
+| **War Chest Cap Policy** *(V8.5)* | How the war-chest limit evolves year-over-year after retirement: **Keep the limit** (fixed, default), **Increase by inflation each year** (Japan CPI), **Increase by a set % each year**, **Decrease by a set % each year**, or **Empty on a set date** (liquidates the entire chest into the Taxable portfolio on that date and holds the limit at ¥0 thereafter). Surplus that would push the balance past the effective limit is always reinvested in the Taxable portfolio. |
+| **Annual Change %** *(V8.5)* | Annual rate the war-chest limit grows or shrinks when the cap policy is Increase/Decrease by percent. Enter `3` for 3%. Ignored by all other policies. |
+| **Empty Date** *(V8.5)* | Date (YYYY-MM-DD) on which the war chest is fully liquidated into the Taxable portfolio when the cap policy is Empty on a set date. |
 | **War Chest Target (USD)** | Legacy USD target retained for compatibility. V7.2 treats the active war chest as JPY. |
 | **Enable Bridge Fund** *(V7.10.1)* | Master toggle for USD operating liquidity buffer. When disabled, retirement transition skips bridge fund funding and the Bridge Fund step is bypassed in the waterfall. Default: enabled. |
 | **Bridge Fund Funding Timing** *(V7.11)* | When to build the bridge fund: **At Retirement** or **Gradually Before Retirement**. Same mechanics as War Chest timing. Default: At Retirement. |
@@ -341,9 +348,9 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 ---
 
-## V7.5–V8.4 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
+## V7.5–V8.5 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
 
-The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), V8.1 detailed expense entry by category with location-aware NHI settings, V8.2 UX Clarity Pass (tab reorder, per-account snapshots, plain-English retirement verdict), V8.3 Input UX & Diagnostics Polish, and V8.4 Conservative-Default Cashflow Waterfall redesign.
+The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), V8.1 detailed expense entry by category with location-aware NHI settings, V8.2 UX Clarity Pass (tab reorder, per-account snapshots, plain-English retirement verdict), V8.3 Input UX & Diagnostics Polish, V8.4 Conservative-Default Cashflow Waterfall redesign, and V8.5 war-chest cap policy with five-tier retirement verdict.
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -399,10 +406,10 @@ The V8.4 waterfall and dual-regime dispatch:
 - Tier 8   — Stock Liquidation (+0.5% FX Penalty).
 - **Tier 9 — Estate Planning Gift Sink (V7.5):** once per year (December), annual JPY surplus is diverted to gift recipients at `annual_gift_jpy_per_recipient × gift_recipient_count` (暦年贈与, max ¥1.1M/recipient tax-free). Each recipient's gift is checked against the US §2503(b) annual exclusion ($19k in 2026) and `year_form_709_required` is flagged when exceeded.
 
-**V8.4 Dividend surplus routing** (both JPY and USD dividends are deposited here, never to expenses):
+**V8.5 Dividend surplus routing** (both JPY and USD dividends are deposited here, never to expenses):
 
-- *USD surplus* — fills Bridge Fund up to target; overflow converts to JPY (with `fx_spread_penalty`) and fills War Chest; any remaining reinvests in VTI/SCHD.
-- *JPY surplus* — fills War Chest up to target; overflow converts to USD (with `fx_spread_penalty`) and fills Bridge Fund; any remaining stays in War Chest.
+- *USD surplus* — fills Bridge Fund up to target; overflow converts to JPY (with `fx_spread_penalty`) and fills War Chest up to its effective cap; any remainder that cannot fill either buffer is reinvested in the Taxable portfolio.
+- *JPY surplus* — fills War Chest up to its effective cap; overflow converts to USD (with `fx_spread_penalty`) and fills Bridge Fund; any remainder that cannot fill either buffer is reinvested in the Taxable portfolio.
 
 USD-to-JPY conversions in Steps 2, 3, 8 and cross-currency surplus routing apply `fx_spread_penalty`
 (`0.005` by default). The legacy V7.0-style `Cautious` waterfall is still
@@ -453,6 +460,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V8.5.0** | War-Chest Cap Policy & 5-Level Retirement Verdict: five war-chest cap modes (Fixed / GrowByInflation / GrowByPercent / ShrinkByPercent / EmptyOnDate) govern how the war-chest limit evolves year-over-year post-retirement; war-chest overfill bug fixed — surplus that exceeds the effective cap is now reinvested in the Taxable portfolio instead of accumulating silently; five-tier plan health rating (Excellent / Strong / Adequate / Strained / Unsustainable) replaces the binary works/doesn't-work verdict — only a portfolio exhausted before the horizon end is Unsustainable; verdict banner shows tier-matched color and icon; Adequate/Strained plans emit informational warnings rather than failure markers while still showing "Why" and "Recommendations"; V8.4 waterfall tooltip and doc-comment corrected to match implemented Step order. |
 | **V8.4.0** | Conservative-Default Cashflow Waterfall: new expense-coverage order — floor income (JPY then USD) → Bridge Fund → War Chest → belt-tighten → HELOC → liquidation. Dividends (JPY and USD) no longer cover expenses directly; all dividend receipts flow to buffer deposit helpers with cross-currency overflow (USD surplus → bridge → overflow converts to JPY for war chest; JPY surplus → war chest → overflow converts to USD for bridge). The legacy "cash buffers at zero" early belt-tighten trigger removed; belt-tighten now fires only when a real spending gap remains. New `prefer_liquidation_over_belt_tightening` flag (default false): when true, skips belt-tightening if the Taxable portfolio can sustain minimum spending through end of simulation (coarse no-growth projection). UI checkbox added in Financial Buffers section. |
 | **V8.3.0** | Input UX & Diagnostics Polish: collapsible Input Config sections with invalid-field counts in headers; comparison panel expanded (retirement verdict, dividend coverage ×, worst drawdown, cumulative US+Japan tax, years-of-expense headroom, per-scenario solvency warnings); target allocations now per-account (`target_allocations[account][ticker]`); rebalance date persists across Save→Reload; Accum $/mo displays `0` for new rows; Spouse Japan Misc Income zero no longer flags red; Invesco expense-ratio parser anchored to structured JSON field; auto-fetch log noise reduced. |
 | **V8.2.0** | UX Clarity Pass: tab reorder, per-account snapshots, plain-English retirement verdict, country/year labels. |
@@ -502,7 +510,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V8.4)](#16-hardening--compliance-v75--v84)
+16. [Hardening & Compliance (V7.5 → V8.5)](#16-hardening--compliance-v75--v85)
 
 ---
 
@@ -1418,6 +1426,9 @@ values.
 | `bridge_fund_months_target` | Bridge Fund Months | `u32` | `12` | Target months of expense shortfall to keep in USD bridge cash. Only active when `bridge_fund_enabled = true`. |
 | `pre_funded_bridge_usd` | Already Set Aside (USD) *(V7.10.1 UI)* | `f64` | `0` | USD already earmarked for bridge fund. Model liquidates shares to cover gap. |
 | `prefer_liquidation_over_belt_tightening` *(V8.4)* | Prefer Stock Liquidation Over Belt-Tightening | `bool` | `false` | When `true` and the Taxable portfolio can sustain minimum spending through end of simulation, skip belt-tightening and liquidate stock to cover the full base gap. Default `false` (conservative). |
+| `war_chest_cap_policy` *(V8.5)* | War Chest Cap Policy | string | `"fixed"` | How the war-chest limit evolves post-retirement: `"fixed"` (default), `"grow_by_inflation"` (Japan CPI each year), `"grow_by_percent"`, `"shrink_by_percent"`, `"empty_on_date"`. Surplus that would exceed the effective cap is reinvested in the Taxable portfolio. |
+| `war_chest_cap_growth_pct` *(V8.5)* | Annual Change % | `f64` | `0` | Annual growth/shrink rate for `grow_by_percent` / `shrink_by_percent` as a human percentage (e.g. `3` = 3%). Ignored by all other policies. |
+| `war_chest_empty_date` *(V8.5)* | Empty Date | `YYYY-MM-DD` | *(absent)* | Date on which the war chest is liquidated into the Taxable portfolio when `war_chest_cap_policy = "empty_on_date"`. Omit the key to leave unset. |
 | `pre_funded_japan_tax_jpy` | — | `f64` | `0` | Pre-reserved Japan tax cash at simulation start |
 | `pre_funded_us_tax_usd` | — | `f64` | `0` | Pre-reserved US tax cash at simulation start |
 | `dc_payout_method` | — | string | `ANNUITY_20YR` | `LUMP_SUM` (invested to Taxable) or `ANNUITY_20YR` (240 monthly draws) |
@@ -1861,7 +1872,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V8.4)
+## 16. Hardening & Compliance (V7.5 → V8.5)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
@@ -1907,7 +1918,16 @@ expense coverage and rerouted entirely through buffer deposit helpers with cross
 (USD surplus → bridge → convert to JPY for war chest; JPY surplus → war chest → convert to USD
 for bridge), the legacy cash-zero belt-tighten early-trigger is removed, and a new
 `prefer_liquidation_over_belt_tightening` alt-mode flag lets advanced users skip belt-tightening
-when their Taxable portfolio can sustain minimum spending through end of simulation.
+when their Taxable portfolio can sustain minimum spending through end of simulation;
+V8.5 introduces a war-chest cap policy (five modes: Fixed, GrowByInflation, GrowByPercent,
+ShrinkByPercent, EmptyOnDate) that governs how the war-chest limit evolves year-over-year
+post-retirement, fixes the buffer overfill bug so surplus that would exceed the effective cap is
+reinvested into the Taxable portfolio instead of accumulating silently, replaces the binary
+works/doesn't-work retirement verdict with a five-tier health rating (Excellent / Strong /
+Adequate / Strained / Unsustainable) where only a fully exhausted portfolio is rated Unsustainable
+and plans with absorbed shortfalls receive proportionate Adequate or Strained ratings with retained
+"Why" and "Recommendations" detail, and corrects stale V8.3-era tooltips and the
+`manage_monthly_cashflow_defensive` doc-comment to match the implemented V8.4 Step order.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income
