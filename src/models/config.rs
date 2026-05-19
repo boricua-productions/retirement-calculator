@@ -919,10 +919,11 @@ pub struct Config {
     /// Recurring scheduled-buy rules set by the user per ticker.
     #[serde(skip)]
     pub accumulation_rules: Vec<AccumulationRule>,
-    /// Target portfolio weight per ticker (ticker → fraction, e.g. "VTI" → 0.60).
+    /// Target portfolio weights per account and ticker (account → ticker → fraction).
+    /// E.g. `{"Taxable": {"VTI": 0.60}, "Roth": {"VTI": 0.70}}`.
     /// Used by the periodic rebalancing engine; empty = rebalancing disabled.
     #[serde(skip)]
-    pub target_allocations: HashMap<String, f64>,
+    pub target_allocations: HashMap<String, HashMap<String, f64>>,
     /// Whether periodic target-state rebalancing is active.
     #[serde(skip)]
     pub rebalance_enabled: bool,

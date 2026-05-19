@@ -674,15 +674,38 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             rules
         },
         target_allocations: {
-            let mut allocs: HashMap<String, f64> = HashMap::new();
+            let mut outer: HashMap<String, HashMap<String, f64>> = HashMap::new();
             if let Value::Object(map) = &sets["target_allocations"] {
-                for (k, v) in map {
-                    if let Some(w) = v.as_f64() {
-                        allocs.insert(k.clone(), w);
+                let is_nested = map.values().next().map(|v| v.is_object()).unwrap_or(false);
+                if is_nested {
+                    for (account, inner_val) in map {
+                        if let Value::Object(inner) = inner_val {
+                            let mut inner_map = HashMap::new();
+                            for (ticker, v) in inner {
+                                if let Some(w) = v.as_f64() {
+                                    inner_map.insert(ticker.clone(), w);
+                                }
+                            }
+                            if !inner_map.is_empty() {
+                                outer.insert(account.clone(), inner_map);
+                            }
+                        }
+                    }
+                } else {
+                    // Flat form (legacy): treat all tickers as belonging to "Taxable".
+                    info!("[Config] target_allocations: flat form detected, mapping to Taxable bucket");
+                    let mut taxable: HashMap<String, f64> = HashMap::new();
+                    for (ticker, v) in map {
+                        if let Some(w) = v.as_f64() {
+                            taxable.insert(ticker.clone(), w);
+                        }
+                    }
+                    if !taxable.is_empty() {
+                        outer.insert("Taxable".into(), taxable);
                     }
                 }
             }
-            allocs
+            outer
         },
         rebalance_enabled:          get_bool("rebalance_enabled",           false),
         rebalance_frequency_months: get_u32("rebalance_frequency_months",   12),

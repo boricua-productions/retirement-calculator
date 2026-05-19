@@ -173,24 +173,27 @@ pub fn resolve_expense_ratio(ticker: &str, include_fund_data: bool) -> (f64, Exp
     }
 
     if let Some(issuer) = dispatch(ticker) {
-        let result = match issuer {
-            Issuer::Vanguard => super::adapters::vanguard::Vanguard::try_fetch(ticker),
-            Issuer::Invesco  => super::adapters::invesco::Invesco::try_fetch(ticker),
-            // Schwab/iShares/SSGA are bot-walled or client-rendered; fall through
-            // to the hardcoded table. Track in TODO if a workable endpoint surfaces.
-            Issuer::Schwab | Issuer::IShares | Issuer::SSGA => {
-                Err(format!("{} adapter intentionally not implemented (see fallback table)", issuer.as_str()))
-            }
-        };
-        match result {
-            Ok(er) => {
-                info!("[ExpenseRatio] {}: fetched {:.3}% from {}",
-                    ticker, er * 100.0, issuer.as_str());
-                return (er, ExpenseRatioSource::Fetched(issuer));
-            }
-            Err(e) => {
-                warn!("[ExpenseRatio] {}: {} fetch failed ({}), trying fallback",
-                    ticker, issuer.as_str(), e);
+        // Intentional non-implementations skip straight to fallback at INFO level.
+        let is_intentional_skip = matches!(issuer, Issuer::Schwab | Issuer::IShares | Issuer::SSGA);
+        if is_intentional_skip {
+            info!("[ExpenseRatio] {}: {} has no live adapter — using hardcoded fallback",
+                ticker, issuer.as_str());
+        } else {
+            let result = match issuer {
+                Issuer::Vanguard => super::adapters::vanguard::Vanguard::try_fetch(ticker),
+                Issuer::Invesco  => super::adapters::invesco::Invesco::try_fetch(ticker),
+                _ => unreachable!(),
+            };
+            match result {
+                Ok(er) => {
+                    info!("[ExpenseRatio] {}: fetched {:.3}% from {}",
+                        ticker, er * 100.0, issuer.as_str());
+                    return (er, ExpenseRatioSource::Fetched(issuer));
+                }
+                Err(e) => {
+                    warn!("[ExpenseRatio] {}: {} fetch failed ({}), trying fallback",
+                        ticker, issuer.as_str(), e);
+                }
             }
         }
     }

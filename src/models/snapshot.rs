@@ -450,6 +450,60 @@ pub struct SimResults {
     pub account_snapshots: Vec<AccountSnapshotRow>,
 }
 
+/// Compact plan verdict returned by `SimResults::retirement_verdict()`.
+/// Shared between the Overview and Comparison panels.
+#[derive(Clone, Debug)]
+pub struct RetirementVerdict {
+    pub works: bool,
+    pub summary: String,
+    /// First calendar year with a solvency gap warning (if any).
+    pub first_gap_year: Option<i32>,
+}
+
+impl SimResults {
+    /// Determine whether the plan succeeds or fails, and why in one line.
+    /// Both the Overview and Comparison panels call this so the logic lives once.
+    pub fn retirement_verdict(&self) -> RetirementVerdict {
+        let warnings = self.gap_warnings.len();
+        let unpaid_rsu = self.annual_summary.last()
+            .map(|s| s.unpaid_rsu_tax_liability_usd)
+            .unwrap_or(0.0);
+        let bridge_exhausted_count = self.annual_summary.iter()
+            .filter(|s| s.bridge_exhausted)
+            .count();
+        let total_years = self.annual_summary.len();
+        let deficit_years = self.annual_summary.iter().filter(|s| s.gap_jpy < 0.0).count();
+        let final_value_usd = self.annual_summary.last().map(|s| {
+            s.brokerage_usd + s.roth_usd + s.dc_jpy / s.usd_jpy.max(1.0)
+        }).unwrap_or(0.0);
+        let deficit_ratio = if total_years > 0 {
+            deficit_years as f64 / total_years as f64
+        } else {
+            0.0
+        };
+        let works = warnings == 0
+            && unpaid_rsu < 1_000.0
+            && bridge_exhausted_count == 0
+            && deficit_ratio < 0.20
+            && final_value_usd > 0.0;
+
+        let first_gap_year = self.gap_warnings.first()
+            .and_then(|w| w.date.splitn(2, '-').next()?.parse::<i32>().ok());
+
+        let summary = if works {
+            "Plan succeeds — solvent through end of horizon.".into()
+        } else if final_value_usd <= 0.0 {
+            "Plan exhausts portfolio before end of horizon.".into()
+        } else if let Some(yr) = first_gap_year {
+            format!("Plan has shortfalls — first gap in {}.", yr)
+        } else {
+            "Plan has solvency issues.".into()
+        };
+
+        RetirementVerdict { works, summary, first_gap_year }
+    }
+}
+
 #[cfg(test)]
 mod ftc_queue_tests {
     use super::{FtcCarryoverQueue};

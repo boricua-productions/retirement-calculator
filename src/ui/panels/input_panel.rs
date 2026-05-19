@@ -149,12 +149,12 @@ impl Default for PositionRow {
             cost_basis:           String::new(),
             growth_pct:           String::new(),
             volatility_pct:       "18.0".into(),
-            accum_amount:         String::new(),
+            accum_amount:         "0".into(),
             accum_frequency:      "Monthly".into(),
             stop_at_retirement:   true,
             drip_enabled:         true,
             drip_reinvest_ticker: String::new(),
-            target_alloc_pct:     String::new(),
+            target_alloc_pct:     "0".into(),
             mgmt_expanded:        false,
             rebalance_date:       String::new(),
             asset_class:          "Stock".into(),
@@ -739,6 +739,7 @@ impl InputPanelState {
                 let drip_enabled = info["drip_enabled"].as_bool().unwrap_or(true);
                 let drip_reinvest_ticker = info["dividend_reinvest_target"]
                     .as_str().unwrap_or("").to_string();
+                let rebalance_date = info["rebalance_date"].as_str().unwrap_or("").to_string();
                 // V7.6 — Asset classification + detailed return profile (optional).
                 let asset_class = match info["asset_class"].as_str().unwrap_or("stock") {
                     "etf" | "ETF" | "Etf"                  => "ETF",
@@ -761,7 +762,7 @@ impl InputPanelState {
                 };
                 rows.push(PositionRow {
                     ticker: ticker.clone(), units, unit_value, cost_basis, growth_pct, volatility_pct,
-                    drip_enabled, drip_reinvest_ticker,
+                    drip_enabled, drip_reinvest_ticker, rebalance_date,
                     asset_class, pfic_regime,
                     use_detailed_profile,
                     cap_growth_pct:     pct_from_frac("cap_growth"),
@@ -901,12 +902,34 @@ impl InputPanelState {
 
         // ── Inject active management fields into positions (V6.0) ────────────
         {
-            // Build per-ticker target allocation lookup (fraction → percent string)
-            let mut target_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            // Build per-(account_key, ticker) target allocation lookup (fraction → percent string).
+            // Supports nested form {"Taxable": {"VTI": 0.60}} and flat legacy form {"VTI": 0.60}.
+            let mut target_map: std::collections::HashMap<(String, String), String> =
+                std::collections::HashMap::new();
             if let Value::Object(allocs) = &sets["target_allocations"] {
-                for (ticker, v) in allocs {
-                    if let Some(f) = v.as_f64() {
-                        target_map.insert(ticker.clone(), format!("{:.1}", f * 100.0));
+                let is_nested = allocs.values().next().map(|v| v.is_object()).unwrap_or(false);
+                if is_nested {
+                    for (account_key, inner_val) in allocs {
+                        if let Value::Object(inner) = inner_val {
+                            for (ticker, v) in inner {
+                                if let Some(f) = v.as_f64() {
+                                    target_map.insert(
+                                        (account_key.clone(), ticker.clone()),
+                                        format!("{:.1}", f * 100.0),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Flat legacy form: treat all tickers as Taxable.
+                    for (ticker, v) in allocs {
+                        if let Some(f) = v.as_f64() {
+                            target_map.insert(
+                                ("Taxable".into(), ticker.clone()),
+                                format!("{:.1}", f * 100.0),
+                            );
+                        }
                     }
                 }
             }
@@ -941,7 +964,7 @@ impl InputPanelState {
             for account in &mut accounts {
                 let sim_key = account_sim_key(&account.account_type).to_string();
                 for pos in &mut account.positions {
-                    if let Some(t) = target_map.get(&pos.ticker) {
+                    if let Some(t) = target_map.get(&(sim_key.clone(), pos.ticker.clone())) {
                         pos.target_alloc_pct = t.clone();
                     }
                     if let Some(entry) = accum_map.get(&(pos.ticker.clone(), sim_key.clone())) {
@@ -1286,6 +1309,9 @@ impl InputPanelState {
 
         if bad_u32(&self.bridge_months)        { bad.insert("bridge_months"); }
         if bad_f64(&self.war_chest_target_jpy) { bad.insert("war_chest_target_jpy"); }
+
+        if bad_optional_f64(&self.spouse_japan_salary_jpy)      { bad.insert("spouse_japan_salary_jpy"); }
+        if bad_optional_f64(&self.spouse_japan_misc_income_jpy) { bad.insert("spouse_japan_misc_income_jpy"); }
 
         bad
     }
@@ -1893,6 +1919,11 @@ impl InputPanelState {
                             pos.insert("return_profile".into(), Value::Object(prof));
                         }
                     }
+                    if !row.rebalance_date.is_empty() {
+                        if chrono::NaiveDate::parse_from_str(&row.rebalance_date, "%Y-%m-%d").is_ok() {
+                            pos.insert("rebalance_date".into(), Value::String(row.rebalance_date.clone()));
+                        }
+                    }
                     holdings_map.insert(row.ticker.clone(), Value::Object(pos));
 
                     if let Ok(uv) = row.unit_value.trim().parse::<f64>() {
@@ -1949,20 +1980,21 @@ impl InputPanelState {
             };
             settings.insert("rebalance_frequency_months".into(), Value::Number(freq_months.into()));
 
-            // target_allocations: collect from all positions, normalise to fraction
-            let mut alloc_map = serde_json::Map::new();
+            // target_allocations: nested by account — {account_key: {ticker: fraction}}
+            let mut outer_alloc: serde_json::Map<String, Value> = serde_json::Map::new();
             let mut accum_arr: Vec<Value> = Vec::new();
 
             for account in &self.accounts {
                 if account.account_type == "DC Plan" { continue; }
                 let sim_key = account_sim_key(&account.account_type);
+                let mut per_acct_alloc: serde_json::Map<String, Value> = serde_json::Map::new();
                 for pos in &account.positions {
                     if pos.ticker.is_empty() { continue; }
-                    // target allocation
+                    // target allocation (per-account)
                     if let Ok(pct) = pos.target_alloc_pct.trim().parse::<f64>() {
                         if pct > 0.0 {
                             if let Some(n) = serde_json::Number::from_f64(pct / 100.0) {
-                                alloc_map.insert(pos.ticker.clone(), Value::Number(n));
+                                per_acct_alloc.insert(pos.ticker.clone(), Value::Number(n));
                             }
                         }
                     }
@@ -1991,9 +2023,12 @@ impl InputPanelState {
                         }
                     }
                 }
+                if !per_acct_alloc.is_empty() {
+                    outer_alloc.insert(sim_key.to_string(), Value::Object(per_acct_alloc));
+                }
             }
-            if !alloc_map.is_empty() {
-                settings.insert("target_allocations".into(), Value::Object(alloc_map));
+            if !outer_alloc.is_empty() {
+                settings.insert("target_allocations".into(), Value::Object(outer_alloc));
             }
             settings.insert("accumulation_rules".into(), Value::Array(accum_arr));
         }
@@ -2092,9 +2127,18 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             FetchResult::PriceAndCagr { account_idx, position_idx, price, cagr } => {
                 state.fetch_state.pending.remove(&(account_idx, position_idx));
                 if account_idx < state.accounts.len() && position_idx < state.accounts[account_idx].positions.len() {
-                    let pos = &mut state.accounts[account_idx].positions[position_idx];
-                    pos.unit_value = format!("{:.2}", price);
-                    pos.growth_pct = format!("{:.1}", cagr * 100.0);
+                    // Apply result to the primary position AND to every other position
+                    // sharing the same ticker (cross-account dedup — V8.3).
+                    let ticker = state.accounts[account_idx].positions[position_idx].ticker.clone();
+                    for ai in 0..state.accounts.len() {
+                        for pi in 0..state.accounts[ai].positions.len() {
+                            if state.accounts[ai].positions[pi].ticker == ticker {
+                                state.fetch_state.pending.remove(&(ai, pi));
+                                state.accounts[ai].positions[pi].unit_value = format!("{:.2}", price);
+                                state.accounts[ai].positions[pi].growth_pct = format!("{:.1}", cagr * 100.0);
+                            }
+                        }
+                    }
                 }
             }
             FetchResult::DetailedProfile { account_idx, position_idx, profile, show_cap, show_nav, show_cg, show_er } => {
@@ -2274,7 +2318,9 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         .show(ui, |ui| {
 
         // ── Timing ───────────────────────────────────────────────────────────────
-        section(ui, "Timing");
+        section_collapsing(ui, "Timing",
+            ["start_date","end_date","retirement_date"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
         grid(ui, "g_timing", |ui| {
             vfield_tt(ui, "Start Date",      &mut state.start_date,      "YYYY-MM-DD", !errors.contains("start_date"),
                 "First simulated month. Defaults to today; back-date if you want pre-retirement years in the report.");
@@ -2349,8 +2395,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(4.0);
 
+        });
+
         // ── Economics ────────────────────────────────────────────────────────────
-        section(ui, "Economics");
+        section_collapsing(ui, "Economics",
+            ["inflation_us","inflation_japan"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
         grid(ui, "g_econ", |ui| {
             vfield_tt(ui, "USD/JPY Rate",          &mut state.usd_jpy_rate,   "0 = live fetch (primary JPY bridge)", true,
                 "Spot USD→JPY rate. 0 triggers a live fetch on simulation start. All cross-currency conversions key off this.");
@@ -2374,8 +2424,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             });
         }
 
+        });
+
         // ── Expenses ─────────────────────────────────────────────────────────────
-        section(ui, "Monthly Expenses (JPY)");
+        section_collapsing(ui, "Monthly Expenses (JPY)",
+            ["base_expense_jpy","min_expense_jpy","nhi_first_year_monthly_jpy"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
 
         ui.horizontal(|ui| {
             ui.label(RichText::new("Entry mode:").strong());
@@ -2466,8 +2520,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             });
         }
 
+        });
+
         // ── NHI Settings ─────────────────────────────────────────────────────────
-        section(ui, "NHI Settings (National Health Insurance)");
+        section_collapsing(ui, "NHI Settings (National Health Insurance)", 0, |ui| {
         ui.label(RichText::new(
             "Japan's NHI is assessed each June based on prior-year income, producing a \
              spike in the first post-retirement year. Use Automatic mode for a \
@@ -2635,8 +2691,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── Stage 10 — Long-Term Care Insurance (Kaigo Hoken) ────────────────────
-        section(ui, "Long-Term Care Insurance (介護保険)");
+        section_collapsing(ui, "Long-Term Care Insurance (介護保険)", 0, |ui| {
         ui.label(RichText::new(
             "Japan mandates Long-Term Care Insurance for all residents ≥ 40. From age 40-64 \
              it's bundled into NHI (already modeled above). From age 65+ it becomes a separate \
@@ -2695,8 +2753,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── US Tax Mitigation Strategy ───────────────────────────────────────────
-        section(ui, "US Tax Mitigation Strategy");
+        section_collapsing(ui, "US Tax Mitigation Strategy", 0, |ui| {
         ui.label(RichText::new("Strategy").strong());
         ui.horizontal(|ui| {
             ui.radio_value(&mut state.us_tax_strategy, UsTaxStrategy::FtcOnly,
@@ -2722,8 +2782,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         });
         ui.add_space(8.0);
 
+        });
+
         // ── US Tax Filing Status ─────────────────────────────────────────────────
-        section(ui, "US Tax Filing Status & State Residency");
+        section_collapsing(ui, "US Tax Filing Status & State Residency", 0, |ui| {
         ui.label(RichText::new("Filing Status").strong());
         ui.horizontal_wrapped(|ui| {
             for &status in ALL_FILING_STATUSES {
@@ -2761,8 +2823,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             );
         ui.add_space(8.0);
 
+        });
+
         // ── Japan Location ───────────────────────────────────────────────────────
-        section(ui, "Japan Location");
+        section_collapsing(ui, "Japan Location", 0, |ui| {
         ui.label(RichText::new(
             "Selects the resident tax (住民税) rate. Standard: 10% + ¥6,000/yr. Nagoya City (Aichi): 9.7%."
         ).small().color(Color32::GRAY));
@@ -2803,8 +2867,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── Tax Jurisdiction & Investment Accounts ───────────────────────────────
-        section(ui, "Tax Jurisdiction & Investment Accounts");
+        section_collapsing(ui, "Tax Jurisdiction & Investment Accounts", 0, |ui| {
 
         ui.label(RichText::new("Global Tax Jurisdiction").strong())
             .on_hover_text(
@@ -2946,6 +3012,24 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                 if ui.selectable_label(cur_jur == TaxProtocol::JapanOnly, "Japan Only").clicked(){ state.accounts[acct_idx].tax_jurisdiction = TaxProtocol::JapanOnly; }
                                 if ui.selectable_label(cur_jur == TaxProtocol::TaxFree,   "Tax Free").clicked()  { state.accounts[acct_idx].tax_jurisdiction = TaxProtocol::TaxFree; }
                             });
+
+                        // Per-account target alloc sum indicator (V8.3).
+                        if state.rebalance_enabled && state.accounts[acct_idx].account_type != "DC Plan" {
+                            let alloc_sum: f64 = state.accounts[acct_idx].positions.iter()
+                                .filter_map(|p| p.target_alloc_pct.trim().parse::<f64>().ok())
+                                .sum();
+                            let has_any = state.accounts[acct_idx].positions.iter()
+                                .any(|p| p.target_alloc_pct.trim().parse::<f64>().unwrap_or(0.0) > 0.0);
+                            if has_any {
+                                let (label, color) = if (alloc_sum - 100.0).abs() < 0.5 {
+                                    ("Σ = 100% ✓".to_string(), Color32::from_rgb(100, 220, 100))
+                                } else {
+                                    (format!("Σ = {:.0}%", alloc_sum), Color32::from_rgb(220, 180, 50))
+                                };
+                                ui.label(RichText::new(label).small().color(color))
+                                    .on_hover_text("Target allocation sum for this account. Should be 100% when rebalancing is active.");
+                            }
+                        }
 
                         if num_accounts > 1 {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -3532,23 +3616,32 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         if let Some(idx) = remove_account {
             state.accounts.remove(idx);
         }
-        // V7.11: Spawn background thread for price/CAGR fetch
+        // V7.11/V8.3: Spawn background thread for price/CAGR fetch (deduped by ticker).
         if let Some((ai, pi)) = auto_fill {
             if ai < state.accounts.len() && pi < state.accounts[ai].positions.len() {
                 let ticker = state.accounts[ai].positions[pi].ticker.clone();
                 if !ticker.is_empty() && !state.fetch_state.pending.contains_key(&(ai, pi)) {
-                    let tx = state.fetch_state.tx.clone();
-                    state.fetch_state.pending.insert((ai, pi), Instant::now());
-                    std::thread::spawn(move || {
-                        let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
-                        let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
-                        let _ = tx.send(FetchResult::PriceAndCagr {
-                            account_idx: ai,
-                            position_idx: pi,
-                            price,
-                            cagr,
-                        });
+                    // If another position with the same ticker is already being fetched,
+                    // just mark this position pending — the result handler will fill it.
+                    let already_fetching = state.accounts.iter().enumerate().any(|(oa, acct)| {
+                        acct.positions.iter().enumerate().any(|(op, pos)| {
+                            pos.ticker == ticker && state.fetch_state.pending.contains_key(&(oa, op))
+                        })
                     });
+                    state.fetch_state.pending.insert((ai, pi), Instant::now());
+                    if !already_fetching {
+                        let tx = state.fetch_state.tx.clone();
+                        std::thread::spawn(move || {
+                            let price = crate::engine::market_data::MarketDataService::fetch_current_price(&ticker);
+                            let cagr  = crate::engine::market_data::MarketDataService::fetch_10y_cagr(&ticker);
+                            let _ = tx.send(FetchResult::PriceAndCagr {
+                                account_idx: ai,
+                                position_idx: pi,
+                                price,
+                                cagr,
+                            });
+                        });
+                    }
                 }
             }
         }
@@ -3621,8 +3714,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── Family Demographics ──────────────────────────────────────────────────
-        section(ui, "Family Demographics");
+        section_collapsing(ui, "Family Demographics",
+            ["spouse_japan_salary_jpy","spouse_japan_misc_income_jpy"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
         ui.label(RichText::new(
             "User and (optional) spouse birthdates drive senior deduction add-ons, FERS/SS/Nenkin start ages, \
              and Spouse SS / Spouse Nenkin eligibility (V6.6). Dependent children carry full birthdates.").small().color(Color32::GRAY));
@@ -3721,11 +3818,13 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                 ).small().color(Color32::from_rgb(255, 220, 100)));
                 grid(ui, "g_spouse_japan", |ui| {
                     vfield_tt(ui, "Spouse Japan Salary (JPY/yr)",
-                        &mut state.spouse_japan_salary_jpy, "e.g. 8000000", true,
+                        &mut state.spouse_japan_salary_jpy, "e.g. 8000000",
+                        !errors.contains("spouse_japan_salary_jpy"),
                         "Annual Japan employment income earned by the NRA spouse (yen). \
                          Converted to USD at the simulation FX rate and added to gross ordinary income.");
                     vfield_tt(ui, "Spouse Japan Misc Income (JPY/yr)",
-                        &mut state.spouse_japan_misc_income_jpy, "e.g. 0", false,
+                        &mut state.spouse_japan_misc_income_jpy, "e.g. 0",
+                        !errors.contains("spouse_japan_misc_income_jpy"),
                         "Other Japan-source income (freelance, rental, etc.) earned by the NRA spouse. \
                          Pooled with spouse salary on the US §6013(g) return.");
                 });
@@ -3782,8 +3881,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── VA Disability Profile ────────────────────────────────────────────────
-        section(ui, "VA Disability Profile");
+        section_collapsing(ui, "VA Disability Profile",
+            errors.contains("va_disability_rating") as usize,
+            |ui| {
         ui.label(RichText::new("(Using Official 2026 VA Rates)").weak().small());
         ui.label(RichText::new(
             "VA disability compensation is tax-free (US federal, state, and Japan resident \
@@ -3890,8 +3993,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── FERS Pension ─────────────────────────────────────────────────────────
-        section(ui, "FERS Pension");
+        section_collapsing(ui, "FERS Pension",
+            ["fers_monthly_usd","fers_start_age"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
         grid(ui, "g_fers", |ui| {
             vfield(ui, "FERS Monthly (USD)",      &mut state.fers_monthly_usd, "e.g. 794.55 or 0 / N/A", !errors.contains("fers_monthly_usd"));
             vfield(ui, "FERS Expected Start Age", &mut state.fers_start_age,   "e.g. 62",                 !errors.contains("fers_start_age"));
@@ -3917,8 +4024,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             );
         ui.add_space(8.0);
 
+        });
+
         // ── Military Retired Pay ─────────────────────────────────────────────────
-        section(ui, "Military Retired Pay");
+        section_collapsing(ui, "Military Retired Pay", 0, |ui| {
         ui.label(RichText::new(
             "Military retired pay is taxable under the US-Japan Tax Treaty savings clause. Set to 0 to disable."
         ).small().color(Color32::GRAY));
@@ -3935,8 +4044,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         });
         ui.add_space(8.0);
 
+        });
+
         // ── Social Security ──────────────────────────────────────────────────────
-        section(ui, "US Social Security (Totalization Pillar)");
+        section_collapsing(ui, "US Social Security (Totalization Pillar)",
+            ["ss_monthly_usd","ss_start_age"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
         ui.label(RichText::new(
             "SS is subject to the US Savings Clause — taxable in the US and credited in Japan. Leave at $0 if not applicable."
         ).small().color(Color32::GRAY));
@@ -3977,8 +4090,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── SSDI ─────────────────────────────────────────────────────────────────
-        section(ui, "SSDI — Social Security Disability Insurance");
+        section_collapsing(ui, "SSDI — Social Security Disability Insurance",
+            errors.contains("ssdi_monthly_usd") as usize,
+            |ui| {
         ui.label(RichText::new(
             "SSDI is taxed via the IRS Combined Income rule (up to 85% taxable above $44K MFJ). \
              For Japan resident tax, it is routed through the public pension deduction (公的年金等控除). \
@@ -3990,8 +4107,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         });
         ui.add_space(8.0);
 
+        });
+
         // ── Nenkin ───────────────────────────────────────────────────────────────
-        section(ui, "Japanese Nenkin Income (Totalization Pillar)");
+        section_collapsing(ui, "Japanese Nenkin Income (Totalization Pillar)",
+            ["nenkin_income_monthly_jpy","nenkin_income_start_age"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
         ui.label(RichText::new(
             "Nenkin pension income (separate from contribution expenses). Leave at ¥0 if not applicable."
         ).small().color(Color32::GRAY));
@@ -4032,8 +4153,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── Financial Buffers ────────────────────────────────────────────────────
-        section(ui, "Financial Buffers");
+        section_collapsing(ui, "Financial Buffers",
+            ["war_chest_target_jpy","bridge_months"].iter().filter(|k| errors.contains(**k)).count(),
+            |ui| {
         ui.label(RichText::new(
             "Cash buffers protect your portfolio from forced liquidation during market downturns. \
              Choose which buffers to fund at retirement based on your situation.")
@@ -4085,8 +4210,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── Family Financial Planning (V7.3 Education / V7.5 Gift Sink) ──────────
-        section(ui, "Family Financial Planning (Optional)");
+        section_collapsing(ui, "Family Financial Planning (Optional)", 0, |ui| {
         ui.label(RichText::new(
             "Education funding and inter-generational gifting are optional. Leave the \
              toggles off if you don't plan to fund schooling or pass money to heirs.")
@@ -4133,8 +4260,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── Estate Planning (Stage 07) ────────────────────────────────────────────
-        section(ui, "Estate Planning");
+        section_collapsing(ui, "Estate Planning", 0, |ui| {
         ui.label(RichText::new(
             "Japan taxes inheritance heavily — up to 55%. If you're a long-term resident, \
              your global assets are in scope. Use this to project the bill your heirs will \
@@ -4210,9 +4339,11 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         }
         ui.add_space(8.0);
 
+        });
+
         // ── Market Simulation ────────────────────────────────────────────────────
         // V6.6: FX Drift moved into the Economics section (under USD/JPY).
-        section(ui, "Market Simulation");
+        section_collapsing(ui, "Market Simulation", 0, |ui| {
         ui.checkbox(&mut state.recession_enabled, "Simulate Recession at Retirement");
         if state.recession_enabled {
             grid(ui, "g_rec", |ui| {
@@ -4285,8 +4416,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             });
         ui.add_space(8.0);
 
+        });
+
         // ── RSU Settings ─────────────────────────────────────────────────────────
-        section(ui, "RSU Settings");
+        section_collapsing(ui, "RSU Settings", 0, |ui| {
         ui.label(RichText::new("RSU Tax Handling").strong());
         ui.horizontal(|ui| {
             let is_salary = state.rsu_tax_handling == "SALARY";
@@ -4555,6 +4688,8 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         if ui.small_button("+ Add RSU Award").clicked() {
             state.rsu_awards.push(RsuRow::default());
         }
+        }); // RSU Settings
+
         ui.add_space(16.0);
     }); // ScrollArea
 }
@@ -4834,11 +4969,20 @@ fn apply_nhi_rates_from_location(state: &mut InputPanelState) {
     state.nhi_rates_applied_for  = Some((state.prefecture.clone(), state.city.clone()));
 }
 
-fn section(ui: &mut Ui, title: &str) {
+fn section_collapsing(ui: &mut Ui, title: &str, error_count: usize, add_contents: impl FnOnce(&mut Ui)) {
     ui.add_space(8.0);
-    ui.label(RichText::new(title).strong().size(13.0));
-    ui.separator();
-    ui.add_space(2.0);
+    let header_text = if error_count == 0 {
+        RichText::new(title).strong().size(13.0)
+    } else {
+        RichText::new(format!("{title}  ⛔ {error_count}")).strong().size(13.0).color(Color32::from_rgb(220, 60, 60))
+    };
+    egui::CollapsingHeader::new(header_text)
+        .id_salt(title)
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.add_space(2.0);
+            add_contents(ui);
+        });
 }
 
 fn grid(ui: &mut Ui, id: &str, add_rows: impl FnOnce(&mut Ui)) {

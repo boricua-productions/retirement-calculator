@@ -1,10 +1,15 @@
 use egui::{Color32, RichText, Ui};
-use crate::models::snapshot::SimResults;
+use crate::models::snapshot::{AnnualSnapshot, SimResults};
 use crate::simulation::monte_carlo::MarcoPoloResults;
 
 fn fmt_usd(v: f64) -> String { format!("${:.0}", v) }
 fn fmt_jpy(v: f64) -> String { format!("¥{:.0}", v) }
 fn fmt_pct(v: f64) -> String { format!("{:.1}%", v * 100.0) }
+fn fmt_x(v: f64)   -> String { format!("{:.2}×", v) }
+
+fn total_wealth_usd(s: &AnnualSnapshot) -> f64 {
+    s.brokerage_usd + s.roth_usd + s.dc_jpy / s.usd_jpy.max(1.0)
+}
 
 /// Renders the Comparison tab: side-by-side Baseline vs Comparison metrics,
 /// plus the Marco Polo (Monte Carlo) P10/P50/P90 trajectories when available.
@@ -17,6 +22,14 @@ pub fn show(
     ui.push_id("comparison_view", |ui| {
         show_inner(ui, baseline, comparison, marco_polo);
     });
+}
+
+fn section_label(ui: &mut Ui, label: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(label).strong().color(Color32::from_rgb(160, 200, 240)));
+    ui.label("");
+    ui.label("");
+    ui.end_row();
 }
 
 fn show_inner(
@@ -40,7 +53,6 @@ fn show_inner(
         );
         ui.add_space(8.0);
 
-        // Table: Year | P10 | P50 | P90
         egui::Grid::new("mp_grid")
             .num_columns(4)
             .spacing([24.0, 4.0])
@@ -92,6 +104,51 @@ fn show_inner(
         _ => {}
     }
 
+    // ── Pre-compute derived metrics ───────────────────────────────────────────
+    let snap_b = baseline.as_ref().and_then(|r| r.annual_summary.last());
+    let snap_c = comparison.as_ref().and_then(|r| r.annual_summary.last());
+
+    let verdict_b = baseline.as_ref().map(|r| r.retirement_verdict());
+    let verdict_c = comparison.as_ref().map(|r| r.retirement_verdict());
+
+    // Average dividend coverage ratio (years where ratio > 0)
+    let avg_dcr = |res: &SimResults| -> f64 {
+        let v: Vec<f64> = res.annual_summary.iter()
+            .filter(|s| s.div_coverage_ratio > 0.0)
+            .map(|s| s.div_coverage_ratio)
+            .collect();
+        if v.is_empty() { 0.0 } else { v.iter().sum::<f64>() / v.len() as f64 }
+    };
+
+    // Cumulative US federal + state tax (USD)
+    let cum_us_tax = |res: &SimResults| -> f64 {
+        res.annual_summary.iter().map(|s| s.us_tax_charged_usd).sum()
+    };
+
+    // Cumulative Japan resident tax + NHI (JPY)
+    let cum_jp_tax = |res: &SimResults| -> f64 {
+        res.annual_summary.iter()
+            .map(|s| s.japan_tax_charged_jpy + s.nhi_obligation_jpy)
+            .sum()
+    };
+
+    // Worst single-year wealth drawdown (USD, negative = loss)
+    let worst_drawdown = |res: &SimResults| -> f64 {
+        res.annual_summary.windows(2).map(|w| {
+            total_wealth_usd(&w[1]) - total_wealth_usd(&w[0])
+        }).fold(0.0_f64, f64::min)
+    };
+
+    // Years of expense coverage at final year (final_wealth / annual_base_expenses)
+    let years_headroom = |res: &SimResults| -> f64 {
+        let last = match res.annual_summary.last() { Some(s) => s, None => return 0.0 };
+        let fx = last.usd_jpy.max(1.0);
+        let annual_exp_usd = last.base_exp_jpy * 12.0 / fx;
+        if annual_exp_usd < 1.0 { return 0.0; }
+        total_wealth_usd(last) / annual_exp_usd
+    };
+
+    // ── Comparison grid ────────────────────────────────────────────────────────
     let col_w = 200.0;
 
     egui::Grid::new("cmp_grid")
@@ -112,49 +169,80 @@ fn show_inner(
                 ui.end_row();
             };
 
-            let snap_b = baseline.as_ref().and_then(|r| r.annual_summary.last());
-            let snap_c = comparison.as_ref().and_then(|r| r.annual_summary.last());
+            let dash = || "—".to_string();
 
-            let get_b = |f: &dyn Fn(&crate::models::snapshot::AnnualSnapshot) -> String| -> String {
-                snap_b.map(f).unwrap_or_else(|| "—".into())
+            // ── Plan Health ──────────────────────────────────────────────────
+            section_label(ui, "Plan Health");
+
+            // Verdict
+            let render_verdict = |ui: &mut Ui, vopt: &Option<crate::models::snapshot::RetirementVerdict>| {
+                match vopt {
+                    None => { ui.label("—"); }
+                    Some(v) => {
+                        let (icon, color) = if v.works {
+                            ("✅", Color32::from_rgb(100, 220, 100))
+                        } else {
+                            ("❌", Color32::from_rgb(220, 100, 100))
+                        };
+                        ui.label(RichText::new(format!("{} {}", icon, v.summary))
+                            .color(color));
+                    }
+                }
             };
-            let get_c = |f: &dyn Fn(&crate::models::snapshot::AnnualSnapshot) -> String| -> String {
-                snap_c.map(f).unwrap_or_else(|| "—".into())
-            };
+            ui.label(RichText::new("Verdict").strong());
+            render_verdict(ui, &verdict_b);
+            render_verdict(ui, &verdict_c);
+            ui.end_row();
 
             row(ui, "Simulation Years",
-                baseline.as_ref().map(|r| r.annual_summary.len().to_string()).unwrap_or_else(|| "—".into()),
-                comparison.as_ref().map(|r| r.annual_summary.len().to_string()).unwrap_or_else(|| "—".into()),
+                baseline.as_ref().map(|r| r.annual_summary.len().to_string()).unwrap_or_else(dash),
+                comparison.as_ref().map(|r| r.annual_summary.len().to_string()).unwrap_or_else(dash),
             );
             row(ui, "Final Year",
-                get_b(&|s| s.year.to_string()),
-                get_c(&|s| s.year.to_string()),
+                snap_b.map(|s| s.year.to_string()).unwrap_or_else(dash),
+                snap_c.map(|s| s.year.to_string()).unwrap_or_else(dash),
             );
+
+            // Solvency warnings count
+            let warn_b = baseline.as_ref().map(|r| r.gap_warnings.len()).unwrap_or(0);
+            let warn_c = comparison.as_ref().map(|r| r.gap_warnings.len()).unwrap_or(0);
+            row(ui, "Solvency Warnings",
+                baseline.as_ref().map(|_| warn_b.to_string()).unwrap_or_else(dash),
+                comparison.as_ref().map(|_| warn_c.to_string()).unwrap_or_else(dash),
+            );
+
+            // ── Portfolio ────────────────────────────────────────────────────
+            section_label(ui, "Portfolio (End of Horizon)");
+
             row(ui, "Ending Taxable Portfolio",
-                get_b(&|s| fmt_usd(s.brokerage_usd)),
-                get_c(&|s| fmt_usd(s.brokerage_usd)),
+                snap_b.map(|s| fmt_usd(s.brokerage_usd)).unwrap_or_else(dash),
+                snap_c.map(|s| fmt_usd(s.brokerage_usd)).unwrap_or_else(dash),
             );
             row(ui, "Ending Roth IRA",
-                get_b(&|s| fmt_usd(s.roth_usd)),
-                get_c(&|s| fmt_usd(s.roth_usd)),
+                snap_b.map(|s| fmt_usd(s.roth_usd)).unwrap_or_else(dash),
+                snap_c.map(|s| fmt_usd(s.roth_usd)).unwrap_or_else(dash),
             );
             row(ui, "Ending DC Plan",
-                get_b(&|s| fmt_jpy(s.dc_jpy)),
-                get_c(&|s| fmt_jpy(s.dc_jpy)),
+                snap_b.map(|s| fmt_jpy(s.dc_jpy)).unwrap_or_else(dash),
+                snap_c.map(|s| fmt_jpy(s.dc_jpy)).unwrap_or_else(dash),
             );
             row(ui, "Final FX Rate",
-                get_b(&|s| format!("{:.2} ¥/$", s.usd_jpy)),
-                get_c(&|s| format!("{:.2} ¥/$", s.usd_jpy)),
+                snap_b.map(|s| format!("{:.2} ¥/$", s.usd_jpy)).unwrap_or_else(dash),
+                snap_c.map(|s| format!("{:.2} ¥/$", s.usd_jpy)).unwrap_or_else(dash),
             );
 
-            // Ending wealth (taxable + roth, in USD)
-            let ew_b = snap_b.map(|s| s.brokerage_usd + s.roth_usd).unwrap_or(0.0);
-            let ew_c = snap_c.map(|s| s.brokerage_usd + s.roth_usd).unwrap_or(0.0);
+            // Ending wealth with diff color
+            let ew_b = snap_b.map(|s| total_wealth_usd(s)).unwrap_or(0.0);
+            let ew_c = snap_c.map(|s| total_wealth_usd(s)).unwrap_or(0.0);
             let diff = ew_c - ew_b;
-            let diff_color = if diff >= 0.0 { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(220, 100, 100) };
+            let diff_color = if diff >= 0.0 {
+                Color32::from_rgb(100, 220, 100)
+            } else {
+                Color32::from_rgb(220, 100, 100)
+            };
 
-            ui.label(RichText::new("Ending Wealth (USD)").strong());
-            ui.label(fmt_usd(ew_b));
+            ui.label(RichText::new("Ending Wealth (USD-equiv)").strong());
+            ui.label(if baseline.is_some() { fmt_usd(ew_b) } else { "—".into() });
             if comparison.is_some() {
                 ui.label(RichText::new(format!("{} ({:+.0})", fmt_usd(ew_c), diff)).color(diff_color));
             } else {
@@ -162,22 +250,121 @@ fn show_inner(
             }
             ui.end_row();
 
-            // Cumulative NHI paid
+            // Years of expense headroom
+            ui.label(RichText::new("Years of Expense Headroom").strong());
+            ui.label(baseline.as_ref().map(|r| format!("{:.1} yr", years_headroom(r))).unwrap_or_else(dash));
+            if comparison.is_some() {
+                let yh_b = baseline.as_ref().map(years_headroom).unwrap_or(0.0);
+                let yh_c = comparison.as_ref().map(years_headroom).unwrap_or(0.0);
+                let yh_diff = yh_c - yh_b;
+                let col = if yh_diff >= 0.0 { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(220, 100, 100) };
+                ui.label(RichText::new(format!("{:.1} yr ({:+.1})", yh_c, yh_diff)).color(col));
+            } else {
+                ui.label(comparison.as_ref().map(|r| format!("{:.1} yr", years_headroom(r))).unwrap_or_else(dash));
+            }
+            ui.end_row();
+
+            // ── Cash Flow ────────────────────────────────────────────────────
+            section_label(ui, "Cash Flow");
+
+            // Average div coverage
+            ui.label(RichText::new("Avg Dividend Coverage").strong());
+            ui.label(baseline.as_ref().map(|r| fmt_x(avg_dcr(r))).unwrap_or_else(dash));
+            if comparison.is_some() {
+                let dc_b = baseline.as_ref().map(|r| avg_dcr(r)).unwrap_or(0.0);
+                let dc_c = comparison.as_ref().map(|r| avg_dcr(r)).unwrap_or(0.0);
+                let col = if dc_c >= dc_b { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(220, 100, 100) };
+                ui.label(RichText::new(format!("{} ({:+.2}×)", fmt_x(dc_c), dc_c - dc_b)).color(col));
+            } else {
+                ui.label(comparison.as_ref().map(|r| fmt_x(avg_dcr(r))).unwrap_or_else(dash));
+            }
+            ui.end_row();
+
+            // Worst-year drawdown
+            ui.label(RichText::new("Worst-Year Drawdown (USD)").strong());
+            ui.label(baseline.as_ref().map(|r| fmt_usd(worst_drawdown(r))).unwrap_or_else(dash));
+            if comparison.is_some() {
+                let wd_b = baseline.as_ref().map(|r| worst_drawdown(r)).unwrap_or(0.0);
+                let wd_c = comparison.as_ref().map(|r| worst_drawdown(r)).unwrap_or(0.0);
+                // Less negative = better
+                let col = if wd_c >= wd_b { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(220, 100, 100) };
+                ui.label(RichText::new(format!("{} ({:+.0})", fmt_usd(wd_c), wd_c - wd_b)).color(col));
+            } else {
+                ui.label(comparison.as_ref().map(|r| fmt_usd(worst_drawdown(r))).unwrap_or_else(dash));
+            }
+            ui.end_row();
+
+            // ── Tax Drag ─────────────────────────────────────────────────────
+            section_label(ui, "Cumulative Tax Drag");
+
+            // US tax
+            ui.label(RichText::new("US Federal + State Tax (USD)").strong());
+            ui.label(baseline.as_ref().map(|r| fmt_usd(cum_us_tax(r))).unwrap_or_else(dash));
+            if comparison.is_some() {
+                let t_b = baseline.as_ref().map(|r| cum_us_tax(r)).unwrap_or(0.0);
+                let t_c = comparison.as_ref().map(|r| cum_us_tax(r)).unwrap_or(0.0);
+                let col = if t_c <= t_b { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(220, 100, 100) };
+                ui.label(RichText::new(format!("{} ({:+.0})", fmt_usd(t_c), t_c - t_b)).color(col));
+            } else {
+                ui.label(comparison.as_ref().map(|r| fmt_usd(cum_us_tax(r))).unwrap_or_else(dash));
+            }
+            ui.end_row();
+
+            // Japan tax + NHI
+            ui.label(RichText::new("Japan Resident Tax + NHI (JPY)").strong());
+            ui.label(baseline.as_ref().map(|r| fmt_jpy(cum_jp_tax(r))).unwrap_or_else(dash));
+            if comparison.is_some() {
+                let t_b = baseline.as_ref().map(|r| cum_jp_tax(r)).unwrap_or(0.0);
+                let t_c = comparison.as_ref().map(|r| cum_jp_tax(r)).unwrap_or(0.0);
+                let col = if t_c <= t_b { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(220, 100, 100) };
+                ui.label(RichText::new(format!("{} ({:+.0})", fmt_jpy(t_c), t_c - t_b)).color(col));
+            } else {
+                ui.label(comparison.as_ref().map(|r| fmt_jpy(cum_jp_tax(r))).unwrap_or_else(dash));
+            }
+            ui.end_row();
+
+            // Total NHI (kept for backward compat)
             let nhi_b: f64 = baseline.as_ref()
                 .map(|r| r.annual_summary.iter().map(|s| s.nhi_obligation_jpy).sum())
                 .unwrap_or(0.0);
             let nhi_c: f64 = comparison.as_ref()
                 .map(|r| r.annual_summary.iter().map(|s| s.nhi_obligation_jpy).sum())
                 .unwrap_or(0.0);
-            row(ui, "Total NHI Paid",
+            row(ui, "  of which: NHI (JPY)",
                 if baseline.is_some() { fmt_jpy(nhi_b) } else { "—".into() },
                 if comparison.is_some() { fmt_jpy(nhi_c) } else { "—".into() },
             );
-
-            // Solvency warnings
-            row(ui, "Solvency Warnings",
-                baseline.as_ref().map(|r| r.gap_warnings.len().to_string()).unwrap_or_else(|| "—".into()),
-                comparison.as_ref().map(|r| r.gap_warnings.len().to_string()).unwrap_or_else(|| "—".into()),
-            );
         });
+
+    // ── Solvency warnings expandable lists (outside the grid) ─────────────────
+    ui.add_space(12.0);
+    let show_warnings = |ui: &mut Ui, label: &str, res: &SimResults, color: Color32| {
+        if res.gap_warnings.is_empty() { return; }
+        egui::CollapsingHeader::new(
+            RichText::new(format!("{} ⚠ {} solvency warning(s)", label, res.gap_warnings.len()))
+                .color(color)
+        )
+        .id_salt(format!("cmp_warn_{}", label))
+        .show(ui, |ui| {
+            for (i, w) in res.gap_warnings.iter().enumerate().take(10) {
+                ui.label(RichText::new(format!(
+                    "{}. {} — gap ¥{:.0} (absorbed by: {})",
+                    i + 1, w.date, w.gap_jpy.abs(), w.absorbed_by
+                )).small().color(Color32::from_rgb(255, 200, 80)));
+            }
+            if res.gap_warnings.len() > 10 {
+                ui.label(RichText::new(format!(
+                    "… and {} more (see Annual Table for full detail)",
+                    res.gap_warnings.len() - 10
+                )).small().color(Color32::GRAY));
+            }
+        });
+    };
+
+    if let Some(b) = baseline.as_ref() {
+        show_warnings(ui, "Baseline", b, Color32::from_rgb(100, 180, 220));
+    }
+    if let Some(c) = comparison.as_ref() {
+        show_warnings(ui, "Comparison", c, Color32::from_rgb(220, 160, 60));
+    }
 }

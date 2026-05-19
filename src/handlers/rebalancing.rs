@@ -16,11 +16,12 @@ pub fn is_rebalance_month(date: NaiveDate, frequency_months: u32) -> bool {
     abs_month % freq == 0
 }
 
-/// Target-state rebalancing engine (V6.0).
+/// Target-state rebalancing engine (V6.0, extended V8.3 to per-account).
 ///
-/// Sells overweight positions in the taxable account and buys underweight ones
-/// with the proceeds. Capital gains on sells are approximated at 15% LTCG.
-/// Only the "Taxable" account is rebalanced; DC/Roth use separate triggers.
+/// Sells overweight positions and buys underweight ones for each account that
+/// has target allocations set. Capital gains on sells are approximated at 15%
+/// LTCG for taxable accounts; tax-advantaged accounts (Roth, IRA, NISA, iDeCo,
+/// DC) pay no rebalancing tax.
 pub fn handle_rebalancing(state: &mut SimState, cfg: &Config) {
     if !cfg.rebalance_enabled || cfg.target_allocations.is_empty() {
         return;
@@ -29,76 +30,93 @@ pub fn handle_rebalancing(state: &mut SimState, cfg: &Config) {
         return;
     }
 
-    let fx = state.current_fx;
     let current_date = state.date;
+    let fx = state.current_fx;
 
-    let total_value = state.accounts.get("Taxable")
-        .map(|a| a.total_value(fx))
-        .unwrap_or(0.0);
-    if total_value <= 0.0 {
-        return;
-    }
+    // Collect account names to avoid borrowing cfg and state simultaneously.
+    let accounts_to_rebalance: Vec<(String, std::collections::HashMap<String, f64>)> =
+        cfg.target_allocations
+            .iter()
+            .filter(|(_, alloc)| !alloc.is_empty())
+            .map(|(acct, alloc)| (acct.clone(), alloc.clone()))
+            .collect();
 
-    // Compute per-ticker deltas (positive = need to buy, negative = need to sell).
-    let deltas: Vec<(String, f64)> = cfg.target_allocations.iter().map(|(ticker, &weight)| {
-        let current = state.accounts.get("Taxable")
-            .and_then(|a| a.assets.get(ticker.as_str()))
-            .map(|a| a.market_value())
+    for (account_name, alloc_map) in &accounts_to_rebalance {
+        let total_value = state.accounts.get(account_name.as_str())
+            .map(|a| a.total_value(fx))
             .unwrap_or(0.0);
-        let target = total_value * weight;
-        (ticker.clone(), target - current)
-    }).collect();
+        if total_value <= 0.0 { continue; }
 
-    // Pass 1: sells.
-    let mut proceeds = 0.0f64;
-    for (ticker, delta) in &deltas {
-        if *delta >= 0.0 { continue; }
-        let sell_amount = {
-            let avail = state.accounts.get("Taxable")
+        // Tax-advantaged accounts: Roth, traditional IRA, NISA, iDeCo, DC Plan.
+        let is_tax_advantaged = matches!(account_name.as_str(),
+            "Roth" | "IRA" | "NISA" | "iDeCo" | "DC");
+
+        let deltas: Vec<(String, f64)> = alloc_map.iter().map(|(ticker, &weight)| {
+            let current = state.accounts.get(account_name.as_str())
                 .and_then(|a| a.assets.get(ticker.as_str()))
                 .map(|a| a.market_value())
                 .unwrap_or(0.0);
-            (-delta).min(avail)
-        };
-        if sell_amount < 1.0 { continue; }
+            (ticker.clone(), total_value * weight - current)
+        }).collect();
 
-        if let Some(acc) = state.accounts.get_mut("Taxable") {
-            let gain_bd = acc.sell_value(ticker, sell_amount, current_date);
-            let tax = gain_bd.long_term_gain.max(0.0) * 0.15
-                    + gain_bd.short_term_gain.max(0.0) * 0.22;
-            let net = gain_bd.proceeds - tax;
-            state.stats.year_cap_gains += gain_bd.total_gain().max(0.0);
-            proceeds += net;
-            info!("   [Rebalance] Sold ${:.0} of {} (LTG ${:.0}, tax ${:.0})",
-                sell_amount, ticker, gain_bd.long_term_gain, tax);
+        // Pass 1: sells.
+        let mut proceeds = 0.0f64;
+        for (ticker, delta) in &deltas {
+            if *delta >= 0.0 { continue; }
+            let sell_amount = {
+                let avail = state.accounts.get(account_name.as_str())
+                    .and_then(|a| a.assets.get(ticker.as_str()))
+                    .map(|a| a.market_value())
+                    .unwrap_or(0.0);
+                (-delta).min(avail)
+            };
+            if sell_amount < 1.0 { continue; }
+
+            if let Some(acc) = state.accounts.get_mut(account_name.as_str()) {
+                let gain_bd = acc.sell_value(ticker, sell_amount, current_date);
+                let tax = if is_tax_advantaged {
+                    0.0
+                } else {
+                    gain_bd.long_term_gain.max(0.0) * 0.15
+                    + gain_bd.short_term_gain.max(0.0) * 0.22
+                };
+                let net = gain_bd.proceeds - tax;
+                state.stats.year_cap_gains += gain_bd.total_gain().max(0.0);
+                proceeds += net;
+                info!("   [Rebalance:{}] Sold ${:.0} of {} (LTG ${:.0}, tax ${:.0})",
+                    account_name, sell_amount, ticker, gain_bd.long_term_gain, tax);
+            }
         }
-    }
 
-    // Pass 2: buys, proportional to shortfall.
-    let total_buy_need: f64 = deltas.iter()
-        .filter(|(_, d)| *d > 0.0)
-        .map(|(_, d)| *d)
-        .sum::<f64>()
-        .max(1e-9);
+        // Pass 2: buys, proportional to shortfall.
+        let total_buy_need: f64 = deltas.iter()
+            .filter(|(_, d)| *d > 0.0)
+            .map(|(_, d)| *d)
+            .sum::<f64>()
+            .max(1e-9);
 
-    for (ticker, delta) in &deltas {
-        if *delta <= 0.0 || proceeds < 1.0 { continue; }
-        let buy_amount = (proceeds * (*delta / total_buy_need)).min(proceeds);
-        if buy_amount < 1.0 { continue; }
+        for (ticker, delta) in &deltas {
+            if *delta <= 0.0 || proceeds < 1.0 { continue; }
+            let buy_amount = (proceeds * (*delta / total_buy_need)).min(proceeds);
+            if buy_amount < 1.0 { continue; }
 
-        let price = state.accounts.get("Taxable")
-            .and_then(|a| a.assets.get(ticker.as_str()))
-            .map(|a| a.price)
-            .unwrap_or_else(|| MarketDataService::fallback_price(ticker));
-        let growth = cfg.growth_rates_annual.get(ticker.as_str())
-            .copied()
-            .unwrap_or_else(|| MarketDataService::fallback_growth(ticker));
+            let price = state.accounts.get(account_name.as_str())
+                .and_then(|a| a.assets.get(ticker.as_str()))
+                .map(|a| a.price)
+                .unwrap_or_else(|| MarketDataService::fallback_price(ticker));
+            let growth = cfg.growth_rates_annual.get(ticker.as_str())
+                .copied()
+                .unwrap_or_else(|| MarketDataService::fallback_growth(ticker));
+            let account_fx = state.accounts.get(account_name.as_str())
+                .map(|a| if matches!(a.currency, crate::models::assets::Currency::Jpy) { 1.0 } else { fx })
+                .unwrap_or(fx);
 
-        if let Some(acc) = state.accounts.get_mut("Taxable") {
-            acc.buy_with_fx(ticker, buy_amount, current_date, price, growth, fx);
+            if let Some(acc) = state.accounts.get_mut(account_name.as_str()) {
+                acc.buy_with_fx(ticker, buy_amount, current_date, price, growth, account_fx);
+            }
+            proceeds -= buy_amount;
+            info!("   [Rebalance:{}] Bought ${:.0} of {}", account_name, buy_amount, ticker);
         }
-        proceeds -= buy_amount;
-        info!("   [Rebalance] Bought ${:.0} of {}", buy_amount, ticker);
     }
 }
 

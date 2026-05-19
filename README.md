@@ -1,4 +1,4 @@
-# Retirement Calculator — V8.2: UX Clarity Pass
+# Retirement Calculator — V8.3: Input UX & Diagnostics Polish
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -22,7 +22,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 8.2.0 (Internal Logic: V8.2 — UX Clarity Pass)
+> **Version:** Cargo package 8.3.0 (Internal Logic: V8.3 — Input UX & Diagnostics Polish)
 ---
 
 ## Beginner Quick Start
@@ -58,6 +58,8 @@ The Input Config tab is the main control surface. Fields accept plain numbers un
 says otherwise. For optional income streams, use `0` when that income does not apply.
 
 ### Input Config Field Guide
+
+*(V8.3)* Each section below is a collapsible header in the UI — click to collapse a finished section and shrink the scroll. Sections containing invalid fields show a red `⛔ N` count in the header so you can locate problems at a glance. All sections are open by default on load.
 
 #### Timing
 
@@ -147,9 +149,9 @@ The model automatically handles the smooth transition at age 65: the NHI nursing
 | **Volatility %** | Expected annual volatility used by Marco Polo mode. |
 | **DRIP** | Reinvest dividends instead of routing them to cash. |
 | **Dividend Reinvest Target** | Optional ticker to receive reinvested dividends. |
-| **Target Alloc %** | Desired allocation for periodic target-state rebalancing. |
-| **Rebalance Date** | Optional per-position one-time rebalance date. Overrides global rebalancing for this position. The Timing section displays all configured rebalance schedules and warns if any occur before retirement. |
-| **Accum $/mo** | Scheduled monthly purchase amount during accumulation. |
+| **Target Alloc %** | Desired allocation for periodic target-state rebalancing. *(V8.3)* Allocations are stored per-account so the same ticker can have different targets in Taxable vs. Roth. |
+| **Rebalance Date** | Optional per-position one-time rebalance date. Overrides global rebalancing for this position. *(V8.3)* The date is now persisted on the holding entry and round-trips correctly through Save→Reload. The Timing section displays all configured rebalance schedules and warns if any occur before retirement. |
+| **Accum $/mo** | Scheduled monthly purchase amount during accumulation. *(V8.3)* New rows display `0` instead of blank; enter a positive USD amount to activate a monthly contribution rule. |
 | **Freq** | How often the scheduled purchase fires: monthly, quarterly, or annually. |
 | **Stop at Retirement** | Stops scheduled buys once retirement begins. |
 | **Asset Class** *(V7.6)* | Per-position dropdown: `Stock` / `ETF` / `Mutual Fund` / `Other`. Drives which return components are taxable and how distributions are routed (qualified dividends, ROC basis-reduction, etc.). Available on every account type that uses the positions table (Taxable, IRA, Roth IRA, 401(k), NISA, iDeCo); the DC Plan uses a separate ¥/万口 fund table and keeps the flat-growth model. |
@@ -334,9 +336,9 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 ---
 
-## V7.5–V8.1 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
+## V7.5–V8.2 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
 
-The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), and V8.1 detailed expense entry by category with location-aware NHI settings.
+The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), V8.1 detailed expense entry by category with location-aware NHI settings, and V8.2 UX Clarity Pass (tab reorder, per-account snapshots, plain-English retirement verdict).
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -441,6 +443,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V8.3.0** | Input UX & Diagnostics Polish: collapsible Input Config sections with invalid-field counts in headers; comparison panel expanded (retirement verdict, dividend coverage ×, worst drawdown, cumulative US+Japan tax, years-of-expense headroom, per-scenario solvency warnings); target allocations now per-account (`target_allocations[account][ticker]`); rebalance date persists across Save→Reload; Accum $/mo displays `0` for new rows; Spouse Japan Misc Income zero no longer flags red; Invesco expense-ratio parser anchored to structured JSON field; auto-fetch log noise reduced. |
 | **V8.2.0** | UX Clarity Pass: tab reorder, per-account snapshots, plain-English retirement verdict, country/year labels. |
 | **V8.1** | Detailed Expense Entry by Category — **New "Detailed" mode** in the Monthly Expenses section lets users build their budget from up to 29 named line items grouped into **Essential** (drives both base and minimum spending) and **Discretional** (drives base only). Each category carries an `amount_jpy`, billing cadence (`frequency_months`), optional `end_date`, and a free-text `note`. **Minimum-expense buffer**: three modes — `none`, fixed JPY/mo, or `% of essentials sum` — added on top of the essentials floor. **Synthetic stop-rules**: when a category has an `end_date` inside the simulation window the loader generates a negative `ExpenseRule` with `inflate: true` so the stop tracks CPI alongside the base scalars; Essential stops also reduce `base_floor` while Discretional stops do not. **NHI double-counting guard**: a `looks_like_reserved_category` deny-list (NHI / 国民健康保険 / juminzei / 住民税 / resident tax) prevents user categories from entering values that the NHI engine already computes separately; matching rows are highlighted with a red border and stripped on save. **Location-aware NHI section redesign**: the old "Load Sagamihara 2026 Defaults" button is replaced by a "Location: Prefecture / City" read-out drawn from the global Japan Location plus an "Apply NHI rates for selected city" button that stamps an **Authoritative** or **Estimate** provenance badge. A non-modal blue nudge appears when the Japan Location changes after rates were applied — it does NOT auto-overwrite. **Non-destructive mode toggle**: both the simple scalars and the detailed categories array are always persisted in JSON; switching modes never destroys data. **Derived totals panel**: a live summary frame shows `Base = Essentials + Discretional + Buffer` and `Minimum = Essentials + Buffer` with a ⚠ warning when minimum > base. **Engine unchanged**: the cashflow engine still consumes `base_expense_jpy` / `min_expense_jpy` scalars; categories are a loader/UI concern. New `apply_to_floor: bool` and `inflate: bool` flags added to `ExpenseRule` (default-true / default-false, fully backward-compatible). New JSON fields: `expenses_detailed_mode`, `expense_categories`, `min_expense_buffer_jpy`, `min_expense_buffer_pct`. 10 new tests; **246 total**. |
 | **V8.0.1** | Code cleanup and correctness hardening — Replaced nested `if-let` chains with Rust `let`-chain syntax throughout the loader. Simplified `parse_date` closure to an eta-reduced function reference. Cleaned up unused imports and annotations across `estate_tax.rs`, `kaigo_hoken.rs`, `us_tax.rs`, `cashflow_manager.rs`, `contributions.rs`, and `controller.rs`. Fixed `rsu_engine.rs` to eliminate redundant intermediate variables. Added `WINDOWS_DEPENDENCIES.md` with Windows-specific build prerequisites. No logic changes; all 236 tests pass. |
@@ -488,7 +491,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V8.1)](#16-hardening--compliance-v75--v81)
+16. [Hardening & Compliance (V7.5 → V8.2)](#16-hardening--compliance-v75--v82)
 
 ---
 
@@ -1191,6 +1194,7 @@ Load two distinct JSON scenario files and run them side-by-side:
 5. The **Compare** tab shows:
    - Marco Polo P10/P50/P90 table (when Marco Polo was enabled for baseline run)
    - Side-by-side grid: Simulation Years, Final Year, Ending Taxable Portfolio, Roth IRA, DC Plan, FX Rate, Ending Wealth (USD), Total NHI Paid, Solvency Warnings
+   - *(V8.3)* Extended metrics: retirement verdict (succeeds / has shortfalls with first shortfall year), average dividend coverage of expenses (×), worst single-year drawdown (USD), cumulative US federal+state tax (USD) and Japan resident tax+NHI (JPY), years-of-expense headroom at end of horizon, expandable solvency warning list per scenario. Better/worse values are color-coded against the baseline.
 
    ⚠ Note: Deficit years and Gap Warnings indicate months when native JPY income and cash buffers were insufficient to cover base expenses, triggering automated spending cuts or stock sales. This can occur even in highly successful scenarios if growth is concentrated in low-yield assets.
 
@@ -1845,7 +1849,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V8.1)
+## 16. Hardening & Compliance (V7.5 → V8.2)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
@@ -1878,7 +1882,13 @@ V8.1 adds detailed expense entry by category — users now build their monthly b
 Essential and Discretional line items with per-item cadence and optional end dates, while the
 engine contract (scalar `base_expense_jpy` / `min_expense_jpy`) remains unchanged. The NHI
 Settings section is redesigned to be location-aware with `NhiRateProvenance` (Authoritative /
-Estimate) and a non-destructive location-change nudge.
+Estimate) and a non-destructive location-change nudge;
+V8.2 is a UX Clarity Pass — tab reorder, per-account snapshots on the Overview tab, plain-English
+retirement verdict via `SimResults::retirement_verdict()`, and country/year labels throughout;
+V8.3 is an Input UX & Diagnostics Polish pass — collapsible Input Config sections with
+invalid-field counts in headers, expanded Comparison panel, per-account target allocations,
+rebalance-date persistence, Accum $/mo zero defaults, Spouse Japan Misc Income validation fix,
+and Invesco expense-ratio parser fix.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income

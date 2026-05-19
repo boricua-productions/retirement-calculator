@@ -589,8 +589,10 @@ struct ScenarioVerdict {
 }
 
 fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
+    let rv = res.retirement_verdict();
+    let works = rv.works;
+
     let total_years = res.annual_summary.len();
-    let deficit_years = res.annual_summary.iter().filter(|s| s.gap_jpy < 0.0).count();
     let warnings = res.gap_warnings.len();
     let unpaid_rsu = res.annual_summary.last()
         .map(|s| s.unpaid_rsu_tax_liability_usd)
@@ -599,6 +601,8 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
     let bridge_exhausted_years = res.annual_summary.iter()
         .filter(|s| s.bridge_exhausted)
         .count();
+    let deficit_years = res.annual_summary.iter().filter(|s| s.gap_jpy < 0.0).count();
+    let deficit_ratio = if total_years > 0 { deficit_years as f64 / total_years as f64 } else { 0.0 };
 
     let dcr_post: Vec<f64> = res.annual_summary.iter()
         .filter(|s| s.div_coverage_ratio > 0.0)
@@ -613,18 +617,6 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
 
     let mut reasons = Vec::new();
     let mut recs = Vec::new();
-
-    let deficit_ratio = if total_years > 0 {
-        deficit_years as f64 / total_years as f64
-    } else {
-        0.0
-    };
-
-    let works = warnings == 0
-        && unpaid_rsu < 1_000.0
-        && bridge_exhausted_years == 0
-        && deficit_ratio < 0.20
-        && final_value_usd > 0.0;
 
     if works {
         reasons.push(format!(

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use log::warn;
+use log::{info, warn};
 use crate::models::config::Position;
 
 pub mod expense_ratio;
@@ -174,8 +174,17 @@ impl MarketDataService {
         match result {
             Ok(p) => p,
             Err(e) => {
-                warn!("[MarketData] {}: price fetch failed ({}), using fallback ${:.2}",
-                    ticker, e, Self::fallback_price(ticker));
+                // Japan-domestic DC fund codes (start with digit or end in .T/.JP) have no
+                // Yahoo listing; 404 is expected — log at info rather than warn.
+                let is_japan_domestic = ticker.starts_with(|c: char| c.is_ascii_digit())
+                    || ticker.ends_with(".T") || ticker.ends_with(".JP");
+                if is_japan_domestic {
+                    info!("[MarketData] {}: no Yahoo listing (expected for Japan-domestic codes) — using fallback ${:.2}",
+                        ticker, Self::fallback_price(ticker));
+                } else {
+                    warn!("[MarketData] {}: price fetch failed ({}), using fallback ${:.2}",
+                        ticker, e, Self::fallback_price(ticker));
+                }
                 Self::fallback_price(ticker)
             }
         }
@@ -235,8 +244,15 @@ impl MarketDataService {
                 }
             }
             Err(e) => {
-                warn!("[MarketData] {}: fetch failed ({}), using fallback {:.0}%",
-                    ticker, e, Self::fallback_growth(ticker) * 100.0);
+                let is_japan_domestic = ticker.starts_with(|c: char| c.is_ascii_digit())
+                    || ticker.ends_with(".T") || ticker.ends_with(".JP");
+                if is_japan_domestic {
+                    info!("[MarketData] {}: no Yahoo CAGR data (expected for Japan-domestic codes) — using fallback {:.0}%",
+                        ticker, Self::fallback_growth(ticker) * 100.0);
+                } else {
+                    warn!("[MarketData] {}: fetch failed ({}), using fallback {:.0}%",
+                        ticker, e, Self::fallback_growth(ticker) * 100.0);
+                }
                 Self::fallback_growth(ticker)
             }
         }
