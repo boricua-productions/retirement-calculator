@@ -55,6 +55,12 @@ pub struct SimState {
     // ── Buffers ─────────────────────────────────────────────────────────────────
     /// V7.1 — War chest (emergency cash reserve). Always JPY-denominated.
     pub war_chest_jpy: f64,
+    /// V8.5 — Current war-chest cap for THIS year. Seeded at the retirement
+    /// transition from the configured target, then evolved annually per
+    /// `cfg.war_chest_cap_policy`. All surplus-deposit caps read this.
+    pub war_chest_target_effective_jpy: f64,
+    /// V8.5 — Set true once the EmptyOnDate drain has fired (one-shot guard).
+    pub war_chest_emptied: bool,
     /// V7.1 — Bridge fund / operating cash reserve. Always USD-denominated.
     pub bridge_fund_usd: f64,
     /// V7.3 — Tier 2.5 Education Fund (JPY-denominated). Accumulated from
@@ -201,6 +207,8 @@ impl SimState {
             current_fx: start_fx,
             ira_limit,
             war_chest_jpy: 0.0,
+            war_chest_target_effective_jpy: 0.0,
+            war_chest_emptied: false,
             bridge_fund_usd: 0.0,
             education_fund_jpy: 0.0,
             war_chest_accumulating_jpy: 0.0,

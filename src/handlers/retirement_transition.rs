@@ -55,9 +55,11 @@ pub fn handle_transition(
         };
         let pre_jpy = cfg.pre_funded_war_chest_jpy + wc_already_accumulated;
         state.war_chest_jpy = new_wc_jpy;
+        state.war_chest_target_effective_jpy = new_wc_jpy;
         ((new_wc_jpy - pre_jpy).max(0.0)) / state.current_fx
     } else {
         state.war_chest_jpy = 0.0;
+        state.war_chest_target_effective_jpy = 0.0;
         0.0
     };
 

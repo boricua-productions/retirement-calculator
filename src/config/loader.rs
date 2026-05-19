@@ -580,6 +580,16 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         war_chest_currency:  get_str("war_chest_currency",   "JPY"),
         war_chest_target_jpy: get_f64("war_chest_target_jpy", 7_000_000.0),
         war_chest_target_usd: get_f64("war_chest_target_usd",    50_000.0),
+        war_chest_cap_policy: match sets["war_chest_cap_policy"].as_str().unwrap_or("fixed") {
+            "grow_by_inflation" => crate::models::config::WarChestCapPolicy::GrowByInflation,
+            "grow_by_percent"   => crate::models::config::WarChestCapPolicy::GrowByPercent,
+            "shrink_by_percent" => crate::models::config::WarChestCapPolicy::ShrinkByPercent,
+            "empty_on_date"     => crate::models::config::WarChestCapPolicy::EmptyOnDate,
+            _                   => crate::models::config::WarChestCapPolicy::Fixed,
+        },
+        war_chest_cap_growth_pct: get_f64("war_chest_cap_growth_pct", 0.0) / 100.0,
+        war_chest_empty_date: sets["war_chest_empty_date"].as_str()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
         bridge_fund_enabled: get_bool("bridge_fund_enabled", true),
         bridge_fund_funding_timing: get_buffer_timing("bridge_fund_funding_timing"),
         bridge_fund_ramp_months: get_u32("bridge_fund_ramp_months", 18),

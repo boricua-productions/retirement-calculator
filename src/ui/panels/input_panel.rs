@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::engine::tax::japan_regions::{ALL_PREFECTURES, cities_for_prefecture, city_rate_annotation};
 use crate::engine::tax::us_tax::{state_tax_rate, state_display_name, ALL_STATE_CODES, ALL_FILING_STATUSES};
 use crate::engine::va_benefits::{lookup_va_monthly_2026, lookup_smc_monthly_2026, ALL_VA_RATINGS, ALL_SMC_VARIANTS};
-use crate::models::config::{HeirRelationship, NhiCalculatedRates, ShockOrdering, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus};
+use crate::models::config::{HeirRelationship, NhiCalculatedRates, ShockOrdering, SpouseProfile, TaxJurisdiction, TaxProtocol, UsTaxStrategy, VaDependentStatus, WarChestCapPolicy};
 
 const SAVE_STATUS_ID: &str = "input_panel_save_status";
 const SAVE_STATUS_TTL: Duration = Duration::from_secs(5);
@@ -350,6 +350,9 @@ pub struct InputPanelState {
     pub war_chest_enabled:         bool,
     pub war_chest_target_jpy:      String,
     pub pre_funded_war_chest_jpy:  String,
+    pub war_chest_cap_policy:      WarChestCapPolicy,
+    pub war_chest_cap_growth_pct:  String,
+    pub war_chest_empty_date:      String,
     pub bridge_fund_enabled:       bool,
     pub bridge_months:             String,
     pub pre_funded_bridge_usd:     String,
@@ -546,6 +549,9 @@ impl Default for InputPanelState {
             war_chest_enabled:       true,
             war_chest_target_jpy:    "0".into(),
             pre_funded_war_chest_jpy: "0".into(),
+            war_chest_cap_policy:    WarChestCapPolicy::Fixed,
+            war_chest_cap_growth_pct: "0".into(),
+            war_chest_empty_date:    String::new(),
             bridge_fund_enabled:     true,
             bridge_months:           "0".into(),
             pre_funded_bridge_usd:   "0".into(),
@@ -1134,6 +1140,15 @@ impl InputPanelState {
             war_chest_enabled:        bool_val("war_chest_enabled",         true),
             war_chest_target_jpy:     num_str("war_chest_target_jpy",       "0"),
             pre_funded_war_chest_jpy: num_str("pre_funded_war_chest_jpy",   "0"),
+            war_chest_cap_policy: match sets["war_chest_cap_policy"].as_str().unwrap_or("fixed") {
+                "grow_by_inflation" => WarChestCapPolicy::GrowByInflation,
+                "grow_by_percent"   => WarChestCapPolicy::GrowByPercent,
+                "shrink_by_percent" => WarChestCapPolicy::ShrinkByPercent,
+                "empty_on_date"     => WarChestCapPolicy::EmptyOnDate,
+                _                   => WarChestCapPolicy::Fixed,
+            },
+            war_chest_cap_growth_pct: num_str("war_chest_cap_growth_pct", "0"),
+            war_chest_empty_date:     str_val("war_chest_empty_date",     ""),
             bridge_fund_enabled:      bool_val("bridge_fund_enabled",       true),
             bridge_months:            num_str("bridge_fund_months_target",  "0"),
             pre_funded_bridge_usd:    num_str("pre_funded_bridge_usd",      "0"),
@@ -1310,8 +1325,9 @@ impl InputPanelState {
             if bad_u32(&self.nenkin_income_start_age) { bad.insert("nenkin_income_start_age"); }
         }
 
-        if bad_u32(&self.bridge_months)        { bad.insert("bridge_months"); }
-        if bad_f64(&self.war_chest_target_jpy) { bad.insert("war_chest_target_jpy"); }
+        if bad_u32(&self.bridge_months)           { bad.insert("bridge_months"); }
+        if bad_f64(&self.war_chest_target_jpy)    { bad.insert("war_chest_target_jpy"); }
+        if bad_f64(&self.war_chest_cap_growth_pct) { bad.insert("war_chest_cap_growth_pct"); }
 
         if bad_optional_f64(&self.spouse_japan_salary_jpy)      { bad.insert("spouse_japan_salary_jpy"); }
         if bad_optional_f64(&self.spouse_japan_misc_income_jpy) { bad.insert("spouse_japan_misc_income_jpy"); }
@@ -1483,6 +1499,21 @@ impl InputPanelState {
             set_bool!("war_chest_enabled",        self.war_chest_enabled);
             set_f64!("war_chest_target_jpy",      self.war_chest_target_jpy);
             set_f64!("pre_funded_war_chest_jpy",  self.pre_funded_war_chest_jpy);
+            settings.insert("war_chest_cap_policy".into(), Value::String(
+                match self.war_chest_cap_policy {
+                    WarChestCapPolicy::Fixed           => "fixed",
+                    WarChestCapPolicy::GrowByInflation => "grow_by_inflation",
+                    WarChestCapPolicy::GrowByPercent   => "grow_by_percent",
+                    WarChestCapPolicy::ShrinkByPercent => "shrink_by_percent",
+                    WarChestCapPolicy::EmptyOnDate     => "empty_on_date",
+                }.into()
+            ));
+            set_f64!("war_chest_cap_growth_pct", self.war_chest_cap_growth_pct);
+            if !self.war_chest_empty_date.is_empty() {
+                settings.insert("war_chest_empty_date".into(), Value::String(self.war_chest_empty_date.clone()));
+            } else {
+                settings.remove("war_chest_empty_date");
+            }
             set_bool!("bridge_fund_enabled",      self.bridge_fund_enabled);
             set_f64!("bridge_fund_months_target", self.bridge_months);
             set_f64!("pre_funded_bridge_usd",     self.pre_funded_bridge_usd);
@@ -2222,10 +2253,11 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         .show(ui, |ui| {
             ui.label(
                 RichText::new(
-                    "This retirement calculator is heavily focused on living off the dividends \
-                     in a portfolio before selling stock — the engine prioritizes dividend \
-                     coverage of expenses, then bridge cash, then war chest, and only liquidates \
-                     equity as a last resort."
+                    "This retirement calculator is heavily focused on building a dividend-producing \
+                     portfolio. In the V8.4 conservative waterfall, dividends flow to buffer deposits \
+                     (war chest and bridge fund) rather than directly to expenses. Monthly spending is \
+                     covered by: JPY floor income → USD floor income → Bridge Fund → War Chest → \
+                     belt-tighten → HELOC → stock liquidation (last resort)."
                 )
                 .color(Color32::from_rgb(180, 230, 200))
                 .strong(),
@@ -4161,7 +4193,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
 
         // ── Financial Buffers ────────────────────────────────────────────────────
         section_collapsing(ui, "Financial Buffers",
-            ["war_chest_target_jpy","bridge_months"].iter().filter(|k| errors.contains(**k)).count(),
+            ["war_chest_target_jpy","war_chest_cap_growth_pct","bridge_months"].iter().filter(|k| errors.contains(**k)).count(),
             |ui| {
         ui.label(RichText::new(
             "Cash buffers protect your portfolio from forced liquidation during market downturns. \
@@ -4174,8 +4206,10 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
             "Enable War Chest (JPY Emergency Reserve)")
             .on_hover_text(
                 "A JPY cash reserve for tax bills, NHI true-ups, and equity-shock recovery. \
-                 Sits at Tier 3 in the withdrawal waterfall — tapped only when JPY income \
-                 and dividends can't cover monthly expenses.\n\n\
+                 In the V8.4 conservative waterfall it is drawn at Step 4 — after JPY floor \
+                 income (Nenkin, DC), USD floor income (FERS, VA, SS), and the USD Bridge Fund \
+                 are exhausted — before belt-tightening or stock liquidation. Dividends do NOT \
+                 flow directly to expenses; they route to buffer deposits.\n\n\
                  Disable if you already hold sufficient JPY cash outside this model, or if \
                  you live in a non-JPY economy.");
         if state.war_chest_enabled {
@@ -4188,6 +4222,41 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     "JPY you have already earmarked for the war chest (savings account, envelope, etc.). \
                      The model will only liquidate portfolio shares to cover the gap: Target minus this amount.");
             });
+            ui.add_space(4.0);
+            ui.label(RichText::new("War Chest Cap Policy").strong())
+                .on_hover_text(
+                    "How the war-chest limit changes over the retirement years. \
+                     'Keep the limit' holds it fixed. The grow/shrink options adjust it each year. \
+                     'Empty on a set date' liquidates the chest into your Taxable portfolio on that date \
+                     and stops refilling it. Surplus cash is never allowed to push the chest above its \
+                     current limit — excess is reinvested.");
+            egui::ComboBox::from_id_salt("war_chest_cap_policy")
+                .selected_text(state.war_chest_cap_policy.to_string())
+                .show_ui(ui, |ui| {
+                    use WarChestCapPolicy::*;
+                    for p in [Fixed, GrowByInflation, GrowByPercent, ShrinkByPercent, EmptyOnDate] {
+                        ui.selectable_value(&mut state.war_chest_cap_policy, p, p.to_string());
+                    }
+                });
+            match state.war_chest_cap_policy {
+                WarChestCapPolicy::GrowByPercent | WarChestCapPolicy::ShrinkByPercent => {
+                    grid(ui, "g_wc_pct", |ui| {
+                        vfield_tt(ui, "Annual Change %", &mut state.war_chest_cap_growth_pct,
+                            "e.g. 3 for 3%", !errors.contains("war_chest_cap_growth_pct"),
+                            "Percent the war-chest limit grows (or shrinks) each year. \
+                             Enter 3 for 3%. Applied every January after retirement.");
+                    });
+                }
+                WarChestCapPolicy::EmptyOnDate => {
+                    grid(ui, "g_wc_empty", |ui| {
+                        vfield_tt(ui, "Empty Date", &mut state.war_chest_empty_date,
+                            "YYYY-MM-DD", true,
+                            "On this date the war chest is emptied into your Taxable \
+                             portfolio and no longer refilled.");
+                    });
+                }
+                _ => {}
+            }
         }
         ui.add_space(6.0);
 
@@ -4195,10 +4264,12 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
         ui.checkbox(&mut state.bridge_fund_enabled,
             "Enable Bridge Fund (USD Operating Liquidity)")
             .on_hover_text(
-                "A USD cash buffer covering several months of expenses. Sits at Tier 6 in the \
-                 withdrawal waterfall — drawn after JPY sources are exhausted, before \
-                 belt-tightening or stock liquidation.\n\n\
-                 The target is calculated as: (monthly expense shortfall) x (months you specify). \
+                "A USD cash buffer covering several months of expenses. In the V8.4 conservative \
+                 waterfall it is drawn at Step 3 — after JPY floor income and USD floor income, \
+                 but BEFORE the JPY War Chest — before belt-tightening or stock liquidation. \
+                 Waterfall order: JPY floor income → USD floor income → Bridge Fund → War Chest \
+                 → belt-tighten → HELOC → liquidation.\n\n\
+                 The target is calculated as: (monthly expense shortfall) × (months you specify). \
                  Disable if your guaranteed income (VA, FERS, pension) covers your expenses from day one.");
         if state.bridge_fund_enabled {
             grid(ui, "g_bridge", |ui| {

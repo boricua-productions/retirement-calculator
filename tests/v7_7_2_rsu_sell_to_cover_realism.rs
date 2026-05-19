@@ -28,8 +28,8 @@ use retirement_calculator::models::assets::{
 use retirement_calculator::models::config::{
     BufferFundingTiming,
     Config, FamilyUnit, NhiModel, RsuSellToCoverPolicy, ShockOrdering, SpouseProfile, TaxProtocol,
-    TaxRules, VaDependentStatus, WithdrawalRegime, WithdrawalStrategy, WaterfallStrategy,
-    UsTaxStrategy, InvestmentLocation,
+    TaxRules, VaDependentStatus, WarChestCapPolicy, WithdrawalRegime, WithdrawalStrategy,
+    WaterfallStrategy, UsTaxStrategy, InvestmentLocation,
 };
 use retirement_calculator::models::rsu::{RsuAward, VestingCadence};
 use retirement_calculator::simulation::state::SimState;
@@ -81,6 +81,9 @@ fn stc_config(realism: bool) -> Config {
         war_chest_currency: "JPY".into(),
         war_chest_target_jpy: 0.0,
         war_chest_target_usd: 0.0,
+        war_chest_cap_policy: WarChestCapPolicy::Fixed,
+        war_chest_cap_growth_pct: 0.0,
+        war_chest_empty_date: None,
         bridge_fund_enabled: true,
         bridge_fund_funding_timing: BufferFundingTiming::AtRetirement,
         bridge_fund_ramp_months: 18,

@@ -179,12 +179,10 @@ fn show_inner(
                 match vopt {
                     None => { ui.label("—"); }
                     Some(v) => {
-                        let (icon, color) = if v.works {
-                            ("✅", Color32::from_rgb(100, 220, 100))
-                        } else {
-                            ("❌", Color32::from_rgb(220, 100, 100))
-                        };
-                        ui.label(RichText::new(format!("{} {}", icon, v.summary))
+                        let ((_, _, _), (fg_r, fg_g, fg_b)) = v.tier.colors();
+                        let color = Color32::from_rgb(fg_r, fg_g, fg_b);
+                        ui.label(RichText::new(
+                            format!("{} {} — {}", v.tier.icon(), v.tier.label(), v.summary))
                             .color(color));
                     }
                 }

@@ -450,19 +450,66 @@ pub struct SimResults {
     pub account_snapshots: Vec<AccountSnapshotRow>,
 }
 
+/// V8.5 — Five-level plan health rating.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanTier {
+    Excellent,
+    Strong,
+    Adequate,
+    Strained,
+    Unsustainable,
+}
+
+impl PlanTier {
+    pub fn label(self) -> &'static str {
+        match self {
+            PlanTier::Excellent     => "Excellent",
+            PlanTier::Strong        => "Strong",
+            PlanTier::Adequate      => "Adequate",
+            PlanTier::Strained      => "Strained",
+            PlanTier::Unsustainable => "Unsustainable",
+        }
+    }
+    /// Returns (background_rgb, foreground_rgb) for the verdict banner.
+    pub fn colors(self) -> ((u8, u8, u8), (u8, u8, u8)) {
+        match self {
+            PlanTier::Excellent     => ((20,  70,  30), (170, 255, 180)),
+            PlanTier::Strong        => ((28,  64,  34), (190, 240, 190)),
+            PlanTier::Adequate      => ((70,  64,  20), (250, 240, 160)),
+            PlanTier::Strained      => ((80,  50,  20), (255, 200, 140)),
+            PlanTier::Unsustainable => ((70,  25,  25), (255, 180, 180)),
+        }
+    }
+    pub fn icon(self) -> &'static str {
+        match self {
+            PlanTier::Excellent     => "🟢",
+            PlanTier::Strong        => "✅",
+            PlanTier::Adequate      => "🟡",
+            PlanTier::Strained      => "🟠",
+            PlanTier::Unsustainable => "🔴",
+        }
+    }
+}
+
 /// Compact plan verdict returned by `SimResults::retirement_verdict()`.
 /// Shared between the Overview and Comparison panels.
 #[derive(Clone, Debug)]
 pub struct RetirementVerdict {
     pub works: bool,
+    pub tier: PlanTier,
     pub summary: String,
     /// First calendar year with a solvency gap warning (if any).
     pub first_gap_year: Option<i32>,
 }
 
 impl SimResults {
-    /// Determine whether the plan succeeds or fails, and why in one line.
+    /// Determine the plan's 5-level health tier and produce a one-line summary.
     /// Both the Overview and Comparison panels call this so the logic lives once.
+    ///
+    /// V8.5: A plan is Unsustainable ONLY when the portfolio is exhausted before
+    /// the horizon end (final_value_usd ≤ 0). Absorbed negative quarters, bridge
+    /// exhaustion, or deficit years without portfolio exhaustion are Strained or
+    /// Adequate — still sustainable.
     pub fn retirement_verdict(&self) -> RetirementVerdict {
         let warnings = self.gap_warnings.len();
         let unpaid_rsu = self.annual_summary.last()
@@ -481,26 +528,58 @@ impl SimResults {
         } else {
             0.0
         };
-        let works = warnings == 0
-            && unpaid_rsu < 1_000.0
-            && bridge_exhausted_count == 0
-            && deficit_ratio < 0.20
-            && final_value_usd > 0.0;
+
+        let total_belt_tighten_months: u32 =
+            self.annual_summary.iter().map(|s| s.months_at_min_target).sum();
+
+        let dcr_values: Vec<f64> = self.annual_summary.iter()
+            .filter(|s| s.div_coverage_ratio > 0.0)
+            .map(|s| s.div_coverage_ratio)
+            .collect();
+        let avg_dcr = if dcr_values.is_empty() { 0.0 }
+                      else { dcr_values.iter().sum::<f64>() / dcr_values.len() as f64 };
+
+        let tier = if final_value_usd <= 0.0 {
+            PlanTier::Unsustainable
+        } else if deficit_ratio >= 0.50
+                || bridge_exhausted_count as f64 >= (total_years as f64 * 0.30)
+                || unpaid_rsu >= 1_000.0
+                || total_belt_tighten_months >= 24 {
+            PlanTier::Strained
+        } else if deficit_ratio >= 0.20 || bridge_exhausted_count > 0 || warnings > 0 {
+            PlanTier::Adequate
+        } else if avg_dcr < 1.0 {
+            PlanTier::Strong
+        } else {
+            PlanTier::Excellent
+        };
+
+        let works = tier != PlanTier::Unsustainable;
 
         let first_gap_year = self.gap_warnings.first()
             .and_then(|w| w.date.splitn(2, '-').next()?.parse::<i32>().ok());
 
-        let summary = if works {
-            "Plan succeeds — solvent through end of horizon.".into()
-        } else if final_value_usd <= 0.0 {
-            "Plan exhausts portfolio before end of horizon.".into()
-        } else if let Some(yr) = first_gap_year {
-            format!("Plan has shortfalls — first gap in {}.", yr)
-        } else {
-            "Plan has solvency issues.".into()
+        let summary = match tier {
+            PlanTier::Excellent => "Plan succeeds — fully solvent with strong dividend coverage.".into(),
+            PlanTier::Strong    => "Plan succeeds — solvent through end of horizon.".into(),
+            PlanTier::Adequate  => {
+                if let Some(yr) = first_gap_year {
+                    format!("Sustainable — buffers absorbed some lean periods (first gap: {}).", yr)
+                } else {
+                    "Sustainable — buffers absorbed some lean periods.".into()
+                }
+            }
+            PlanTier::Strained  => {
+                if let Some(yr) = first_gap_year {
+                    format!("Sustainable but stressed — frequent belt-tightening required (first gap: {}).", yr)
+                } else {
+                    "Sustainable but stressed — frequent belt-tightening required.".into()
+                }
+            }
+            PlanTier::Unsustainable => "Plan exhausts portfolio before end of horizon.".into(),
         };
 
-        RetirementVerdict { works, summary, first_gap_year }
+        RetirementVerdict { works, tier, summary, first_gap_year }
     }
 }
 

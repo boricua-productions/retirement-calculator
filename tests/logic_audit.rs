@@ -32,7 +32,7 @@ use retirement_calculator::models::assets::{
 };
 use retirement_calculator::models::config::{
     BufferFundingTiming,
-    Config, TaxRules, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy,
+    Config, TaxRules, WarChestCapPolicy, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy,
 };
 use retirement_calculator::models::expense::ExpenseRule;
 use retirement_calculator::simulation::state::SimState;
@@ -82,6 +82,9 @@ fn minimal_cfg() -> Config {
         war_chest_currency: "JPY".into(),
         war_chest_target_jpy: 7_000_000.0,
         war_chest_target_usd: 0.0,
+        war_chest_cap_policy: WarChestCapPolicy::Fixed,
+        war_chest_cap_growth_pct: 0.0,
+        war_chest_empty_date: None,
         bridge_fund_enabled: true,
         bridge_fund_funding_timing: retirement_calculator::models::config::BufferFundingTiming::AtRetirement,
         bridge_fund_ramp_months: 18,

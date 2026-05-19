@@ -22,8 +22,8 @@ use retirement_calculator::models::assets::{
 use retirement_calculator::models::config::{
     BufferFundingTiming,
     Config, FamilyUnit, FXShockEvent, NhiModel, RecessionEvent, ShockOrdering,
-    SpouseProfile, TaxProtocol, TaxRules, VaDependentStatus, WaterfallStrategy,
-    WithdrawalRegime, WithdrawalStrategy, UsTaxStrategy, InvestmentLocation,
+    SpouseProfile, TaxProtocol, TaxRules, VaDependentStatus, WarChestCapPolicy,
+    WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy, UsTaxStrategy, InvestmentLocation,
     RsuSellToCoverPolicy,
 };
 use retirement_calculator::simulation::controller::SimulationController;
@@ -75,6 +75,9 @@ fn shock_config(ordering: ShockOrdering) -> Config {
         war_chest_currency: "JPY".into(),
         war_chest_target_jpy: 0.0,
         war_chest_target_usd: 0.0,
+        war_chest_cap_policy: WarChestCapPolicy::Fixed,
+        war_chest_cap_growth_pct: 0.0,
+        war_chest_empty_date: None,
         bridge_fund_enabled: true,
         bridge_fund_funding_timing: BufferFundingTiming::AtRetirement,
         bridge_fund_ramp_months: 18,

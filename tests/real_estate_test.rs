@@ -27,7 +27,7 @@ use retirement_calculator::models::config::{
     BufferFundingTiming,
     Config, FamilyUnit, InvestmentLocation, NhiModel, RsuSellToCoverPolicy, ShockOrdering,
     SpouseProfile, TaxJurisdiction, TaxProtocol, TaxRules, UsTaxStrategy, VaDependentStatus,
-    WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy,
+    WaterfallStrategy, WarChestCapPolicy, WithdrawalRegime, WithdrawalStrategy,
 };
 use retirement_calculator::models::real_estate::{
     HelocLine, MortgageCurrency, MortgageTerms, RealEstateHolding,
@@ -75,6 +75,9 @@ fn base_config(
         war_chest_currency:   "JPY".into(),
         war_chest_target_jpy: 6_000_000.0,
         war_chest_target_usd: 0.0,
+        war_chest_cap_policy: WarChestCapPolicy::Fixed,
+        war_chest_cap_growth_pct: 0.0,
+        war_chest_empty_date: None,
         bridge_fund_enabled: true,
         bridge_fund_funding_timing: BufferFundingTiming::AtRetirement,
         bridge_fund_ramp_months: 18,

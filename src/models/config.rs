@@ -264,6 +264,36 @@ impl std::fmt::Display for WithdrawalRegime {
     }
 }
 
+/// V8.5 — How the war-chest target (cap) evolves year over year, post-retirement.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WarChestCapPolicy {
+    /// Hold the target fixed at its retirement-date value (default).
+    #[default]
+    Fixed,
+    /// Grow the target by `inflation_japan` each year.
+    GrowByInflation,
+    /// Grow the target by `war_chest_cap_growth_pct` each year.
+    GrowByPercent,
+    /// Shrink the target by `war_chest_cap_growth_pct` each year (floored at 0).
+    ShrinkByPercent,
+    /// On `war_chest_empty_date`, empty the war chest (reinvest balance into
+    /// Taxable) and hold the target at 0 thereafter.
+    EmptyOnDate,
+}
+
+impl std::fmt::Display for WarChestCapPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WarChestCapPolicy::Fixed           => write!(f, "Keep the limit (fixed)"),
+            WarChestCapPolicy::GrowByInflation => write!(f, "Increase by inflation each year"),
+            WarChestCapPolicy::GrowByPercent   => write!(f, "Increase by a set % each year"),
+            WarChestCapPolicy::ShrinkByPercent => write!(f, "Decrease by a set % each year"),
+            WarChestCapPolicy::EmptyOnDate     => write!(f, "Empty on a set date"),
+        }
+    }
+}
+
 /// US tax mitigation strategy for the simulation run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -681,6 +711,16 @@ pub struct Config {
     pub war_chest_currency: String,
     pub war_chest_target_jpy: f64,
     pub war_chest_target_usd: f64,
+    /// V8.5 — How the war-chest cap evolves post-retirement. Default: Fixed.
+    #[serde(default)]
+    pub war_chest_cap_policy: WarChestCapPolicy,
+    /// V8.5 — Annual growth/shrink rate for GrowByPercent / ShrinkByPercent
+    /// (decimal fraction, e.g. 0.03 = 3%). Ignored by other policies.
+    #[serde(default)]
+    pub war_chest_cap_growth_pct: f64,
+    /// V8.5 — Date on which the war chest is emptied when policy = EmptyOnDate.
+    #[serde(default)]
+    pub war_chest_empty_date: Option<NaiveDate>,
 
     // ── Bridge Fund ─────────────────────────────────────────────────────────────
     #[serde(default = "default_true")]

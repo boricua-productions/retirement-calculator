@@ -13,8 +13,8 @@ use retirement_calculator::models::assets::{
 use retirement_calculator::models::config::{
     BufferFundingTiming, Config, FamilyUnit, InvestmentLocation, NhiModel,
     RsuSellToCoverPolicy, ShockOrdering, SpouseProfile, TaxProtocol, TaxRules,
-    UsTaxStrategy, VaDependentStatus, VisaType, WaterfallStrategy, WithdrawalRegime,
-    WithdrawalStrategy,
+    UsTaxStrategy, VaDependentStatus, VisaType, WarChestCapPolicy, WaterfallStrategy,
+    WithdrawalRegime, WithdrawalStrategy,
 };
 use retirement_calculator::simulation::controller::SimulationController;
 
@@ -54,6 +54,9 @@ fn working_config(model_active_res_tax: bool) -> Config {
         war_chest_currency:   "JPY".into(),
         war_chest_target_jpy: 0.0,
         war_chest_target_usd: 0.0,
+        war_chest_cap_policy: WarChestCapPolicy::Fixed,
+        war_chest_cap_growth_pct: 0.0,
+        war_chest_empty_date: None,
         bridge_fund_enabled: false,
         bridge_fund_funding_timing: BufferFundingTiming::AtRetirement,
         bridge_fund_ramp_months: 0,

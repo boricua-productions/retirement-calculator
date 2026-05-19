@@ -24,7 +24,8 @@ use retirement_calculator::models::config::{
     BufferFundingTiming,
     Config, FamilyUnit, Heir, HeirRelationship, InvestmentLocation, NhiModel,
     RsuSellToCoverPolicy, ShockOrdering, SpouseProfile, TaxProtocol, TaxRules,
-    UsTaxStrategy, VaDependentStatus, WaterfallStrategy, WithdrawalRegime, WithdrawalStrategy,
+    UsTaxStrategy, VaDependentStatus, WarChestCapPolicy, WaterfallStrategy, WithdrawalRegime,
+    WithdrawalStrategy,
 };
 use retirement_calculator::simulation::controller::SimulationController;
 
@@ -219,6 +220,9 @@ fn estate_planning_config() -> Config {
         war_chest_currency:   "JPY".into(),
         war_chest_target_jpy: 3_000_000.0,
         war_chest_target_usd: 0.0,
+        war_chest_cap_policy: WarChestCapPolicy::Fixed,
+        war_chest_cap_growth_pct: 0.0,
+        war_chest_empty_date: None,
         bridge_fund_enabled: true,
         bridge_fund_funding_timing: BufferFundingTiming::AtRetirement,
         bridge_fund_ramp_months: 18,

@@ -346,6 +346,16 @@ impl SimulationController {
                 mo,
                 is_qtr,
             );
+
+            // V8.5 — Empty-on-date: reinvest the war chest into Taxable and zero the cap.
+            if self.cfg.war_chest_enabled
+                && !self.state.war_chest_emptied
+                && self.cfg.war_chest_cap_policy == crate::models::config::WarChestCapPolicy::EmptyOnDate
+                && self.cfg.war_chest_empty_date.is_some_and(|d| self.state.date >= d)
+            {
+                crate::handlers::cashflow_manager::empty_war_chest_into_taxable(&mut self.state, &self.cfg);
+                self.state.war_chest_emptied = true;
+            }
         }
 
         // ── V7.7 — December pre-retirement history capture ────────────────────
@@ -409,6 +419,25 @@ impl SimulationController {
 
         // Reset annual accumulators.
         self.state.stats.reset();
+
+        // V8.5 — Evolve the war-chest cap per the configured policy (post-transition only).
+        if self.cfg.war_chest_enabled && self.state.date.year() > self.cfg.rebalance_date.year() {
+            use crate::models::config::WarChestCapPolicy;
+            match self.cfg.war_chest_cap_policy {
+                WarChestCapPolicy::Fixed | WarChestCapPolicy::EmptyOnDate => {}
+                WarChestCapPolicy::GrowByInflation => {
+                    self.state.war_chest_target_effective_jpy *= 1.0 + self.cfg.inflation_japan;
+                }
+                WarChestCapPolicy::GrowByPercent => {
+                    self.state.war_chest_target_effective_jpy *= 1.0 + self.cfg.war_chest_cap_growth_pct;
+                }
+                WarChestCapPolicy::ShrinkByPercent => {
+                    self.state.war_chest_target_effective_jpy =
+                        (self.state.war_chest_target_effective_jpy
+                            * (1.0 - self.cfg.war_chest_cap_growth_pct)).max(0.0);
+                }
+            }
+        }
 
         // Project this year's FERS and seed acc_ord_inc.
         let annual_fers = self.cf_engine.calc_annual_fers_projection(yr);

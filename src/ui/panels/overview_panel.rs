@@ -5,7 +5,7 @@ use egui::{Color32, RichText, Ui};
 
 use crate::engine::rsu_engine::RsuEngine;
 use crate::models::assets::AccountLocation;
-use crate::models::snapshot::{AccountSnapshotEvent, SimResults};
+use crate::models::snapshot::{AccountSnapshotEvent, PlanTier, SimResults};
 use crate::reporter;
 
 const STATUS_ID: &str = "overview_export_status";
@@ -37,18 +37,16 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
 
     // ── Task (g) — Plain-English retirement verdict ───────────────────────────
     let verdict = evaluate_scenario(res);
-    let (bg, fg) = if verdict.works {
-        (Color32::from_rgb(20, 60, 30), Color32::from_rgb(170, 255, 180))
-    } else {
-        (Color32::from_rgb(70, 25, 25), Color32::from_rgb(255, 180, 180))
-    };
+    let ((bg_r, bg_g, bg_b), (fg_r, fg_g, fg_b)) = verdict.tier.colors();
+    let bg = Color32::from_rgb(bg_r, bg_g, bg_b);
+    let fg = Color32::from_rgb(fg_r, fg_g, fg_b);
     egui::Frame::none()
         .fill(bg)
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
         .rounding(egui::Rounding::same(6.0))
         .show(ui, |ui| {
             ui.label(
-                RichText::new(if verdict.works { "✅ Retirement Verdict" } else { "❌ Retirement Verdict" })
+                RichText::new(format!("{} Retirement Verdict — {}", verdict.tier.icon(), verdict.tier.label()))
                     .strong().size(18.0).color(fg),
             );
             ui.label(RichText::new(&verdict.summary).size(15.0).color(fg));
@@ -582,7 +580,7 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
 
 #[derive(Clone)]
 struct ScenarioVerdict {
-    works: bool,
+    tier: PlanTier,
     summary: String,
     reasons: Vec<String>,
     recommendations: Vec<String>,
@@ -590,7 +588,7 @@ struct ScenarioVerdict {
 
 fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
     let rv = res.retirement_verdict();
-    let works = rv.works;
+    let tier = rv.tier;
 
     let total_years = res.annual_summary.len();
     let warnings = res.gap_warnings.len();
@@ -612,74 +610,119 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
                   else { dcr_post.iter().sum::<f64>() / dcr_post.len() as f64 };
 
     let final_value_usd = res.annual_summary.last().map(|s| {
-        s.brokerage_usd + s.roth_usd + (s.dc_jpy / s.usd_jpy)
+        s.brokerage_usd + s.roth_usd + (s.dc_jpy / s.usd_jpy.max(1.0))
     }).unwrap_or(0.0);
 
     let mut reasons = Vec::new();
     let mut recs = Vec::new();
 
-    if works {
-        reasons.push(format!(
-            "✅ {} of {} years had no solvency warning.", total_years, total_years));
-        reasons.push(format!(
-            "✅ Final portfolio (USD-equiv): ${:.0} — still positive at end of horizon.",
-            final_value_usd));
-        if avg_dcr >= 1.0 {
+    match tier {
+        PlanTier::Excellent => {
+            reasons.push(format!(
+                "✅ {} of {} years had no solvency warning.", total_years, total_years));
+            reasons.push(format!(
+                "✅ Final portfolio (USD-equiv): ${:.0} — still positive at end of horizon.",
+                final_value_usd));
             reasons.push(format!(
                 "✅ Dividends alone covered expenses on average ({:.2}× coverage).", avg_dcr));
-        } else if avg_dcr >= 0.5 {
-            reasons.push(format!(
-                "ℹ Dividends covered {:.0}% of expenses — the rest came from drawdowns.",
-                avg_dcr * 100.0));
         }
-        return ScenarioVerdict {
-            works: true,
-            summary: "This scenario supports your retirement.".into(),
-            reasons,
-            recommendations: vec![],
-        };
+        PlanTier::Strong => {
+            reasons.push(format!(
+                "✅ {} of {} years had no solvency warning.", total_years, total_years));
+            reasons.push(format!(
+                "✅ Final portfolio (USD-equiv): ${:.0} — still positive at end of horizon.",
+                final_value_usd));
+            if avg_dcr >= 0.5 {
+                reasons.push(format!(
+                    "ℹ Dividends covered {:.0}% of expenses on average — the rest came from buffer draws.",
+                    avg_dcr * 100.0));
+            }
+        }
+        PlanTier::Adequate => {
+            reasons.push(format!(
+                "ℹ Final portfolio (USD-equiv): ${:.0} — positive at end of horizon.",
+                final_value_usd));
+            if warnings > 0 {
+                reasons.push(format!(
+                    "ℹ {} quarter(s) ran income-below-expenses — absorbed by buffers.", warnings));
+                recs.push("Consider increasing the bridge fund or war-chest target to absorb lean quarters more comfortably.".into());
+            }
+            if bridge_exhausted_years > 0 {
+                reasons.push(format!(
+                    "ℹ Bridge fund was exhausted in {} year(s) — portfolio sales covered the gap.",
+                    bridge_exhausted_years));
+                recs.push("Raise the bridge fund cap to avoid forced portfolio sales in lean years.".into());
+            }
+            if deficit_ratio >= 0.20 {
+                reasons.push(format!(
+                    "ℹ {:.0}% of simulated years had income below desired spending.",
+                    deficit_ratio * 100.0));
+                recs.push("Reduce base expenses or boost dividend yield to improve coverage.".into());
+            }
+        }
+        PlanTier::Strained => {
+            reasons.push(format!(
+                "⚠ Final portfolio (USD-equiv): ${:.0} — survives but under stress.",
+                final_value_usd));
+            if warnings > 0 {
+                reasons.push(format!(
+                    "⚠ {} quarter(s) ran income-below-expenses — required belt-tightening or sales.",
+                    warnings));
+                recs.push("Increase the bridge fund and war-chest targets before retirement.".into());
+                recs.push("Delay retirement by 1–2 years to accumulate more buffer capital.".into());
+            }
+            if bridge_exhausted_years > 0 {
+                reasons.push(format!(
+                    "⚠ Bridge fund was exhausted in {} year(s).", bridge_exhausted_years));
+                recs.push("Raise the bridge fund cap substantially.".into());
+            }
+            if unpaid_rsu >= 1_000.0 {
+                reasons.push(format!(
+                    "⚠ ${:.0} in RSU-vest IRS liability remained unpaid.", unpaid_rsu));
+                recs.push("Withhold a higher % at vest, or set aside cash before RSU vest dates.".into());
+            }
+            if deficit_ratio >= 0.20 {
+                reasons.push(format!(
+                    "⚠ {:.0}% of years were deficit years (income < expenses).",
+                    deficit_ratio * 100.0));
+                recs.push("Reduce planned base expenses or boost expected dividend yield.".into());
+            }
+        }
+        PlanTier::Unsustainable => {
+            reasons.push("❌ Portfolio reaches zero before the end of the simulation horizon.".into());
+            recs.push("Lower withdrawal rate or extend earning years.".into());
+            if let Some(yr) = rv.first_gap_year {
+                reasons.push(format!("❌ First solvency gap in {}.", yr));
+            }
+            if bridge_exhausted_years > 0 {
+                reasons.push(format!(
+                    "❌ Bridge fund was exhausted in {} year(s) — forced portfolio sells occurred.",
+                    bridge_exhausted_years));
+                recs.push("Raise the bridge fund cap so it lasts through deficit years.".into());
+            }
+            if unpaid_rsu >= 1_000.0 {
+                reasons.push(format!(
+                    "❌ ${:.0} in RSU-vest IRS liability remained unpaid (sell-to-cover deficit).",
+                    unpaid_rsu));
+                recs.push("Withhold a higher % at vest, or set aside cash before RSU vest dates.".into());
+            }
+            if deficit_ratio >= 0.20 {
+                reasons.push(format!(
+                    "❌ {:.0}% of simulated years were deficit years (income < expenses).",
+                    deficit_ratio * 100.0));
+                recs.push("Reduce planned base expenses or boost expected dividend yield.".into());
+            }
+        }
     }
 
-    if warnings > 0 {
-        reasons.push(format!(
-            "❌ {} quarter(s) ran negative — income did not cover expenses.", warnings));
-        recs.push("Increase the bridge fund target or war-chest target before retirement.".into());
-        recs.push("Delay retirement by 1–2 years to accumulate more buffer capital.".into());
-    }
-    if bridge_exhausted_years > 0 {
-        reasons.push(format!(
-            "❌ Bridge fund was exhausted in {} year(s) — forced portfolio sells occurred.",
-            bridge_exhausted_years));
-        recs.push("Raise the bridge fund cap so it lasts through deficit years.".into());
-    }
-    if unpaid_rsu >= 1_000.0 {
-        reasons.push(format!(
-            "❌ ${:.0} in RSU-vest IRS liability remained unpaid (sell-to-cover deficit).",
-            unpaid_rsu));
-        recs.push("Withhold a higher % at vest, or set aside cash before RSU vest dates.".into());
-    }
-    if deficit_ratio >= 0.20 {
-        reasons.push(format!(
-            "❌ {:.0}% of simulated years were deficit years (income < expenses).",
-            deficit_ratio * 100.0));
-        recs.push("Reduce planned base expenses or boost expected dividend yield.".into());
-    }
     if exit_tax_hit {
         reasons.push(
             "⚠ Japan Exit Tax (Article 60-2) would trigger if you leave Japan with current assets.".into());
         recs.push("Consult a Japan-licensed tax advisor before any departure planning.".into());
     }
-    if final_value_usd <= 0.0 {
-        reasons.push("❌ Portfolio reaches zero before the end of the simulation horizon.".into());
-        recs.push("Lower withdrawal rate or extend earning years.".into());
-    }
 
-    ScenarioVerdict {
-        works: false,
-        summary: "This scenario does NOT support your retirement as configured.".into(),
-        reasons,
-        recommendations: recs,
-    }
+    let summary = rv.summary.clone();
+    ScenarioVerdict { tier, summary, reasons, recommendations: recs }
 }
 
 // ── Task (e) helper — post-retirement year range for DCR label ───────────────

@@ -123,6 +123,9 @@
     "war_chest_currency": "JPY",
     "war_chest_target_jpy": 7000000,
     "war_chest_target_usd": 50000,
+    "_help_war_chest_cap_policy": "How the war-chest limit evolves post-retirement. Options: 'fixed', 'grow_by_inflation', 'grow_by_percent', 'shrink_by_percent', 'empty_on_date'.",
+    "war_chest_cap_policy": "fixed",
+    "war_chest_cap_growth_pct": 0,
     "pre_funded_war_chest_jpy": 3131679,
 
     "_help_bridge": "Cash buffer for the first 1-2 years before pensions kick in.",
