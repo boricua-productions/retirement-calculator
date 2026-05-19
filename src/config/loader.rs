@@ -876,6 +876,7 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
             _        => crate::models::config::VisaType::Table1,
         },
         model_active_phase_resident_tax: get_bool("model_active_phase_resident_tax", false),
+        prefer_liquidation_over_belt_tightening: get_bool("prefer_liquidation_over_belt_tightening", false),
     };
 
     // ── Stage 08: Validate correlation matrix if correlated paths are enabled ────

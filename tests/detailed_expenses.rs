@@ -417,6 +417,7 @@ fn base_config() -> Config {
         kaigo_care_scenario: CareScenario::None,
         primary_taxpayer_visa: VisaType::Table1,
         model_active_phase_resident_tax: false,
+        prefer_liquidation_over_belt_tightening: false,
     }
 }
 

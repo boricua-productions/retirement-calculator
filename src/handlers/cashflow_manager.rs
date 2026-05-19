@@ -235,27 +235,13 @@ fn manage_monthly_cashflow_defensive(
     gap -= t0_used;
     let t0_surplus_jpy = t0_jpy - t0_used;
 
-    // ── Tier 1: JPY Dividends (this month's lumpy events only) ───────────────
+    // ── T1 — JPY Dividends: tracked for surplus routing (V8.4: not used for expenses) ─
     let t1_net_jpy = state.current_month_div_net_jpy;
-    let t1_used    = t1_net_jpy.min(gap);
-    gap -= t1_used;
-    let t1_surplus_jpy = t1_net_jpy - t1_used;
 
     // Tier 2: reserved.
 
-    // ── Tier 3: JPY War Chest ─────────────────────────────────────────────────
-    if gap > 0.0 && cfg.war_chest_enabled {
-        let draw = state.war_chest_jpy.min(gap);
-        state.war_chest_jpy -= draw;
-        gap -= draw;
-        state.stats.year_wc_used += draw;
-        if draw > 0.0 {
-            info!("   [T3-WC] Drew ¥{:.0} from War Chest (remaining ¥{:.0})", draw, state.war_chest_jpy);
-        }
-    }
-
-    // ── Tier 4: USD Floor Income (FERS, VA, SS, SSDI, Rental USD) → JPY ────────
-    // Rental USD is grouped with other USD floor income; converted with FX penalty.
+    // ── Step 2: USD Floor Income (FERS, VA, SS, SSDI, Rental USD) → JPY ─────────
+    // V8.4: USD floor income drawn before Bridge Fund and War Chest.
     let usd_pension = va_usd + (fers_usd - fers_tax) + ss_usd + ssdi_usd + mil_usd + rental_usd;
     let mut t4_surplus_usd = usd_pension;
     if gap > 0.0 && t4_surplus_usd > 0.0 {
@@ -268,20 +254,11 @@ fn manage_monthly_cashflow_defensive(
         state.stats.year_fx_penalty_jpy += pen_jpy;
     }
 
-    // ── Tier 5: USD Dividends (this month only) → JPY with FX penalty ─────────
+    // ── T5 — USD Dividends: tracked for surplus routing (V8.4: not used for expenses) ─
     let t5_net_usd = state.current_month_div_net_usd;
-    let mut t5_surplus_usd = t5_net_usd;
-    if gap > 0.0 && t5_surplus_usd > 0.0 {
-        let needed_usd = gap / (fx * (1.0 - penalty));
-        let spent_usd  = needed_usd.min(t5_surplus_usd);
-        let (jpy_in, pen_jpy) = convert_usd_to_jpy(spent_usd, fx, penalty);
-        let actual_gap_filled = jpy_in.min(gap);
-        gap -= actual_gap_filled;
-        t5_surplus_usd -= spent_usd;
-        state.stats.year_fx_penalty_jpy += pen_jpy;
-    }
 
-    // ── Tier 6: USD Bridge Fund → JPY with FX penalty ─────────────────────────
+    // ── Step 3: USD Bridge Fund → JPY with FX penalty ────────────────────────────
+    // V8.4: Bridge Fund drawn before War Chest.
     if gap > 0.0 && cfg.bridge_fund_enabled && state.bridge_fund_usd > 0.0 {
         let needed_usd = gap / (fx * (1.0 - penalty));
         let spent_usd  = needed_usd.min(state.bridge_fund_usd);
@@ -297,6 +274,18 @@ fn manage_monthly_cashflow_defensive(
                 warn!("   [T6] Bridge Fund depleted ({}).", current_date.format("%Y-%m"));
                 state.bridge_exhausted_logged = true;
             }
+        }
+    }
+
+    // ── Step 4: JPY War Chest ────────────────────────────────────────────────────
+    // V8.4: War Chest drawn after Bridge Fund.
+    if gap > 0.0 && cfg.war_chest_enabled {
+        let draw = state.war_chest_jpy.min(gap);
+        state.war_chest_jpy -= draw;
+        gap -= draw;
+        state.stats.year_wc_used += draw;
+        if draw > 0.0 {
+            info!("   [T3-WC] Drew ¥{:.0} from War Chest (remaining ¥{:.0})", draw, state.war_chest_jpy);
         }
     }
 
@@ -321,8 +310,15 @@ fn manage_monthly_cashflow_defensive(
     let mut target_dropped = false;
     match cfg.withdrawal_regime {
         WithdrawalRegime::Shielded => {
-            let cash_zero = state.war_chest_jpy <= 0.01 && state.bridge_fund_usd <= 0.01;
-            let belt_tighten = gap > 0.0 || cash_zero;
+            // V8.4: belt-tighten fires only when gap > 0 after Steps 1–4.
+            // Alt-mode: if prefer_liquidation_over_belt_tightening and the Taxable
+            // portfolio can cover minimum spending through end-of-simulation, skip
+            // belt-tighten and liquidate stock directly to cover the full base gap.
+            let belt_tighten = gap > 0.0 && if cfg.prefer_liquidation_over_belt_tightening {
+                !stock_can_sustain_minimum_for_remaining(state, cfg, target_min_jpy)
+            } else {
+                true
+            };
             if belt_tighten {
                 let savings = target_base_jpy - target_min_jpy;
                 let gap_reduction = savings.min(gap.max(0.0));
@@ -332,9 +328,6 @@ fn manage_monthly_cashflow_defensive(
                 if gap_reduction > 0.0 {
                     warn!("   [T7-A] Shielded: target dropped to Minimum (¥{:.0}) — gap reduced by ¥{:.0}, ¥{:.0} remaining.",
                         target_min_jpy, gap_reduction, gap);
-                } else if cash_zero {
-                    warn!("   [T7-A] Shielded: cash buffers at zero — month runs at Minimum (¥{:.0}).",
-                        target_min_jpy);
                 }
             }
             // ── Tier 7.5 — HELOC Draw ─────────────────────────────────────────
@@ -447,7 +440,7 @@ fn manage_monthly_cashflow_defensive(
     // ── Native-currency surplus deposit (no FX cross-contamination) ───────────
     // V7.3: JPY surplus is first skimmed into the Tier 2.5 Education Fund up
     // to `edu_savings_jpy_monthly`. Remainder follows the V7.1 surplus rules.
-    let jpy_surplus_raw = t0_surplus_jpy + t1_surplus_jpy;
+    let jpy_surplus_raw = t0_surplus_jpy + t1_net_jpy;
 
     // ── V7.5 — Tier 9: Estate Planning Gift Sink ─────────────────────────────
     // Fires once per year (December) to model legal-year donation semantics.
@@ -459,10 +452,10 @@ fn manage_monthly_cashflow_defensive(
     let jpy_surplus_raw = jpy_surplus_raw - t9_jpy_drawn;
 
     let jpy_surplus     = skim_education_savings(state, cfg, jpy_surplus_raw);
-    let usd_surplus     = t4_surplus_usd + t5_surplus_usd;
+    let usd_surplus     = t4_surplus_usd + t5_net_usd;
 
     if !state.recession_active {
-        deposit_jpy_surplus(state, cfg, jpy_surplus);
+        deposit_jpy_surplus(state, cfg, jpy_surplus, target_base_jpy);
         deposit_usd_surplus(state, cfg, usd_surplus, current_date, target_base_jpy);
     } else {
         state.war_chest_jpy   += jpy_surplus;
@@ -635,18 +628,43 @@ fn manage_monthly_cashflow_cautious(
 //  Surplus deposit helpers (Defensive path)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn deposit_jpy_surplus(state: &mut SimState, cfg: &Config, jpy_surplus: f64) {
+/// V8.4 — JPY surplus routing: fill war chest, then convert overflow to USD
+/// for bridge fund (cross-currency), then leave any residual in war chest.
+fn deposit_jpy_surplus(state: &mut SimState, cfg: &Config, jpy_surplus: f64, target_base_jpy: f64) {
     if jpy_surplus <= 0.0 { return; }
-    let gap = (cfg.war_chest_target_jpy - state.war_chest_jpy).max(0.0);
-    let fill = jpy_surplus.min(gap);
-    if fill > 0.0 {
-        state.war_chest_jpy += fill;
+    let penalty = cfg.fx_spread_penalty.clamp(0.0, 0.99);
+    let fx = state.current_fx;
+
+    // 1. Fill war chest up to target.
+    let wc_gap = (cfg.war_chest_target_jpy - state.war_chest_jpy).max(0.0);
+    let wc_fill = jpy_surplus.min(wc_gap);
+    state.war_chest_jpy += wc_fill;
+    let overflow_jpy = jpy_surplus - wc_fill;
+
+    if overflow_jpy <= 0.0 { return; }
+
+    // 2. War chest full: convert overflow JPY → USD and fill bridge fund.
+    if cfg.bridge_fund_enabled {
+        let bridge_target_usd = target_base_jpy * cfg.bridge_months_target as f64 / fx;
+        let bridge_gap_usd = (bridge_target_usd - state.bridge_fund_usd).max(0.0);
+        if bridge_gap_usd > 0.0 {
+            let jpy_needed = bridge_gap_usd * fx / (1.0 - penalty);
+            let jpy_spent = jpy_needed.min(overflow_jpy);
+            let usd_net = (jpy_spent / fx) * (1.0 - penalty);
+            let pen_jpy = jpy_spent * penalty;
+            state.bridge_fund_usd += usd_net;
+            state.stats.year_fx_penalty_jpy += pen_jpy;
+            state.war_chest_jpy += overflow_jpy - jpy_spent;
+            return;
+        }
     }
-    // Any JPY surplus beyond WC target: leave in war chest (simplification —
-    // JPY equity purchases would require a JPY brokerage, out of scope for V7.1).
-    state.war_chest_jpy += jpy_surplus - fill;
+
+    // Both buffers full or bridge disabled: leave remainder in war chest.
+    state.war_chest_jpy += overflow_jpy;
 }
 
+/// V8.4 — USD surplus routing: fill bridge fund, then convert overflow to JPY
+/// for war chest (cross-currency), then reinvest any residual in VTI/SCHD.
 fn deposit_usd_surplus(
     state: &mut SimState,
     cfg: &Config,
@@ -655,24 +673,68 @@ fn deposit_usd_surplus(
     desired_spend_jpy: f64,
 ) {
     if usd_surplus <= 0.0 { return; }
-    state.bridge_fund_usd += usd_surplus;
+    let penalty = cfg.fx_spread_penalty.clamp(0.0, 0.99);
+    let fx = state.current_fx;
+    let bridge_target_usd = desired_spend_jpy * cfg.bridge_months_target as f64 / fx;
 
-    let target_bridge_usd = desired_spend_jpy * cfg.bridge_months_target as f64 / state.current_fx;
-    let investable = state.bridge_fund_usd - target_bridge_usd;
-    if investable <= 0.0 { return; }
+    // 1. Fill bridge fund up to target.
+    let bridge_gap = (bridge_target_usd - state.bridge_fund_usd).max(0.0);
+    let bridge_fill = usd_surplus.min(bridge_gap);
+    state.bridge_fund_usd += bridge_fill;
+    let overflow_usd = usd_surplus - bridge_fill;
 
-    let vti_amt  = investable * cfg.target_vti_pct;
-    let schd_amt = investable * cfg.target_schd_pct;
+    if overflow_usd <= 0.0 { return; }
+
+    // 2. Bridge full: convert overflow USD → JPY and fill war chest.
+    let mut remaining_usd = overflow_usd;
+    if cfg.war_chest_enabled {
+        let wc_gap_jpy = (cfg.war_chest_target_jpy - state.war_chest_jpy).max(0.0);
+        if wc_gap_jpy > 0.0 {
+            let (full_jpy_net, full_pen_jpy) = convert_usd_to_jpy(remaining_usd, fx, penalty);
+            if full_jpy_net > 0.0 {
+                let wc_fill_jpy = full_jpy_net.min(wc_gap_jpy);
+                let frac = wc_fill_jpy / full_jpy_net;
+                let usd_consumed = remaining_usd * frac;
+                state.war_chest_jpy += wc_fill_jpy;
+                state.stats.year_fx_penalty_jpy += full_pen_jpy * frac;
+                remaining_usd -= usd_consumed;
+            }
+        }
+    }
+
+    if remaining_usd <= 0.0 { return; }
+
+    // 3. Both buffers full: reinvest remaining USD in VTI/SCHD per target allocations.
+    let vti_amt  = remaining_usd * cfg.target_vti_pct;
+    let schd_amt = remaining_usd * cfg.target_schd_pct;
     let vti_p    = MarketDataService::fallback_price("VTI");
     let vti_g    = cfg.growth_rates_annual.get("VTI").copied().unwrap_or(0.08);
     let schd_p   = MarketDataService::fallback_price("SCHD");
     let schd_g   = cfg.growth_rates_annual.get("SCHD").copied().unwrap_or(0.09);
-    let fx = state.current_fx;
+    state.bridge_fund_usd += remaining_usd;
     if let Some(taxable) = state.accounts.get_mut("Taxable") {
         let spent_vti  = taxable.buy_with_fx("VTI",  vti_amt,  current_date, vti_p,  vti_g,  fx);
         let spent_schd = taxable.buy_with_fx("SCHD", schd_amt, current_date, schd_p, schd_g, fx);
         state.bridge_fund_usd -= spent_vti + spent_schd;
     }
+}
+
+/// V8.4 — Alt-mode: returns true if the Taxable portfolio can cover minimum
+/// spending for all remaining simulation months (coarse no-growth projection).
+fn stock_can_sustain_minimum_for_remaining(
+    state: &SimState,
+    cfg: &Config,
+    target_min_jpy: f64,
+) -> bool {
+    if target_min_jpy <= 0.0 { return true; }
+    let start = state.date;
+    let end = cfg.end_date;
+    let months_remaining = ((end.year() - start.year()) * 12
+        + end.month() as i32 - start.month() as i32).max(0) as f64;
+    let taxable_value_jpy = state.accounts.get("Taxable")
+        .map(|a| a.total_value(state.current_fx))
+        .unwrap_or(0.0);
+    taxable_value_jpy >= target_min_jpy * months_remaining
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

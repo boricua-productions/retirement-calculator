@@ -637,6 +637,7 @@ mod tests {
             kaigo_hoken_enabled: true,
             kaigo_hoken_brackets: None,
             kaigo_care_scenario: crate::engine::tax::kaigo_hoken::CareScenario::None,
+            prefer_liquidation_over_belt_tightening: false,
         }
     }
 }

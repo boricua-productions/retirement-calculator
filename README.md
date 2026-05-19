@@ -1,16 +1,20 @@
-# Retirement Calculator — V8.3: Input UX & Diagnostics Polish
+# Retirement Calculator — V8.4: Conservative-Default Cashflow Waterfall
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
 spouse, long-term resident, or permanent resident visas.
 
-> **Dividend Focus.** The engine is heavily focused on **living off portfolio income before
-> selling stock**. In the current defensive waterfall, native JPY income (including the Jido Teate child
-> allowance) and the JPY war chest are used first, USD income and bridge cash are converted with
-> an FX spread penalty, an Education-tagged stream bypasses the main waterfall through a dedicated
-> Tier 2.5 bucket, a Tier 9 Estate Planning Gift Sink diverts annual surplus before buffering, and
-> equity liquidation is the last resort. Every snapshot still reports a Dividend Coverage Ratio so
-> you can tell, year by year, whether your portfolio is self-funding.
+> **Conservative Default Waterfall.** The V8.4 engine covers monthly expenses in this order:
+> **(1) floor income** — all guaranteed income first: Nenkin, DC payouts, FERS, VA, SS, SSDI, and
+> rental income; **(2) Bridge Fund** (USD → JPY with FX penalty); **(3) War Chest** (JPY, no FX
+> cost); **(4) belt-tightening** — drop to minimum spend; **(5) HELOC draw**; **(6) stock
+> liquidation** — last resort. Dividends are **never** used directly for expenses; instead they
+> refill the buffers: USD dividends fill the Bridge Fund first, then overflow converts to JPY for
+> the War Chest; JPY dividends fill the War Chest first, then overflow converts to USD for the
+> Bridge Fund. An Education-tagged stream bypasses the main waterfall through a dedicated Tier 2.5
+> bucket, a Tier 9 Estate Planning Gift Sink diverts annual surplus before buffering, and every
+> snapshot reports a Dividend Coverage Ratio so you can see year-by-year whether the portfolio is
+> self-funding.
 
 The engine assumes ordinary Japan resident tax and National Health Insurance exposure unless a
 scenario explicitly changes the tax settings. It is not a SOFA, TRICARE, base-access, or
@@ -22,7 +26,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 8.3.0 (Internal Logic: V8.3 — Input UX & Diagnostics Polish)
+> **Version:** Cargo package 8.4.0 (Internal Logic: V8.4 — Conservative-Default Cashflow Waterfall)
 ---
 
 ## Beginner Quick Start
@@ -297,17 +301,18 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 | Field | What it is for |
 |-------|----------------|
-| **Enable War Chest** *(V7.10.1)* | Master toggle for JPY emergency reserve funding. When disabled, retirement transition skips war chest funding entirely and post-retirement waterfall Tier 3 is bypassed. Default: enabled. |
+| **Enable War Chest** *(V7.10.1)* | Master toggle for JPY emergency reserve funding. When disabled, retirement transition skips war chest funding entirely and the War Chest step is bypassed in the V8.4 waterfall. Default: enabled. |
 | **War Chest Funding Timing** *(V7.11)* | When to build the war chest: **At Retirement** (liquidate portfolio shares on retirement date) or **Gradually Before Retirement** (divert monthly income during ramp period). Default: At Retirement. |
 | **War Chest Ramp Months** *(V7.11)* | Number of months before retirement to start gradual accumulation. Only used when Gradually Before Retirement is selected. Default: 24 months. Longer ramp = smaller monthly diversion but more months of missed market growth. |
-| **War Chest Target (JPY)** | Target JPY emergency reserve. The defensive waterfall taps this at Tier 3 before USD bridge cash. Only active when War Chest is enabled. |
+| **War Chest Target (JPY)** | Target JPY emergency reserve. The V8.4 waterfall taps this **after** Bridge Fund (no FX conversion needed). Only active when War Chest is enabled. |
 | **Already Set Aside (JPY)** *(V7.10.1)* | JPY already earmarked for the war chest (savings account, envelope, etc.). The model liquidates portfolio shares only to cover the gap: Target minus this amount. |
 | **War Chest Target (USD)** | Legacy USD target retained for compatibility. V7.2 treats the active war chest as JPY. |
-| **Enable Bridge Fund** *(V7.10.1)* | Master toggle for USD operating liquidity buffer. When disabled, retirement transition skips bridge fund funding and post-retirement waterfall Tier 6 is bypassed. Default: enabled. |
+| **Enable Bridge Fund** *(V7.10.1)* | Master toggle for USD operating liquidity buffer. When disabled, retirement transition skips bridge fund funding and the Bridge Fund step is bypassed in the waterfall. Default: enabled. |
 | **Bridge Fund Funding Timing** *(V7.11)* | When to build the bridge fund: **At Retirement** or **Gradually Before Retirement**. Same mechanics as War Chest timing. Default: At Retirement. |
 | **Bridge Fund Ramp Months** *(V7.11)* | Number of months before retirement to start gradual bridge accumulation. Only used when Gradually Before Retirement is selected. Default: 18 months. |
 | **Bridge Fund Months** | Target months of expense shortfall to hold in USD cash. The model calculates the dollar target based on expenses minus guaranteed income. Only active when Bridge Fund is enabled. |
 | **Already Set Aside (USD)** *(V7.10.1)* | USD already earmarked for the bridge fund. The model liquidates shares only to cover the gap. |
+| **Prefer Stock Liquidation Over Belt-Tightening** *(V8.4)* | Alt-mode toggle. When enabled: if the Taxable portfolio can cover minimum spending through the end of the simulation (coarse no-growth projection), the engine skips belt-tightening and sells stock directly to cover the full base-level gap. When disabled (default, conservative): belt-tighten first, then liquidate. Corresponds to `prefer_liquidation_over_belt_tightening` in JSON. |
 | **Pre-Funded War Chest (JPY)** | *(Deprecated in favor of "Already Set Aside (JPY)" UI field — both map to the same config value for backward compatibility.)* |
 | **Pre-Funded Bridge (USD/JPY)** | *(Deprecated in favor of "Already Set Aside (USD)" UI field — USD bridge is the active V7.2 operating reserve.)* |
 | **Pre-Funded Japan Tax / US Tax** | Cash reserved at the start for known tax bills. |
@@ -336,9 +341,9 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 ---
 
-## V7.5–V8.2 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
+## V7.5–V8.4 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
 
-The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), V8.1 detailed expense entry by category with location-aware NHI settings, and V8.2 UX Clarity Pass (tab reorder, per-account snapshots, plain-English retirement verdict).
+The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), V8.1 detailed expense entry by category with location-aware NHI settings, V8.2 UX Clarity Pass (tab reorder, per-account snapshots, plain-English retirement verdict), V8.3 Input UX & Diagnostics Polish, and V8.4 Conservative-Default Cashflow Waterfall redesign.
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -375,33 +380,38 @@ therefore grosses up each share sale by the state rate and records it in
 V7.5 extends the V7.4 **Defensive** spending waterfall with Tier 9 (gift sink) and fixes two
 engine defects: Japan-side capital losses are now tracked for a 3-year carry-forward (IT Act
 Art. 37-12-2), and the Mode B 4-month oracle now accounts for T9 gift and education draws.
-The full nine-tier waterfall and dual-regime dispatch:
+The V8.4 waterfall and dual-regime dispatch:
 
-- Tier 0   — JPY Floor: Nenkin and DC payouts.
-- **Tier 0.5 — Jido Teate (児童手当):** bi-monthly child allowance paid in even calendar months. V7.4 implements a Monthly Accrual Logic: the engine calculates the eligibility rate for each individual month in the cycle separately. This ensures 100% precision (¥0 drift) during transition years when a child turns 3 or 18. No
-  income cap is modeled. Toggled with `jido_teate_enabled`.
-- Tier 1   — JPY Dividends (lumpy: only on the asset's declared payout months).
+- Tier 0   — JPY Floor Income: Nenkin, DC payouts, JPY rental.
+- **Tier 0.5 — Jido Teate (児童手当):** bi-monthly child allowance paid in even calendar months. V7.4 implements a Monthly Accrual Logic: the engine calculates the eligibility rate for each individual month in the cycle separately. This ensures 100% precision (¥0 drift) during transition years when a child turns 3 or 18. No income cap is modeled. Toggled with `jido_teate_enabled`.
+- Tier 1   — JPY Dividends: **not used for expense coverage.** All dividend receipts flow directly into the surplus deposit helpers (see below).
 - Tier 2   — Reserved.
 - **Tier 2.5 — Education Fund:** dedicated JPY bucket. Surplus skim deposits
   `edu_savings_jpy_monthly` per month; expense rules whose name contains
   `Education` are paid from this bucket BEFORE touching the main waterfall and
   fall through directly to a Tier-8 sale if the bucket is empty.
-- Tier 3   — JPY War Chest.
-- Tier 4   — USD Floor Income (+0.5% FX Penalty).
-- Tier 5   — USD Dividends (+0.5% FX Penalty).
-- Tier 6   — USD Bridge Fund (+0.5% FX Penalty).
-- Tier 7   — Belt-tightening.
+- Step 2   — USD Floor Income: FERS, VA, SS, SSDI, USD rental (→ JPY with FX penalty). **(V8.4: moved before Bridge Fund and War Chest.)**
+- Step 3   — USD Bridge Fund (+0.5% FX Penalty). **(V8.4: drawn before War Chest.)**
+- Step 4   — JPY War Chest. **(V8.4: drawn after Bridge Fund, no FX cost.)**
+- Tier 5   — USD Dividends: **not used for expense coverage.** All dividend receipts flow directly into the surplus deposit helpers (see below).
+- Tier 7   — Belt-tightening: drop target from Base to Minimum floor. (V8.4: fires only when gap > 0; the legacy "cash buffers at zero" early-trigger is removed.)
+- Tier 7.5 — HELOC Draw (when configured).
 - Tier 8   — Stock Liquidation (+0.5% FX Penalty).
 - **Tier 9 — Estate Planning Gift Sink (V7.5):** once per year (December), annual JPY surplus is diverted to gift recipients at `annual_gift_jpy_per_recipient × gift_recipient_count` (暦年贈与, max ¥1.1M/recipient tax-free). Each recipient's gift is checked against the US §2503(b) annual exclusion ($19k in 2026) and `year_form_709_required` is flagged when exceeded.
 
-USD-to-JPY conversions in tiers 4, 5, 6, and 8 apply `fx_spread_penalty`
+**V8.4 Dividend surplus routing** (both JPY and USD dividends are deposited here, never to expenses):
+
+- *USD surplus* — fills Bridge Fund up to target; overflow converts to JPY (with `fx_spread_penalty`) and fills War Chest; any remaining reinvests in VTI/SCHD.
+- *JPY surplus* — fills War Chest up to target; overflow converts to USD (with `fx_spread_penalty`) and fills Bridge Fund; any remaining stays in War Chest.
+
+USD-to-JPY conversions in Steps 2, 3, 8 and cross-currency surplus routing apply `fx_spread_penalty`
 (`0.005` by default). The legacy V7.0-style `Cautious` waterfall is still
 available with `withdrawal_waterfall: "cautious"`.
 
 Tax-advantaged accounts (Roth IRA, 401(k), Japan DC / iDeCo, NISA) are
 **excluded from the cashflow waterfall** — their dividends DRIP internally and
 are never visible to the monthly gap calculation. Only assets in the Taxable
-account participate in T1/T5 dividends and T8 liquidation.
+account participate in T8 liquidation and dividend surplus routing.
 
 ### Withdrawal Regimes — Mode A vs Mode B
 
@@ -409,12 +419,12 @@ The `withdrawal_regime` setting selects how the Defensive waterfall manages
 its cash buffers once Tier 0 through Tier 6 have been consumed:
 
 - **`shielded` — Mode A (default).** "Preserve equity at all costs."
-  Exhaust monthly inflows, drain the JPY war chest, drain the USD bridge.
+  After floor income (Step 1), the waterfall drains the USD Bridge Fund (Step 2), then the JPY War Chest (Step 3).
   Then, in this strict order:
-  1. **Tier 7 — Belt-tightening (Mandatory Check).** In Mode A, if the Tier 6 USD Bridge Fund is exhausted, the engine must drop spending to the Minimum Monthly floor before a sale is allowed. Tier 8 (Stock Liquidation) is then sized specifically to cover only the remaining *minimum* gap, preserving as much equity as possible.
+  1. **Tier 7 — Belt-tightening.** If any gap remains after Steps 1–3, the engine drops spending to the Minimum Monthly floor before a sale is allowed. *(V8.4: fires only when gap > 0 — the legacy "both buffers at zero" early-trigger has been removed. Use `prefer_liquidation_over_belt_tightening: true` to skip belt-tighten when the Taxable portfolio can sustain minimum spending through end of simulation.)*
   2. **Tier 8 — Stock liquidation fires SECOND, sized against the minimum
      gap.** A sale only happens when even the *Minimum* floor cannot be funded
-     by Tiers 0–7 combined; the sale is sized to cover that residual minimum
+     by all earlier steps combined; the sale is sized to cover that residual minimum
      gap, never the original Base gap. The result: in lean months the engine
      sells only enough equity to keep the household at the floor.
 - **`dynamic` — Mode B (V7.4 Hardened).** "Treat buffer levels as
@@ -443,6 +453,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V8.4.0** | Conservative-Default Cashflow Waterfall: new expense-coverage order — floor income (JPY then USD) → Bridge Fund → War Chest → belt-tighten → HELOC → liquidation. Dividends (JPY and USD) no longer cover expenses directly; all dividend receipts flow to buffer deposit helpers with cross-currency overflow (USD surplus → bridge → overflow converts to JPY for war chest; JPY surplus → war chest → overflow converts to USD for bridge). The legacy "cash buffers at zero" early belt-tighten trigger removed; belt-tighten now fires only when a real spending gap remains. New `prefer_liquidation_over_belt_tightening` flag (default false): when true, skips belt-tightening if the Taxable portfolio can sustain minimum spending through end of simulation (coarse no-growth projection). UI checkbox added in Financial Buffers section. |
 | **V8.3.0** | Input UX & Diagnostics Polish: collapsible Input Config sections with invalid-field counts in headers; comparison panel expanded (retirement verdict, dividend coverage ×, worst drawdown, cumulative US+Japan tax, years-of-expense headroom, per-scenario solvency warnings); target allocations now per-account (`target_allocations[account][ticker]`); rebalance date persists across Save→Reload; Accum $/mo displays `0` for new rows; Spouse Japan Misc Income zero no longer flags red; Invesco expense-ratio parser anchored to structured JSON field; auto-fetch log noise reduced. |
 | **V8.2.0** | UX Clarity Pass: tab reorder, per-account snapshots, plain-English retirement verdict, country/year labels. |
 | **V8.1** | Detailed Expense Entry by Category — **New "Detailed" mode** in the Monthly Expenses section lets users build their budget from up to 29 named line items grouped into **Essential** (drives both base and minimum spending) and **Discretional** (drives base only). Each category carries an `amount_jpy`, billing cadence (`frequency_months`), optional `end_date`, and a free-text `note`. **Minimum-expense buffer**: three modes — `none`, fixed JPY/mo, or `% of essentials sum` — added on top of the essentials floor. **Synthetic stop-rules**: when a category has an `end_date` inside the simulation window the loader generates a negative `ExpenseRule` with `inflate: true` so the stop tracks CPI alongside the base scalars; Essential stops also reduce `base_floor` while Discretional stops do not. **NHI double-counting guard**: a `looks_like_reserved_category` deny-list (NHI / 国民健康保険 / juminzei / 住民税 / resident tax) prevents user categories from entering values that the NHI engine already computes separately; matching rows are highlighted with a red border and stripped on save. **Location-aware NHI section redesign**: the old "Load Sagamihara 2026 Defaults" button is replaced by a "Location: Prefecture / City" read-out drawn from the global Japan Location plus an "Apply NHI rates for selected city" button that stamps an **Authoritative** or **Estimate** provenance badge. A non-modal blue nudge appears when the Japan Location changes after rates were applied — it does NOT auto-overwrite. **Non-destructive mode toggle**: both the simple scalars and the detailed categories array are always persisted in JSON; switching modes never destroys data. **Derived totals panel**: a live summary frame shows `Base = Essentials + Discretional + Buffer` and `Minimum = Essentials + Buffer` with a ⚠ warning when minimum > base. **Engine unchanged**: the cashflow engine still consumes `base_expense_jpy` / `min_expense_jpy` scalars; categories are a loader/UI concern. New `apply_to_floor: bool` and `inflate: bool` flags added to `ExpenseRule` (default-true / default-false, fully backward-compatible). New JSON fields: `expenses_detailed_mode`, `expense_categories`, `min_expense_buffer_jpy`, `min_expense_buffer_pct`. 10 new tests; **246 total**. |
@@ -491,7 +502,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V8.2)](#16-hardening--compliance-v75--v82)
+16. [Hardening & Compliance (V7.5 → V8.4)](#16-hardening--compliance-v75--v84)
 
 ---
 
@@ -1395,17 +1406,18 @@ values.
 | `min_monthly_expenses_jpy` | Minimum Monthly | `f64` | `600,000` | Floor spending if income is insufficient to cover desired |
 | `nhi_spike_monthly_jpy` | Legacy NHI Spike Monthly | `f64` | `73,333` | Backward-compatible legacy field. V6.5 uses `nhi_model` for active NHI calculation. |
 | `nenkin_monthly_household_jpy` | — | `f64` | `35,020` | Household Nenkin *contribution* expense embedded in base; only the excess over `nenkin_baseline_annual_jpy` is a separate charge |
-| `war_chest_enabled` *(V7.10.1)* | Enable War Chest | `bool` | `true` | Master toggle for JPY emergency reserve. When `false`, retirement transition skips war chest funding and Tier 3 is bypassed in post-retirement cashflow. |
+| `war_chest_enabled` *(V7.10.1)* | Enable War Chest | `bool` | `true` | Master toggle for JPY emergency reserve. When `false`, retirement transition skips war chest funding and the War Chest step is bypassed in the V8.4 waterfall. |
 | `war_chest_funding_timing` *(V7.11)* | War Chest Funding Timing | string | `"at_retirement"` | Options: `"at_retirement"` (liquidate on retirement date) or `"gradually_before_retirement"` (divert monthly income during ramp). |
 | `war_chest_ramp_months` *(V7.11)* | War Chest Ramp Months | `u32` | `24` | Months before retirement to start gradual accumulation. Only used when timing is `"gradually_before_retirement"`. |
 | `war_chest_target_jpy` | War Chest Target (JPY) | `f64` | `7,000,000` | Emergency reserve target in JPY (when `war_chest_currency = "JPY"`) |
 | `war_chest_target_usd` | — | `f64` | `50,000` | Emergency reserve target in USD (when `war_chest_currency = "USD"`) |
 | `pre_funded_war_chest_jpy` | Already Set Aside (JPY) *(V7.10.1 UI)* | `f64` | `0` | JPY already earmarked for war chest. Model liquidates shares to cover gap (Target − this). |
-| `bridge_fund_enabled` *(V7.10.1)* | Enable Bridge Fund | `bool` | `true` | Master toggle for USD operating liquidity buffer. When `false`, retirement transition skips bridge fund funding and Tier 6 is bypassed. |
+| `bridge_fund_enabled` *(V7.10.1)* | Enable Bridge Fund | `bool` | `true` | Master toggle for USD operating liquidity buffer. When `false`, retirement transition skips bridge fund funding and the Bridge Fund step is bypassed in the V8.4 waterfall. |
 | `bridge_fund_funding_timing` *(V7.11)* | Bridge Fund Funding Timing | string | `"at_retirement"` | Options: `"at_retirement"` or `"gradually_before_retirement"`. Same mechanics as war chest timing. |
 | `bridge_fund_ramp_months` *(V7.11)* | Bridge Fund Ramp Months | `u32` | `18` | Months before retirement to start gradual bridge accumulation. Only used when timing is gradual. |
 | `bridge_fund_months_target` | Bridge Fund Months | `u32` | `12` | Target months of expense shortfall to keep in USD bridge cash. Only active when `bridge_fund_enabled = true`. |
 | `pre_funded_bridge_usd` | Already Set Aside (USD) *(V7.10.1 UI)* | `f64` | `0` | USD already earmarked for bridge fund. Model liquidates shares to cover gap. |
+| `prefer_liquidation_over_belt_tightening` *(V8.4)* | Prefer Stock Liquidation Over Belt-Tightening | `bool` | `false` | When `true` and the Taxable portfolio can sustain minimum spending through end of simulation, skip belt-tightening and liquidate stock to cover the full base gap. Default `false` (conservative). |
 | `pre_funded_japan_tax_jpy` | — | `f64` | `0` | Pre-reserved Japan tax cash at simulation start |
 | `pre_funded_us_tax_usd` | — | `f64` | `0` | Pre-reserved US tax cash at simulation start |
 | `dc_payout_method` | — | string | `ANNUITY_20YR` | `LUMP_SUM` (invested to Taxable) or `ANNUITY_20YR` (240 monthly draws) |
@@ -1849,7 +1861,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V8.2)
+## 16. Hardening & Compliance (V7.5 → V8.4)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
@@ -1888,7 +1900,14 @@ retirement verdict via `SimResults::retirement_verdict()`, and country/year labe
 V8.3 is an Input UX & Diagnostics Polish pass — collapsible Input Config sections with
 invalid-field counts in headers, expanded Comparison panel, per-account target allocations,
 rebalance-date persistence, Accum $/mo zero defaults, Spouse Japan Misc Income validation fix,
-and Invesco expense-ratio parser fix.
+and Invesco expense-ratio parser fix;
+V8.4 redesigns the conservative (Shielded) cashflow waterfall — USD floor income now precedes
+the Bridge Fund and War Chest in the expense coverage order, dividends are removed from direct
+expense coverage and rerouted entirely through buffer deposit helpers with cross-currency overflow
+(USD surplus → bridge → convert to JPY for war chest; JPY surplus → war chest → convert to USD
+for bridge), the legacy cash-zero belt-tighten early-trigger is removed, and a new
+`prefer_liquidation_over_belt_tightening` alt-mode flag lets advanced users skip belt-tightening
+when their Taxable portfolio can sustain minimum spending through end of simulation.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income

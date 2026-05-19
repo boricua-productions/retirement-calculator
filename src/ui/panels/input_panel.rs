@@ -353,6 +353,7 @@ pub struct InputPanelState {
     pub bridge_fund_enabled:       bool,
     pub bridge_months:             String,
     pub pre_funded_bridge_usd:     String,
+    pub prefer_liquidation_over_belt_tightening: bool,
     // ── Market simulation ────────────────────────────────────────────────────
     pub fx_drift_enabled:   bool,
     pub fx_drift_rate:      String,
@@ -548,6 +549,7 @@ impl Default for InputPanelState {
             bridge_fund_enabled:     true,
             bridge_months:           "0".into(),
             pre_funded_bridge_usd:   "0".into(),
+            prefer_liquidation_over_belt_tightening: false,
             fx_drift_enabled:   false,
             fx_drift_rate:      "0.02".into(),
             recession_enabled:  false,
@@ -1135,6 +1137,7 @@ impl InputPanelState {
             bridge_fund_enabled:      bool_val("bridge_fund_enabled",       true),
             bridge_months:            num_str("bridge_fund_months_target",  "0"),
             pre_funded_bridge_usd:    num_str("pre_funded_bridge_usd",      "0"),
+            prefer_liquidation_over_belt_tightening: bool_val("prefer_liquidation_over_belt_tightening", false),
             fx_drift_enabled:   bool_val("simulate_yen_strengthening",      false),
             fx_drift_rate:      num_str("fx_drift_rate_annual",             "0.02"),
             recession_enabled:  bool_val("simulate_recession_at_retirement", false),
@@ -1483,6 +1486,7 @@ impl InputPanelState {
             set_bool!("bridge_fund_enabled",      self.bridge_fund_enabled);
             set_f64!("bridge_fund_months_target", self.bridge_months);
             set_f64!("pre_funded_bridge_usd",     self.pre_funded_bridge_usd);
+            set_bool!("prefer_liquidation_over_belt_tightening", self.prefer_liquidation_over_belt_tightening);
             set_bool!("simulate_yen_strengthening",       self.fx_drift_enabled);
             set_f64!("fx_drift_rate_annual",              self.fx_drift_rate);
             set_bool!("simulate_recession_at_retirement", self.recession_enabled);
@@ -4208,6 +4212,16 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                      liquidate shares to cover the gap.");
             });
         }
+        ui.add_space(6.0);
+        ui.checkbox(&mut state.prefer_liquidation_over_belt_tightening,
+            "Prefer Stock Liquidation Over Belt-Tightening")
+            .on_hover_text(
+                "When enabled: if your Taxable portfolio can cover minimum spending through the end \
+                 of the simulation, the model skips belt-tightening and sells stock to cover the \
+                 full base-level gap instead.\n\n\
+                 When disabled (default): belt-tighten first — drop spending to the minimum floor — \
+                 before touching stocks. More conservative; preserves equity longer.\n\n\
+                 Note: this is a coarse projection (no growth or inflation adjustment).");
         ui.add_space(8.0);
 
         });

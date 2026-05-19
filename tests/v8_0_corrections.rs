@@ -167,6 +167,7 @@ fn working_config(model_active_res_tax: bool) -> Config {
         kaigo_care_scenario: retirement_calculator::engine::tax::kaigo_hoken::CareScenario::None,
         primary_taxpayer_visa: VisaType::Table1,
         model_active_phase_resident_tax: model_active_res_tax,
+        prefer_liquidation_over_belt_tightening: false,
     }
 }
 

@@ -564,6 +564,7 @@ mod tests {
             // V8.0 defaults
             primary_taxpayer_visa: crate::models::config::VisaType::Table1,
             model_active_phase_resident_tax: false,
+            prefer_liquidation_over_belt_tightening: false,
         }
     }
 

@@ -1086,4 +1086,12 @@ pub struct Config {
     /// None = premium only; Low/Medium/High add projected care draws.
     #[serde(default)]
     pub kaigo_care_scenario: crate::engine::tax::kaigo_hoken::CareScenario,
+
+    // ── V8.4 — Conservative Waterfall Alt-Mode ──────────────────────────────
+    /// V8.4 — When true, skip belt-tightening and liquidate stock first if the
+    /// Taxable portfolio can sustain minimum spending through the end of the
+    /// simulation (coarse projection: no growth/inflation adjustment).
+    /// Default false (conservative: belt-tighten before liquidating).
+    #[serde(default)]
+    pub prefer_liquidation_over_belt_tightening: bool,
 }

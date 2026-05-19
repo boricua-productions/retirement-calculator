@@ -192,6 +192,7 @@ fn scenario_cfg() -> Config {
         kaigo_care_scenario: retirement_calculator::engine::tax::kaigo_hoken::CareScenario::None,
         primary_taxpayer_visa: retirement_calculator::models::config::VisaType::Table1,
         model_active_phase_resident_tax: false,
+        prefer_liquidation_over_belt_tightening: false,
     }
 }
 
