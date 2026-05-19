@@ -2949,7 +2949,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
 
                         if num_accounts > 1 {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("✕ Remove").clicked() {
+                                if ui.small_button("🗑 Remove").clicked() {
                                     remove_account = Some(acct_idx);
                                 }
                             });
@@ -3083,7 +3083,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                         .hint_text("e.g. 8.0").desired_width(50.0)
                                         .id(egui::Id::new("fg").with(acct_idx).with(fi)));
                                     ui.checkbox(&mut state.accounts[acct_idx].dc_funds[fi].stop_at_retirement, "");
-                                    if ui.small_button("✕").clicked() { remove_fund = Some(fi); }
+                                    if ui.small_button("🗑").clicked() { remove_fund = Some(fi); }
                                     ui.end_row();
                                 }
                                 if let Some(idx) = remove_fund {
@@ -3273,7 +3273,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                                             toggle_mgmt = Some((acct_idx, pos_idx));
                                         }
 
-                                        if ui.small_button("✕").on_hover_text("Remove this position").clicked() {
+                                        if ui.small_button("🗑").on_hover_text("Remove this position").clicked() {
                                             remove_position = Some((acct_idx, pos_idx));
                                         }
 
@@ -3745,7 +3745,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                     .desired_width(110.0))
                     .on_hover_text("Full birthdate (V6.6). Drives VA child rider cutoff at the exact 18th/23rd birthday.");
                 ui.checkbox(&mut dep.is_college_student, RichText::new("College Student (VA eligible to age 23)").small());
-                if ui.small_button("✕").on_hover_text("Remove this dependent").clicked() {
+                if ui.small_button("🗑").on_hover_text("Remove this dependent").clicked() {
                     remove_dep = Some(dep_idx);
                 }
             });
@@ -4188,7 +4188,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             ui.selectable_value(&mut heir.relationship, HeirRelationship::Child,  "Child");
                             ui.selectable_value(&mut heir.relationship, HeirRelationship::Other,  "Other");
                         });
-                    if ui.small_button("✕").clicked() {
+                    if ui.small_button("🗑").clicked() {
                         to_remove = Some(idx);
                     }
                 });
@@ -4414,7 +4414,7 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                         {
                             rsu_toggle_profile = Some(rsu_idx);
                         }
-                        if ui.small_button("✕").clicked() {
+                        if ui.small_button("🗑").clicked() {
                             remove_rsu = Some(rsu_idx);
                         }
                         ui.end_row();
@@ -4715,15 +4715,15 @@ fn render_category_group(
                         .fill(Color32::from_rgba_unmultiplied(180, 30, 30, 60))
                         .stroke(egui::Stroke::new(1.5, Color32::from_rgb(220, 60, 60)))
                         .show(ui, |ui| {
-                            ui.add(egui::TextEdit::singleline(&mut cat.name).desired_width(220.0))
+                            ui.add(egui::TextEdit::singleline(&mut cat.name).desired_width(660.0))
                                 .on_hover_text("⚠ This name matches an engine-computed stream (NHI / 住民税). It will be stripped on save to prevent double-counting.");
                         });
                 } else {
-                    ui.add(egui::TextEdit::singleline(&mut cat.name).desired_width(220.0));
+                    ui.add(egui::TextEdit::singleline(&mut cat.name).desired_width(660.0));
                 }
                 ui.add(egui::TextEdit::singleline(&mut cat.amount_jpy).desired_width(100.0).hint_text("0"));
                 ui.add(egui::TextEdit::singleline(&mut cat.frequency_months).desired_width(60.0).hint_text("1"));
-                ui.add(egui::TextEdit::singleline(&mut cat.end_date).desired_width(110.0).hint_text("YYYY-MM-DD"));
+                ui.add(egui::TextEdit::singleline(&mut cat.end_date).desired_width(220.0).hint_text("YYYY-MM-DD"));
                 ui.add(egui::TextEdit::singleline(&mut cat.note).desired_width(220.0));
                 ui.horizontal(|ui| {
                     let label = match kind {
@@ -4733,7 +4733,7 @@ fn render_category_group(
                     if ui.small_button(label).on_hover_text("Move to the other group").clicked() {
                         move_idx = Some(i);
                     }
-                    if ui.small_button("\u{2715}").on_hover_text("Remove this category").clicked() {
+                    if ui.small_button("🗑").on_hover_text("Remove this category").clicked() {
                         delete_idx = Some(i);
                     }
                 });
