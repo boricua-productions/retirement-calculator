@@ -600,6 +600,9 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         roth_contribution_so_far: get_f64("roth_contributions_ytd_usd", 0.0),
         dc_monthly_jpy:            get_f64("japan_dc_monthly_contribution_jpy", 45_000.0),
         dc_growth_rate,
+        dc_employment_category: serde_json::from_value(
+            sets["dc_employment_category"].clone()
+        ).unwrap_or_default(),
         monthly_contribution_ticker: get_str("monthly_contribution_ticker", "VTI"),
         va_contribution_buffer_usd:  get_f64("va_contribution_buffer_usd",    800.0),
         nenkin_baseline_annual_jpy,
@@ -614,6 +617,10 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         va_child_cutoff_date: va_child_cutoff,
         dc_payout_start_age:  get_u32("dc_payout_start_age",  60),
         dc_payout_method:     get_str("dc_payout_method", "LUMP_SUM"),
+        dc_participation_start_date: sets["dc_participation_start_date"]
+            .as_str()
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
+        dc_years_participation_at_start: get_f64("dc_years_participation_at_start", 0.0),
         pre_funded_war_chest_jpy: get_f64("pre_funded_war_chest_jpy",  0.0),
         pre_funded_bridge_jpy:    get_f64("pre_funded_bridge_jpy",      0.0),
         pre_funded_bridge_usd:    get_f64("pre_funded_bridge_usd",      0.0),

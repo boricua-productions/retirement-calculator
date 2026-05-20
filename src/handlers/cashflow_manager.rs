@@ -841,7 +841,25 @@ fn compute_nhi_delta(
     (total_nhi_monthly - SimConstants::EMBEDDED_NHI_MONTHLY_JPY).max(0.0)
 }
 
+/// Returns participation years (rounded up) for 退職所得控除 N calculation.
+/// Uses dc_participation_start_date when set; otherwise derives from
+/// start_date − dc_years_participation_at_start.
+fn dc_participation_years(cfg: &Config, payout_date: NaiveDate) -> u32 {
+    let start = if let Some(d) = cfg.dc_participation_start_date {
+        d
+    } else {
+        // Fall back: simulation start_date minus already-accrued years.
+        let prior_days = (cfg.dc_years_participation_at_start * 365.25) as i64;
+        cfg.start_date - chrono::Duration::days(prior_days)
+    };
+    let days = (payout_date - start).num_days().max(0) as f64;
+    (days / 365.25).ceil() as u32
+}
+
 /// Compute DC payout in JPY for the Defensive path (Tier 0, JPY-native).
+/// Workstream B: applies 退職所得控除 on LUMP_SUM (分離課税; returns net proceeds).
+/// Workstream C: accumulates ANNUITY into year_dc_annuity_jpy for gross_pension.
+/// Workstream H: records gross USD distribution and Japan tax for US Saving Clause.
 fn compute_dc_payout_jpy(state: &mut SimState, cfg: &Config, current_date: NaiveDate) -> f64 {
     let payout_eligibility = {
         let age = cfg.dc_payout_start_age as i32;
@@ -855,9 +873,20 @@ fn compute_dc_payout_jpy(state: &mut SimState, cfg: &Config, current_date: Naive
         state.dc_payout_active = true;
         if cfg.dc_payout_method == "LUMP_SUM" && let Some(dc_acc) = state.accounts.get_mut("DC") {
             let g = dc_acc.liquidate_all(current_date);
+            let gross_jpy = g.proceeds;
+            let n_years = dc_participation_years(cfg, current_date);
+            let tax_jpy = JapanTaxEngine::retirement_income_tax_jpy(gross_jpy, n_years, current_date.year());
+            let net_jpy = (gross_jpy - tax_jpy).max(0.0);
             state.dc_months_remaining = 0;
-            info!("        Action: Lump Sum Payout ¥{:.0}", g.proceeds);
-            return g.proceeds;  // proceeds already in JPY
+            // Workstream E: record gross/tax for reporting
+            state.stats.year_dc_payout_gross_jpy += gross_jpy;
+            state.stats.year_dc_payout_tax_jpy   += tax_jpy;
+            // Workstream H: US Saving Clause — gross distribution and Japan tax for FTC
+            // Lump-sum 分離課税 tax goes directly to FTC pool; NOT also in year_japan_res_tax_jpy.
+            state.stats.year_dc_distribution_usd += gross_jpy / state.current_fx;
+            state.stats.year_dc_japan_tax_usd    += tax_jpy  / state.current_fx;
+            info!("        Action: Lump Sum Payout ¥{:.0} gross, ¥{:.0} tax (N={} yrs), ¥{:.0} net", gross_jpy, tax_jpy, n_years, net_jpy);
+            return net_jpy;
         }
     }
 
@@ -872,7 +901,15 @@ fn compute_dc_payout_jpy(state: &mut SimState, cfg: &Config, current_date: Naive
                 // qtr_inc_jpy is updated by the caller via monthly_earned_jpy (t0_jpy);
                 // do not add here to avoid double-counting.
                 state.dc_months_remaining -= 1;
-                return gain.proceeds;  // JPY proceeds from JPY-denominated DC account
+                let gross_jpy = gain.proceeds;
+                // Workstream C: add to gross_pension basis for 公的年金等控除 in controller
+                state.stats.year_dc_annuity_jpy    += gross_jpy;
+                // Workstream E: record gross for reporting (annuity tax settles via resident tax)
+                state.stats.year_dc_payout_gross_jpy += gross_jpy;
+                // Workstream H: US Saving Clause — gross USD distribution for general_ord
+                // Annuity Japan tax settles via resident tax path (credited like Nenkin)
+                state.stats.year_dc_distribution_usd += gross_jpy / state.current_fx;
+                return gross_jpy;  // JPY proceeds from JPY-denominated DC account
             }
         }
     }
@@ -880,6 +917,9 @@ fn compute_dc_payout_jpy(state: &mut SimState, cfg: &Config, current_date: Naive
 }
 
 /// Compute DC payout in USD for the Cautious legacy path.
+/// Workstream B: applies 退職所得控除 on LUMP_SUM (分離課税; returns net USD proceeds).
+/// Workstream C: accumulates ANNUITY into year_dc_annuity_jpy for gross_pension.
+/// Workstream H: records gross USD distribution and Japan tax for US Saving Clause.
 fn compute_dc_payout_usd(state: &mut SimState, cfg: &Config, current_date: NaiveDate) -> f64 {
     let payout_eligibility = {
         let age = cfg.dc_payout_start_age as i32;
@@ -893,10 +933,19 @@ fn compute_dc_payout_usd(state: &mut SimState, cfg: &Config, current_date: Naive
         state.dc_payout_active = true;
         if cfg.dc_payout_method == "LUMP_SUM" && let Some(dc_acc) = state.accounts.get_mut("DC") {
             let g = dc_acc.liquidate_all(current_date);
-            let usd = g.proceeds / state.current_fx;
+            let gross_jpy = g.proceeds;
+            let n_years = dc_participation_years(cfg, current_date);
+            let tax_jpy = JapanTaxEngine::retirement_income_tax_jpy(gross_jpy, n_years, current_date.year());
+            let net_usd = (gross_jpy - tax_jpy).max(0.0) / state.current_fx;
             state.dc_months_remaining = 0;
-            info!("        Action: Lump Sum Payout ${:.2}", usd);
-            return usd;
+            // Workstream E: record gross/tax for reporting
+            state.stats.year_dc_payout_gross_jpy += gross_jpy;
+            state.stats.year_dc_payout_tax_jpy   += tax_jpy;
+            // Workstream H: US Saving Clause — gross distribution and Japan tax for FTC
+            state.stats.year_dc_distribution_usd += gross_jpy / state.current_fx;
+            state.stats.year_dc_japan_tax_usd    += tax_jpy  / state.current_fx;
+            info!("        Action: Lump Sum Payout ${:.2} net (N={} yrs, ¥{:.0} tax)", net_usd, n_years, tax_jpy);
+            return net_usd;
         }
     }
 
@@ -911,7 +960,14 @@ fn compute_dc_payout_usd(state: &mut SimState, cfg: &Config, current_date: Naive
                 // qtr_inc_jpy is updated by the caller via total_new_money_jpy;
                 // do not add here to avoid double-counting.
                 state.dc_months_remaining -= 1;
-                return gain.proceeds / state.current_fx;
+                let gross_jpy = gain.proceeds;
+                // Workstream C: add to gross_pension basis for 公的年金等控除 in controller
+                state.stats.year_dc_annuity_jpy      += gross_jpy;
+                // Workstream E: record gross for reporting (annuity tax settles via resident tax)
+                state.stats.year_dc_payout_gross_jpy += gross_jpy;
+                // Workstream H: US Saving Clause — gross USD distribution for general_ord
+                state.stats.year_dc_distribution_usd += gross_jpy / state.current_fx;
+                return gross_jpy / state.current_fx;
             }
         }
     }

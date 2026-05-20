@@ -1,4 +1,4 @@
-//! Stage 05 — PFIC §1296 MTM Phantom Income & FX Drift Tests
+﻿//! Stage 05 — PFIC §1296 MTM Phantom Income & FX Drift Tests
 //!
 //! Acceptance criteria (from instructions/05_edge_case_pfic_mtm_drift.md):
 //!
@@ -79,6 +79,7 @@ fn pfic_config(track_drift: bool) -> Config {
         roth_contribution_so_far: 0.0,
         dc_monthly_jpy:   0.0,
         dc_growth_rate:   0.0,
+        dc_employment_category: Default::default(),
         monthly_contribution_ticker: "VTI".into(),
         va_contribution_buffer_usd:  0.0,
         nenkin_baseline_annual_jpy:  0.0,
@@ -93,6 +94,8 @@ fn pfic_config(track_drift: bool) -> Config {
         va_child_cutoff_date: None,
         dc_payout_start_age:  99,
         dc_payout_method:     "LUMP_SUM".into(),
+        dc_participation_start_date: None,
+        dc_years_participation_at_start: 0.0,
         pre_funded_war_chest_jpy: 6_000_000.0,
         pre_funded_bridge_jpy:   0.0,
         pre_funded_bridge_usd:   36_000.0,

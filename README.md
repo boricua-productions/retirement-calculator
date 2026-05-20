@@ -4,7 +4,7 @@ A desktop tool for modeling the financial future of **US expats and retirees liv
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
 spouse, long-term resident, or permanent resident visas.
 
-> **Conservative Default Waterfall.** The V8.5 engine covers monthly expenses in this order:
+> **Conservative Default Waterfall.** The V8.6 engine covers monthly expenses in this order:
 > **(1) floor income** — all guaranteed income first: Nenkin, DC payouts, FERS, VA, SS, SSDI, and
 > rental income; **(2) Bridge Fund** (USD → JPY with FX penalty); **(3) War Chest** (JPY, no FX
 > cost); **(4) belt-tightening** — drop to minimum spend; **(5) HELOC draw**; **(6) stock
@@ -32,7 +32,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 8.5.0 (Internal Logic: V8.6 — Buffer-Aware Retirement Verdict)
+> **Version:** Cargo package 8.6.0 (Internal Logic: V8.6 — Buffer-Aware Retirement Verdict)
 ---
 
 ## Beginner Quick Start
@@ -252,8 +252,11 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | **✨ Auto-Fetch** *(per fund, V7.11: non-blocking)* | Calls Yahoo's chart API in a background thread. For `.T` mutual-fund symbols, Yahoo returns 基準価額 in JPY per 10,000 units, so the value drops straight into Price (¥/万口). Total Return % is filled from the 10-year price CAGR. Shows a live timer (⏳ 2s) while fetching; timeouts after 25 seconds. |
 | **Allocation %** | Allocation weight for the DC fund row. |
 | **Total Return %** *(previously labelled "Custom Growth %")* | DC fund-specific annual total-return assumption (capital appreciation + reinvested distributions combined). DC accounts are tax-deferred and always reinvest internally, so this single CAGR drives all growth regardless of the DRIP toggle elsewhere. The DC plan also exposes a **Fallback Total Return %** for funds with no per-row value set. |
-| **DC Payout Method** | `LUMP_SUM` moves DC value into taxable at payout; `ANNUITY_20YR` pays monthly over 20 years. |
-| **DC Payout Start Age** | Age when DC payout begins. |
+| **DC Payout Method** | `LUMP_SUM` applies 退職所得控除 (Retirement Income Deduction) as 分離課税; net proceeds go to Taxable. `ANNUITY_20YR` pays monthly over 20 years under 公的年金等控除 (Public Pension Deduction), aggregated with Nenkin. |
+| **DC Payout Start Age** | Age when DC payout begins (minimum 60, must complete by 75; requires ≥ 10 participation years). |
+| **DC Employment Category** | Determines the NTA statutory monthly contribution cap: Self-employed ¥68k; Company/no DB/no corp DC ¥23k (default); Company/corp DC ¥55k; Company/DB or public servant ¥12k; Dependent spouse ¥23k. Contributions exceeding the cap are silently clamped and flagged with a `DcCapExceeded` warning. |
+| **DC Participation Start Date** | Date DC/iDeCo participation began (YYYY-MM-DD). Used to compute N (years of participation) for 退職所得控除 deduction. |
+| **DC Years Participation at Start** | Prior participation years already accrued before the simulation `start_date`. Fallback when the exact participation date is unknown. |
 
 #### Family Demographics
 
@@ -513,7 +516,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V8.5)](#16-hardening--compliance-v75--v85)
+16. [Hardening & Compliance (V7.5 → V8.6)](#16-hardening--compliance-v75--v86)
 
 ---
 
@@ -1434,8 +1437,11 @@ values.
 | `war_chest_empty_date` *(V8.5)* | Empty Date | `YYYY-MM-DD` | *(absent)* | Date on which the war chest is liquidated into the Taxable portfolio when `war_chest_cap_policy = "empty_on_date"`. Omit the key to leave unset. |
 | `pre_funded_japan_tax_jpy` | — | `f64` | `0` | Pre-reserved Japan tax cash at simulation start |
 | `pre_funded_us_tax_usd` | — | `f64` | `0` | Pre-reserved US tax cash at simulation start |
-| `dc_payout_method` | — | string | `ANNUITY_20YR` | `LUMP_SUM` (invested to Taxable) or `ANNUITY_20YR` (240 monthly draws) |
-| `dc_payout_start_age` | — | `u32` | `60` | Age at which DC payout begins |
+| `dc_payout_method` | — | string | `ANNUITY_20YR` | `LUMP_SUM` — applies 退職所得控除 (分離課税) and delivers net proceeds to Taxable. `ANNUITY_20YR` — 240 monthly draws via 公的年金等控除 aggregated with Nenkin. Both paths feed the Article 17 / Saving Clause US ordinary-income stack and the §904 general-basket FTC credit. |
+| `dc_payout_start_age` | — | `u32` | `60` | Age at which DC payout begins. Must be ≥ 60 with ≥ 10 participation years; payout must complete by age 75. |
+| `dc_participation_start_date` | — | `YYYY-MM-DD` | *(absent)* | Date DC/iDeCo participation began. Drives N (participation years, rounded up) for 退職所得控除. When absent, N is derived from `start_date` minus `dc_years_participation_at_start`. |
+| `dc_years_participation_at_start` | — | `f64` | `0.0` | Fallback prior participation years already accrued before `start_date`. Used when `dc_participation_start_date` is unknown. |
+| `dc_employment_category` | — | enum | `cat2_no_corp_no_db` | NTA statutory monthly contribution cap by employment type. `cat1_self_employed` ¥68k; `cat2_no_corp_no_db` ¥23k (default); `cat2_has_corp_dc` ¥55k; `cat2_has_db` ¥12k; `cat2_public_servant` ¥12k; `cat3_dependent` ¥23k. Contributions exceeding the cap are clamped and a `DcCapExceeded` warning is emitted once per simulation. |
 | `jido_teate_enabled` *(V7.3)* | — | `bool` | `true` | Tier 0.5 Jido Teate child allowance. When `true` and a dependent child is age 0–18, pays ¥15k/mo (0–3) or ¥10k/mo (3–18) on a bi-monthly cadence. No income cap is modeled. |
 | `edu_savings_jpy_monthly` *(V7.3)* | Monthly Skim (JPY) | `f64` | `0` | Tier 2.5 Education Fund accumulation. Monthly JPY skim from post-spend surplus into the dedicated bucket. `0` disables the channel. UI gates this behind a **Fund Education** toggle in the Family Financial Planning section. |
 | `annual_gift_jpy_per_recipient` *(V7.5)* | JPY per Recipient / Year | `f64` | `0` | Tier 9 Estate Planning Gift Sink: annual JPY gift amount per recipient (typically ¥1,100,000 = 暦年贈与 exclusion). Fires once per year in December. |
@@ -1508,7 +1514,7 @@ a user-selected audit CSV, defaulting to the filename `simulation_audit.csv`.
 Each button displays a **green** confirmation or **red** error (e.g., file locked in Excel)
 that auto-clears after 5 seconds.
 
-### Audit CSV column reference (45 columns)
+### Audit CSV column reference (48 columns)
 
 | Column | Unit | Description |
 |--------|------|-------------|
@@ -1557,6 +1563,9 @@ that auto-clears after 5 seconds.
 | `Dist_Special_USD` *(V7.6)* | USD | Non-recurring distribution component |
 | `Dist_ROC_USD` *(V7.6)* | USD | Return-of-Capital cash received (non-taxable; basis-reducing) |
 | `RSUTaxShortfall_USD` *(V7.7.2)* | USD | Cumulative unpaid IRS/Japan RSU tax liability when sell-to-cover proceeds + all buffer fallbacks were insufficient to cover the combined tax bill |
+| `DC_Payout_Gross_JPY` | JPY | Gross DC/iDeCo distribution before Japan tax in this year |
+| `DC_Payout_Tax_JPY` | JPY | Japan tax withheld on DC distribution (退職所得控除 for lump-sum; resident-tax path for annuity) |
+| `DC_Payout_Net_JPY` | JPY | Net DC distribution delivered to Tier 0 floor income this year |
 
 ### `Retirement_Summary.txt` — section layout
 
@@ -1569,6 +1578,9 @@ that auto-clears after 5 seconds.
 5. RSU Vesting Summary           ← by ticker; FY2026 VIP Bonus detail
 6. Retirement Transition Event   ← sell/buy ledger, tax bill, war chest funding
 7. Annual Income vs Expense Summary
+8. JAPAN DC / iDeCo DISTRIBUTION ← payout method, participation years N, 退職所得控除/公的年金等控除
+                                    gross distributed, Japan tax, net delivered, lifetime totals;
+                                    emits "(no distribution — DC still accumulating)" when zero
 ```
 
 ---
@@ -1608,12 +1620,12 @@ Results appear across all tabs once the background thread completes. Reports are
 cargo test
 ```
 
-**246 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
+**260 tests** across all modules (plus 2 `#[ignore]`d live-network tests, run with `cargo test -- --ignored`):
 
 | Module | Tests | Coverage |
 |--------|-------|----------|
-| `engine::tax::us_tax` | 17 | LTCG brackets, NIIT, FTC, state tax, filing status, bracket inflation, ordinary income at brackets, SSDI combined income (5 tests: zero, below $32K, 50% tier, 85% taxable, 85% cap), MFS std deduction < MFJ, MFS LTCG threshold < MFJ |
-| `engine::tax::japan_tax` | 10 | Employment deduction tiers, pension deduction age thresholds, resident tax formula, legacy NHI compatibility tests |
+| `engine::tax::us_tax` | 24 | LTCG brackets, NIIT, FTC, state tax, filing status, bracket inflation, ordinary income at brackets, SSDI combined income (7 tests: zero, below $32K, 50% tier, 85% taxable, 85% cap, Single lower thresholds, MFS fully taxable), MFS std deduction < MFJ, MFS LTCG threshold < MFJ; §70103 enhanced senior deduction (5 tests: zero seniors, MFJ below threshold, MFJ phase-out, MFJ above floor, Single phase-out) |
+| `engine::tax::japan_tax` | 16 | Employment deduction tiers, pension deduction age thresholds, resident tax formula, legacy NHI compatibility tests; 退職所得控除 (6 tests): N≤20 floor/formula, N>20 formula, N=25/¥15M worked example ≈ ¥264k, lump-sum within deduction → ¥0 tax, surcharge applies ≤TY2037, reconstruction surcharge sunsets after TY2037 |
 | `engine::tax::japan_regions` | 3 | Nagoya 9.7% < Tokyo 10.0%, rate delta = 0.3% of taxable base, city standard rates |
 | `engine::cashflow_engine` | 9 | FERS COLA tiers, FERS start gate, VA inflation, VA child cutoff, college-student extension, all-pensions-disabled guard |
 | `engine::rsu_engine` | 10 | Date alignment, monthly cadence, retirement cutoff, vesting_start_date, share accounting, cliff accumulation (3-month and 14-month) |
@@ -1630,7 +1642,7 @@ cargo test
 | `tests/v7_8_nra_spouse.rs` *(V7.8)* | 4 | MFJ vs MFS vs HoH produce distinct US tax (acceptance A), NRA-MFS Roth suppressed when MAGI > $10k + `RothMfsPhaseOutExceeded` warning (acceptance B), NRA-MFS Roth allowed when MAGI = $0 (acceptance B-inverse), §6013(g) spouse income increases US gross ord and FTC partial offset (acceptance C) |
 | `tests/mid_year_dependent_phaseout.rs` *(V7.8.1)* | 6 | VA switches WithSpouseAndChild → WithSpouse at exact 18th-birthday tick (A), child rate exceeds spouse rate (A2), Jido Teate April-2024 still pays ¥20k (B), Jido Teate June-2024 is zero (B2), NHI fractional `num_insured` precision exceeds legacy integer (C), rolling `next_12_months_income_jpy` cliff drop captured (D) |
 | `tests/v7_8_fx_shock_ordering.rs` *(V7.8.2)* | 4 | All three `ShockOrdering` variants populate `pre_shock_net_worth_jpy` / `post_shock_net_worth_jpy` in combined-shock year (A), pre ≈ ¥14.5M and post ≈ ¥5.2M within ±5% tolerance for all orderings (B), non-shock years have `None` fields (D), `jpy_purchasing_power_index` stays at 1.0 with 0% Japan inflation (B) |
-| `tests/v7_9_pfic_mtm_drift.rs` *(V7.9)* | 3 | 30-year PFIC §1296 MTM simulation with FX drift produces zero drift warnings when `track_pfic_basis_drift=true` and MTM income is positive (A), §1296(d) loss carry-forward absorbs subsequent gains — partial-gain year absorbed fully, residual gain in third year (B), drift warnings suppressed when `track_pfic_basis_drift=false` (C) |
+| `tests/v7_9_pfic_mtm_drift.rs` *(V7.9)* | 4 | 30-year PFIC §1296 MTM simulation with FX drift produces zero drift warnings when `track_pfic_basis_drift=true` and MTM income is positive (A), §1296(d) loss carry-forward absorbs subsequent gains — partial-gain year absorbed fully, residual gain in third year (B), drift warnings suppressed when `track_pfic_basis_drift=false` (C), Table1 visa holder is exempt from exit tax even with ¥200M+ assets; Table2 with identical holdings does trigger — confirmed via separate simulation runs (D) |
 | `tests/real_estate_test.rs` *(V7.9 Stage 06)* | 9 | Analytical mortgage amortization P&I correctness (A), empty portfolio no-op (B), rental income routing JPY/USD (C), HELOC availability gated by `enable_heloc_tier` (D) |
 | `tests/stage_08_correlated_mc.rs` *(V7.9.8)* | 9 | Cholesky decomposition identity matrix (A), 2×2 known reference (B), non-symmetric rejection (C), wrong-diagonal rejection (D), historical 2000-2024 matrix validation (E), correlated vs independent JPY bands — safe-haven yen effect produces ~28% narrower confidence band (F), 4-asset correlated smoke test (G), invalid matrix fallback (H), nearest-PSD correction (I) |
 | `tests/stage_09_crypto_test.rs` *(V7.9.9)* | 4 | Crypto Japan misc-income tax vs legacy cap-gains (¥502k vs ¥305k for $10k gain at 33% marginal) (A), US STCG/LTCG treatment for crypto (B), Asset `is_crypto()` identification (C), Marginal rate estimation at various income brackets (15% / 30% / 44% / 56%) (D) |
@@ -1875,7 +1887,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V8.5)
+## 16. Hardening & Compliance (V7.5 → V8.6)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed

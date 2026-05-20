@@ -1,4 +1,4 @@
-//! V7.4 Logic Audit — Property-Based + Scenario Stress Tests
+﻿//! V7.4 Logic Audit — Property-Based + Scenario Stress Tests
 //!
 //! Originally authored against V7.3 to surface the drifts later fixed in
 //! V7.4. The findings log below now serves as a regression guard: SCN-B
@@ -95,6 +95,7 @@ fn minimal_cfg() -> Config {
         roth_contribution_so_far: 0.0,
         dc_monthly_jpy: 0.0,
         dc_growth_rate: 0.0,
+        dc_employment_category: Default::default(),
         monthly_contribution_ticker: "VTI".into(),
         va_contribution_buffer_usd: 0.0,
         nenkin_baseline_annual_jpy: 0.0,
@@ -109,6 +110,8 @@ fn minimal_cfg() -> Config {
         va_child_cutoff_date: None,
         dc_payout_start_age: 99,
         dc_payout_method: "LUMP_SUM".into(),
+        dc_participation_start_date: None,
+        dc_years_participation_at_start: 0.0,
         pre_funded_war_chest_jpy: 0.0,
         pre_funded_bridge_jpy: 0.0,
         pre_funded_bridge_usd: 0.0,

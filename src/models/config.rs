@@ -609,6 +609,26 @@ pub enum VisaType {
     Table2,
 }
 
+/// Workstream D — Employment category determining the monthly DC statutory cap.
+/// 2024 NTA contribution limits (月額上限).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DcEmploymentCategory {
+    /// Category 1: Self-employed (第1号) — ¥68,000/month.
+    Cat1SelfEmployed,
+    /// Category 2: Company employee with NO DB plan and NO Corporate DC — ¥23,000/month.
+    #[default]
+    Cat2NoCorpNoDb,
+    /// Category 2: Company employee with Corporate DC only — ¥55,000/month.
+    Cat2HasCorpDc,
+    /// Category 2: Company employee with DB plan (incl. public servants) — ¥12,000/month.
+    Cat2HasDb,
+    /// Category 2: Public servant — ¥12,000/month.
+    Cat2PublicServant,
+    /// Category 3: Dependent spouse (第3号) — ¥23,000/month.
+    Cat3Dependent,
+}
+
 /// Stage 07 — A single heir who will receive a share of the estate.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Heir {
@@ -741,6 +761,7 @@ pub struct Config {
     // ── Contributions ────────────────────────────────────────────────────────────
     pub dc_monthly_jpy: f64,
     pub dc_growth_rate: f64,
+    pub dc_employment_category: DcEmploymentCategory,
     pub monthly_contribution_ticker: String,
     pub va_contribution_buffer_usd: f64,
 
@@ -772,6 +793,12 @@ pub struct Config {
     pub dc_payout_start_age: u32,
     /// "LUMP_SUM" or "ANNUITY_20YR"
     pub dc_payout_method: String,
+    /// Date when DC/iDeCo participation began (for 退職所得控除 N calculation).
+    /// When None, falls back to start_date − dc_years_participation_at_start.
+    pub dc_participation_start_date: Option<chrono::NaiveDate>,
+    /// Prior participation years already accrued before simulation start_date.
+    /// Used when dc_participation_start_date is unknown.
+    pub dc_years_participation_at_start: f64,
 
     // ── Pre-funding ──────────────────────────────────────────────────────────────
     pub pre_funded_war_chest_jpy: f64,

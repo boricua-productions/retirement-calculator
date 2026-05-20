@@ -649,8 +649,12 @@ impl SimulationController {
         let ss_annual_jpy = self.state.stats.year_ss_payout_usd * self.state.current_fx;
         // SSDI routed through public pension deduction (existing treatment, unchanged).
         let ssdi_annual_jpy = self.state.stats.year_ssdi_gross_usd * self.state.current_fx;
+        // Workstream C: DC annuity distributions are 公的年金等控除 (雑所得), mirroring Nenkin.
+        // NOTE: national 所得税 on pension is not charged separately today (only resident tax
+        // at the calculate_resident_tax call below); annuity follows the same path as Nenkin.
         let gross_pension = fers_for_japan
             + self.state.stats.year_nenkin_income_jpy
+            + self.state.stats.year_dc_annuity_jpy
             + ssdi_annual_jpy
             + ss_annual_jpy;
         let soc_ins_paid = self.state.social_insurance_history.get(&prev_year).copied().unwrap_or(0.0);
@@ -943,10 +947,14 @@ impl SimulationController {
         //   • PFIC-flagged cap-gains distributions (year_pfic_ord_income_usd)
         //   • Interest + special distributions (year_passive_ord_income_usd)
         // General-basket ordinary income: FERS, SS, taxable SSDI, §6013(g) spouse income.
+        // Workstream H: DC distributions are unearned pension income (Article 17 + Saving Clause).
+        // US citizens are taxed on DC distributions via the Saving Clause (Art. 1(4)); FTC
+        // for Japan tax paid offsets the liability. NOT FEIE-eligible (unearned).
         let passive_ord = pfic_mtm_usd
             + self.state.stats.year_pfic_ord_income_usd
             + self.state.stats.year_passive_ord_income_usd;
-        let general_ord = base_ord + ssdi_taxable + spouse_income_usd;
+        let general_ord = base_ord + ssdi_taxable + spouse_income_usd
+            + self.state.stats.year_dc_distribution_usd;
 
         // Keep total_ord for back-compat / FEIE path (which lumps the two).
         let total_ord    = general_ord + passive_ord;
@@ -1011,7 +1019,11 @@ impl SimulationController {
             };
 
         // Stage 02: §6013(g) — Japan tax on spouse's income joins the general FTC basket.
-        let japan_tax_general_usd = japan_tax_general_usd + spouse_japan_tax_usd;
+        // Workstream H: DC lump-sum 分離課税 joins the general FTC basket once.
+        // Do NOT also include annuity tax here — it flows through resident tax (year_exp_restax).
+        let japan_tax_general_usd = japan_tax_general_usd
+            + spouse_japan_tax_usd
+            + self.state.stats.year_dc_japan_tax_usd;
 
         // V8.0 — IRC §904(c) FIFO carryover queue: evict lots older than 10 years.
         self.state.ftc_queue.evict_expired(yr as u16);
@@ -1268,6 +1280,11 @@ impl SimulationController {
 
             // Stage 07 — populated after the loop; None during the simulation run.
             estate_summary: None,
+
+            // Workstream E — DC distribution reporting fields.
+            dc_payout_gross_jpy: s.year_dc_payout_gross_jpy,
+            dc_payout_tax_jpy:   s.year_dc_payout_tax_jpy,
+            dc_payout_net_jpy:   (s.year_dc_payout_gross_jpy - s.year_dc_payout_tax_jpy).max(0.0),
         });
 
         // V8.2 — capture per-account snapshot for the final simulated year.
@@ -1297,10 +1314,13 @@ impl SimulationController {
         let mut assets_jpy = 0.0_f64;
         for (name, acc) in &self.state.accounts {
             let val_jpy = acc.total_value(fx);
+            // Workstream J: "DC" was missing from this exclusion list — the account
+            // is named "DC", not "iDeCo". DC/iDeCo are restricted (cannot liquidate
+            // pre-60), so they are NOT "exitable financial assets" under Art. 60-2.
             let include = if self.cfg.exit_tax_include_tax_advantaged {
                 true
             } else {
-                !matches!(name.as_str(), "Roth" | "NISA" | "iDeCo")
+                !matches!(name.as_str(), "Roth" | "NISA" | "iDeCo" | "DC")
             };
             if include { assets_jpy += val_jpy; }
         }

@@ -3,6 +3,7 @@ use log::info;
 
 use crate::engine::cashflow_engine::CashFlowEngine;
 use crate::engine::market_data::MarketDataService;
+use crate::engine::tax::japan_tax::JapanTaxEngine;
 use crate::models::config::{BufferFundingTiming, Config, SpouseProfile};
 use crate::models::snapshot::SolvencyWarning;
 use crate::simulation::state::SimState;
@@ -127,11 +128,33 @@ pub fn handle_contributions(
 
     // ── 3. Japan DC / iDeCo monthly contribution (JPY denominated) ────────────
     // DC account uses JPY, so fx=1.0 keeps basis in JPY.
+    // Workstream D: clamp to statutory cap for the configured employment category.
     let dc_ticker = "TAWARA";
     let dc_fallback_p = MarketDataService::fallback_price(dc_ticker);
     let dc_fallback_g = cfg.dc_growth_rate;
+    let dc_cap = JapanTaxEngine::dc_monthly_statutory_cap(cfg.dc_employment_category);
+    let dc_contribution = if cfg.dc_monthly_jpy > dc_cap {
+        if mo == 1 {
+            state.gap_warnings.push(SolvencyWarning {
+                date:  format!("{}-01-01", yr),
+                fx_rate: state.current_fx,
+                qtr_income_jpy:   0.0,
+                qtr_expenses_jpy: 0.0,
+                gap_jpy:          0.0,
+                bridge_fund_left_usd: state.bridge_fund_usd,
+                absorbed_by: "DcCapExceeded".into(),
+                notes: format!(
+                    "DC contribution ¥{:.0}/mo exceeds statutory cap ¥{:.0}/mo for {:?}; clamped.",
+                    cfg.dc_monthly_jpy, dc_cap, cfg.dc_employment_category
+                ),
+            });
+        }
+        dc_cap
+    } else {
+        cfg.dc_monthly_jpy
+    };
     if let Some(dc) = state.accounts.get_mut("DC") {
-        dc.buy_with_fx(dc_ticker, cfg.dc_monthly_jpy, current_date, dc_fallback_p, dc_fallback_g, 1.0);
+        dc.buy_with_fx(dc_ticker, dc_contribution, current_date, dc_fallback_p, dc_fallback_g, 1.0);
     }
 
     // ── 4. User-defined accumulation rules (V6.0) ─────────────────────────────

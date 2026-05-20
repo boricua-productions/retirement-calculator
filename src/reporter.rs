@@ -80,6 +80,18 @@ pub fn format_clipboard_text(results: &SimResults, rsu_engine: Option<&RsuEngine
 
     lines.push(String::new());
 
+    // DC distribution summary
+    let total_dc_gross: f64 = results.annual_summary.iter().map(|s| s.dc_payout_gross_jpy).sum();
+    let total_dc_tax:   f64 = results.annual_summary.iter().map(|s| s.dc_payout_tax_jpy).sum();
+    let total_dc_net:   f64 = results.annual_summary.iter().map(|s| s.dc_payout_net_jpy).sum();
+    if total_dc_gross > 0.0 {
+        lines.push(format!("DC Gross Distributed:   ¥{}", c(total_dc_gross)));
+        lines.push(format!("DC Japan Tax:           ¥{}", c(total_dc_tax)));
+        lines.push(format!("DC Net Delivered:       ¥{}", c(total_dc_net)));
+    }
+
+    lines.push(String::new());
+
     // Solvency
     let deficit_snaps: Vec<_> = results.annual_summary.iter().filter(|s| s.gap_jpy < 0.0).collect();
     let surplus_count = results.annual_summary.iter().filter(|s| s.gap_jpy >= 0.0).count();
@@ -167,6 +179,27 @@ pub fn format_text_report(results: &SimResults, rsu_engine: &RsuEngine) -> Strin
         row(&mut out, "Exchange Rate", &format!("{:.2} ¥/$", snap.usd_jpy));
     } else {
         out.push_str("  (no data)\n");
+    }
+
+    // ── 1b. Japan DC / iDeCo Distribution ────────────────────────────────────
+    out.push('\n');
+    section(&mut out, "JAPAN DC / iDeCo DISTRIBUTION");
+    let total_dc_gross: f64 = results.annual_summary.iter().map(|s| s.dc_payout_gross_jpy).sum();
+    let total_dc_tax:   f64 = results.annual_summary.iter().map(|s| s.dc_payout_tax_jpy).sum();
+    let total_dc_net:   f64 = results.annual_summary.iter().map(|s| s.dc_payout_net_jpy).sum();
+    if total_dc_gross <= 0.0 {
+        out.push_str("  (no distribution — DC still accumulating or not triggered)\n");
+    } else {
+        row(&mut out, "Lifetime Gross Distributed", &format!("¥{}", c(total_dc_gross)));
+        row(&mut out, "Lifetime Japan Tax Withheld", &format!("¥{}", c(total_dc_tax)));
+        row(&mut out, "Lifetime Net Delivered", &format!("¥{}", c(total_dc_net)));
+        if total_dc_gross > 0.0 {
+            row(&mut out, "Effective Japan DC Tax Rate",
+                &format!("{:.1}%", total_dc_tax / total_dc_gross * 100.0));
+        }
+        out.push_str("\n  US Saving Clause note: DC distributions are US-taxable ordinary\n");
+        out.push_str("  income (Article 1(4)); Japan tax credited via FTC (Form 1116).\n");
+        out.push_str("  When 退職所得控除 ≈ zeroes Japan tax, the US taxes the full lump sum.\n");
     }
 
     // ── 2. Solvency Analysis ──────────────────────────────────────────────────
@@ -374,7 +407,8 @@ const CSV_HEADER_LINE: &str =
      FXPenalty_JPY,MonthsAtMin,\
      TotalGrossReturn_USD,TotalNetReturn_USD,TaxFriction_USD,\
      Dist_Dividend_USD,Dist_Interest_USD,Dist_CapGains_USD,Dist_Special_USD,Dist_ROC_USD,\
-     RSUTaxShortfall_USD";
+     RSUTaxShortfall_USD,\
+     DC_Payout_Gross_JPY,DC_Payout_Tax_JPY,DC_Payout_Net_JPY";
 
 /// Formats the full annual breakdown as a CSV string.
 pub fn format_csv(results: &SimResults) -> String {
@@ -386,7 +420,8 @@ pub fn format_csv(results: &SimResults) -> String {
              {:.2},{:.0},\
              {:.0},{:.0},{:.0},{:.0},{:.0},{:.0},{:.2},{:.0},{},\
              {:.2},{:.0},{:.0},{:.2},{},{:.2},{:.2},{:.2},{:.4},{:.0},{:.2},{:.0},{},\
-             {:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}\n",
+             {:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},\
+             {:.0},{:.0},{:.0}\n",
             s.year, s.usd_jpy,
             s.brokerage_usd, s.roth_usd, s.dc_jpy,
             s.div_gross_usd, s.div_net_usd, s.fers_net_usd, s.va_net_usd, s.rsu_vest_usd,
@@ -406,6 +441,7 @@ pub fn format_csv(results: &SimResults) -> String {
             s.dist_dividend_usd, s.dist_interest_usd, s.dist_cap_gains_usd,
             s.dist_special_usd, s.dist_roc_usd,
             s.unpaid_rsu_tax_liability_usd,
+            s.dc_payout_gross_jpy, s.dc_payout_tax_jpy, s.dc_payout_net_jpy,
         ));
     }
     csv

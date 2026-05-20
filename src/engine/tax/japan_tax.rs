@@ -184,6 +184,68 @@ impl JapanTaxEngine {
         ResidentTaxTransitionResult { taxable_income: taxable, tax_bill }
     }
 
+    /// Calculates the 退職所得控除 (Retirement Income Deduction) for lump-sum DC/iDeCo payouts.
+    /// N = participation years (rounded up to next whole integer).
+    ///   N ≤ 20: max(N × 400,000, 800,000)
+    ///   N > 20: 8,000,000 + (N − 20) × 700,000
+    pub fn retirement_income_deduction(n_years: u32) -> f64 {
+        if n_years == 0 {
+            return 800_000.0;
+        }
+        if n_years <= 20 {
+            ((n_years as f64) * 400_000.0).max(800_000.0)
+        } else {
+            8_000_000.0 + ((n_years - 20) as f64) * 700_000.0
+        }
+    }
+
+    /// Calculates Japan tax on a lump-sum DC/iDeCo distribution (分離課税).
+    /// taxable = max(0, lump_sum − deduction) × 0.5
+    /// Tax = national progressive brackets on taxable (standalone, NOT aggregated)
+    ///       + 2.1% reconstruction surcharge (≤ TY2037)
+    ///       + resident tax 10% on the same base.
+    /// Returns combined JPY tax (national + surcharge + resident).
+    pub fn retirement_income_tax_jpy(lump_sum_jpy: f64, n_years: u32, current_year: i32) -> f64 {
+        let deduction = Self::retirement_income_deduction(n_years);
+        let taxable = ((lump_sum_jpy - deduction).max(0.0)) * 0.5;
+        if taxable <= 0.0 {
+            return 0.0;
+        }
+        let base_national = if taxable <= 1_950_000.0 {
+            taxable * 0.05
+        } else if taxable <= 3_300_000.0 {
+            taxable * 0.10 - 97_500.0
+        } else if taxable <= 6_950_000.0 {
+            taxable * 0.20 - 427_500.0
+        } else if taxable <= 9_000_000.0 {
+            taxable * 0.23 - 636_000.0
+        } else if taxable <= 18_000_000.0 {
+            taxable * 0.33 - 1_536_000.0
+        } else if taxable <= 40_000_000.0 {
+            taxable * 0.40 - 2_796_000.0
+        } else {
+            taxable * 0.45 - 4_796_000.0
+        };
+        let surcharge = if current_year <= 2037 { 1.021 } else { 1.000 };
+        let national_with_surcharge = base_national * surcharge;
+        let resident = taxable * 0.10;
+        national_with_surcharge + resident
+    }
+
+    /// Workstream D — Returns the monthly DC statutory contribution cap (JPY) for the
+    /// given employment category per 2024 NTA iDeCo rules.
+    pub fn dc_monthly_statutory_cap(cat: crate::models::config::DcEmploymentCategory) -> f64 {
+        use crate::models::config::DcEmploymentCategory::*;
+        match cat {
+            Cat1SelfEmployed  => 68_000.0,
+            Cat2NoCorpNoDb    => 23_000.0,
+            Cat2HasCorpDc     => 55_000.0,
+            Cat2HasDb         => 12_000.0,
+            Cat2PublicServant => 12_000.0,
+            Cat3Dependent     => 23_000.0,
+        }
+    }
+
     /// Stage 09 — Calculates Japan miscellaneous income tax (雑所得) for cryptocurrency.
     ///
     /// Crypto gains in Japan are taxed as miscellaneous income at the taxpayer's
@@ -355,6 +417,48 @@ mod tests {
     #[test]
     fn test_nhi_estimate_zero_fers() {
         assert_eq!(JapanTaxEngine::estimate_nhi_from_fers(0.0), 0.0);
+    }
+
+    // ── Workstream B: 退職所得控除 unit tests ──────────────────────────────────
+
+    #[test]
+    fn retirement_income_deduction_n_leq_20() {
+        // N=2: max(2×400k, 800k) = 800k
+        assert!((JapanTaxEngine::retirement_income_deduction(2) - 800_000.0).abs() < 0.01);
+        // N=10: 10×400k = 4,000,000
+        assert!((JapanTaxEngine::retirement_income_deduction(10) - 4_000_000.0).abs() < 0.01);
+        // N=20: 20×400k = 8,000,000
+        assert!((JapanTaxEngine::retirement_income_deduction(20) - 8_000_000.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn retirement_income_deduction_n_gt_20() {
+        // N=25: 8,000,000 + 5×700,000 = 11,500,000
+        assert!((JapanTaxEngine::retirement_income_deduction(25) - 11_500_000.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn retirement_income_tax_n25_lump_15m() {
+        // Document's worked example: N=25, lump=¥15,000,000
+        // D=¥11,500,000; base=(15M-11.5M)×0.5=¥1,750,000
+        // national: 1,750,000×0.05=87,500; ×1.021=89,337.5; resident=175,000
+        // total ≈ 264,337.5
+        let tax = JapanTaxEngine::retirement_income_tax_jpy(15_000_000.0, 25, 2030);
+        assert!((tax - 264_337.5).abs() < 1.0, "tax={} expected≈264337.5", tax);
+    }
+
+    #[test]
+    fn retirement_income_tax_zero_when_within_deduction() {
+        // lump_sum ≤ deduction → taxable = 0 → tax = 0
+        let tax = JapanTaxEngine::retirement_income_tax_jpy(5_000_000.0, 20, 2030);
+        assert_eq!(tax, 0.0);
+    }
+
+    #[test]
+    fn retirement_income_tax_no_surcharge_after_2037() {
+        let with_surcharge = JapanTaxEngine::retirement_income_tax_jpy(15_000_000.0, 25, 2037);
+        let without_surcharge = JapanTaxEngine::retirement_income_tax_jpy(15_000_000.0, 25, 2038);
+        assert!(with_surcharge > without_surcharge);
     }
 
     #[test]

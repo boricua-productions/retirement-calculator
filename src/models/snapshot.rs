@@ -190,6 +190,17 @@ pub struct AnnualSnapshot {
     /// years have `None`).  Non-None only when `cfg.enable_estate_planning` is true.
     #[serde(default)]
     pub estate_summary: Option<EstateSummary>,
+
+    // ── Workstream E — DC Distribution reporting ─────────────────────────────
+    /// Gross DC distribution before Japan tax this year (JPY).
+    #[serde(default)]
+    pub dc_payout_gross_jpy: f64,
+    /// Japan tax on DC distribution this year (JPY).
+    #[serde(default)]
+    pub dc_payout_tax_jpy: f64,
+    /// Net DC distribution delivered to floor income this year (JPY).
+    #[serde(default)]
+    pub dc_payout_net_jpy: f64,
 }
 
 /// Stage 07 — End-of-life wealth-transfer tax summary.

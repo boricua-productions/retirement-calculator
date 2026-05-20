@@ -85,9 +85,15 @@
     "rsu_tax_handling": "SALARY",
 
     "_comment_section_6": "--- EXITS & PENSIONS ---",
+    "_help_dc_employment_category": "DC statutory cap category. Options: 'cat1_self_employed' (¥68k), 'cat2_no_corp_no_db' (¥23k), 'cat2_has_corp_dc' (¥55k), 'cat2_has_db' (¥12k), 'cat2_public_servant' (¥12k), 'cat3_dependent' (¥23k).",
+    "dc_employment_category": "cat2_no_corp_no_db",
     "_help_dc_payout": "Options: 'LUMP_SUM' (invested into taxable) or 'ANNUITY_20YR' (monthly income).",
     "dc_payout_start_age": 60,
     "dc_payout_method": "ANNUITY_20YR",
+    "_help_dc_participation": "Date DC/iDeCo participation began (YYYY-MM-DD). Used for 退職所得控除 N calculation. Omit if unknown.",
+    "dc_participation_start_date": null,
+    "_help_dc_participation_years": "Prior participation years already accrued before simulation start_date. Used as fallback when dc_participation_start_date is omitted.",
+    "dc_years_participation_at_start": 0.0,
     "_help_gross_inc": "Total income in retirement year (Salary + Bonus). Used to calc Year 1 Resident Tax.",
     "retirement_year_gross_income_jpy": 40000000,
 

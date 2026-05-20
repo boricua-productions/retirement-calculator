@@ -1,6 +1,6 @@
 [package]
 name = "retirement-calculator"
-version = "8.2.0"
+version = "8.6.0"
 edition = "2024"
 authors = ["Old-Coder <13148627+ITNextLevel@users.noreply.github.com>"]
 

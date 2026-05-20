@@ -134,6 +134,20 @@ pub struct AnnualStats {
     pub year_buffer_accumulation_jpy: f64,
     /// Stage 12 — Total USD diverted to buffer accumulation this year (pre-retirement ramp).
     pub year_buffer_accumulation_usd: f64,
+
+    // ── DC Distribution (Workstreams B/C/H/E) ───────────────────────────────
+    /// Gross DC/iDeCo distribution before Japan tax this year (JPY).
+    pub year_dc_payout_gross_jpy: f64,
+    /// Japan tax withheld on DC distribution this year (JPY).
+    /// Lump-sum: 退職所得控除 (分離課税); Annuity: settles via resident tax.
+    pub year_dc_payout_tax_jpy: f64,
+    /// DC annuity income added to gross_pension for 公的年金等控除 this year (JPY).
+    pub year_dc_annuity_jpy: f64,
+    /// Gross DC distribution converted to USD this year (for US Saving Clause tax).
+    pub year_dc_distribution_usd: f64,
+    /// Japan DC tax converted to USD this year (for §904 general-basket FTC credit).
+    /// Lump-sum 分離課税 only — do not also fold into year_japan_res_tax_jpy.
+    pub year_dc_japan_tax_usd: f64,
 }
 
 impl AnnualStats {
