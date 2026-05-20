@@ -511,12 +511,22 @@ impl SimResults {
     /// exhaustion, or deficit years without portfolio exhaustion are Strained or
     /// Adequate — still sustainable.
     pub fn retirement_verdict(&self) -> RetirementVerdict {
-        let warnings = self.gap_warnings.len();
         let unpaid_rsu = self.annual_summary.last()
             .map(|s| s.unpaid_rsu_tax_liability_usd)
             .unwrap_or(0.0);
         let bridge_exhausted_count = self.annual_summary.iter()
             .filter(|s| s.bridge_exhausted)
+            .count();
+        // V8.6 — Distinguish *actual buffer consumption* from quarterly cash-flow
+        // timing blips. A single quarter dipping income-below-expenses pushes a
+        // gap_warning even when ample annual surplus covers it and no buffer is
+        // touched, so gap_warnings.len() must NOT drive the tier. Use the audit
+        // signals that mean a safety net was genuinely drawn down instead.
+        let war_chest_used_count = self.annual_summary.iter()
+            .filter(|s| s.war_chest_used_jpy > 0.0)
+            .count();
+        let forced_liquidation_count = self.annual_summary.iter()
+            .filter(|s| s.forced_liquidations_usd > 0.0)
             .count();
         let total_years = self.annual_summary.len();
         let deficit_years = self.annual_summary.iter().filter(|s| s.gap_jpy < 0.0).count();
@@ -539,6 +549,12 @@ impl SimResults {
         let avg_dcr = if dcr_values.is_empty() { 0.0 }
                       else { dcr_values.iter().sum::<f64>() / dcr_values.len() as f64 };
 
+        // A buffer was genuinely tapped if the war chest was drawn, the bridge
+        // fund was exhausted, or shares were force-sold to cover a shortfall.
+        let buffers_were_tapped = war_chest_used_count > 0
+            || forced_liquidation_count > 0
+            || bridge_exhausted_count > 0;
+
         let tier = if final_value_usd <= 0.0 {
             PlanTier::Unsustainable
         } else if deficit_ratio >= 0.50
@@ -546,7 +562,7 @@ impl SimResults {
                 || unpaid_rsu >= 1_000.0
                 || total_belt_tighten_months >= 24 {
             PlanTier::Strained
-        } else if deficit_ratio >= 0.20 || bridge_exhausted_count > 0 || warnings > 0 {
+        } else if deficit_ratio >= 0.20 || buffers_were_tapped || total_belt_tighten_months > 0 {
             PlanTier::Adequate
         } else if avg_dcr < 1.0 {
             PlanTier::Strong

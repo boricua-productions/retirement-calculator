@@ -1,4 +1,4 @@
-# Retirement Calculator — V8.5: War-Chest Cap Policy & 5-Level Retirement Verdict
+# Retirement Calculator — V8.6: Buffer-Aware Retirement Verdict
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
@@ -18,7 +18,9 @@ spouse, long-term resident, or permanent resident visas.
 > past the effective limit is reinvested in the Taxable portfolio rather than accumulated silently,
 > and the limit can grow by inflation, shrink by a set percentage, or empty itself on a chosen date.
 > The retirement verdict is a **5-level health tier** (Excellent / Strong / Adequate / Strained /
-> Unsustainable); only a fully exhausted portfolio is Unsustainable.
+> Unsustainable); only a fully exhausted portfolio is Unsustainable, and a plan drops below Strong
+> only when a buffer is genuinely drawn down. A quarter that dips income-below-expenses but is
+> absorbed by surplus is recorded as an informational cash-timing note and no longer demotes the tier.
 
 The engine assumes ordinary Japan resident tax and National Health Insurance exposure unless a
 scenario explicitly changes the tax settings. It is not a SOFA, TRICARE, base-access, or
@@ -30,7 +32,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 8.5.0 (Internal Logic: V8.5 — War-Chest Cap Policy & 5-Level Retirement Verdict)
+> **Version:** Cargo package 8.5.0 (Internal Logic: V8.6 — Buffer-Aware Retirement Verdict)
 ---
 
 ## Beginner Quick Start
@@ -348,9 +350,9 @@ Both channels are off by default and only emit JSON when the corresponding switc
 
 ---
 
-## V7.5–V8.5 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
+## V7.5–V8.6 Strategic Hardening — Cost Basis, Liquidation, Compliance, and Expense Modeling
 
-The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), V8.1 detailed expense entry by category with location-aware NHI settings, V8.2 UX Clarity Pass (tab reorder, per-account snapshots, plain-English retirement verdict), V8.3 Input UX & Diagnostics Polish, V8.4 Conservative-Default Cashflow Waterfall redesign, and V8.5 war-chest cap policy with five-tier retirement verdict.
+The engine's strategic layer spans V7.5 compliance monitors and the V7.6 component-aware return model through V7.9 PFIC MTM drift tracking and Real Estate amortization, V7.9.7 bilateral estate tax planning (Japan Sōzoku-zei + US estate tax), V7.9.8 correlated Monte Carlo (multivariate asset-class paths with historical safe-haven yen effect), V7.9.9 cryptocurrency tax engine (Japan miscellaneous-income treatment at marginal rates up to 55%), V8.0.0 2026 tax compliance with architectural hardening (corrected tax constants, Tokubetsu Choushuu cadence, §70103 enhanced senior deduction, SSDI multi-bracket selector, visa-aware exit tax, real capital-loss ledger, IRC §904(c) FIFO carryover queue, total moving average basis, and Article 19-2 spousal pension mitigation), V8.1 detailed expense entry by category with location-aware NHI settings, V8.2 UX Clarity Pass (tab reorder, per-account snapshots, plain-English retirement verdict), V8.3 Input UX & Diagnostics Polish, V8.4 Conservative-Default Cashflow Waterfall redesign, V8.5 war-chest cap policy with five-tier retirement verdict, and V8.6 buffer-aware verdict refinement.
 
 V7.5 reframes the post-retirement liquidation engine to be **Loss-Aware** and **Jurisdiction-Specific**:
 
@@ -460,6 +462,7 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V8.6.0** | Buffer-Aware Retirement Verdict: the five-tier health rating now keys on *actual buffer consumption* rather than the raw count of quarterly gap warnings. A quarter that runs income-below-expenses but is covered by surplus (no war-chest draw, no bridge exhaustion, no forced sale, no belt-tightening) is recorded as an informational cash-timing note and no longer demotes the plan. A plan is rated **Adequate** only when a buffer is genuinely tapped (war chest drawn, bridge fund exhausted, or shares force-sold), belt-tightening occurs, or ≥20% of years run a deficit; otherwise it is rated Strong or Excellent on dividend coverage. Overview "Why/Recommendations" bullets now report the real drivers (war-chest draws, forced liquidations, belt-tighten months) instead of raw quarterly warning counts. |
 | **V8.5.0** | War-Chest Cap Policy & 5-Level Retirement Verdict: five war-chest cap modes (Fixed / GrowByInflation / GrowByPercent / ShrinkByPercent / EmptyOnDate) govern how the war-chest limit evolves year-over-year post-retirement; war-chest overfill bug fixed — surplus that exceeds the effective cap is now reinvested in the Taxable portfolio instead of accumulating silently; five-tier plan health rating (Excellent / Strong / Adequate / Strained / Unsustainable) replaces the binary works/doesn't-work verdict — only a portfolio exhausted before the horizon end is Unsustainable; verdict banner shows tier-matched color and icon; Adequate/Strained plans emit informational warnings rather than failure markers while still showing "Why" and "Recommendations"; V8.4 waterfall tooltip and doc-comment corrected to match implemented Step order. |
 | **V8.4.0** | Conservative-Default Cashflow Waterfall: new expense-coverage order — floor income (JPY then USD) → Bridge Fund → War Chest → belt-tighten → HELOC → liquidation. Dividends (JPY and USD) no longer cover expenses directly; all dividend receipts flow to buffer deposit helpers with cross-currency overflow (USD surplus → bridge → overflow converts to JPY for war chest; JPY surplus → war chest → overflow converts to USD for bridge). The legacy "cash buffers at zero" early belt-tighten trigger removed; belt-tighten now fires only when a real spending gap remains. New `prefer_liquidation_over_belt_tightening` flag (default false): when true, skips belt-tightening if the Taxable portfolio can sustain minimum spending through end of simulation (coarse no-growth projection). UI checkbox added in Financial Buffers section. |
 | **V8.3.0** | Input UX & Diagnostics Polish: collapsible Input Config sections with invalid-field counts in headers; comparison panel expanded (retirement verdict, dividend coverage ×, worst drawdown, cumulative US+Japan tax, years-of-expense headroom, per-scenario solvency warnings); target allocations now per-account (`target_allocations[account][ticker]`); rebalance date persists across Save→Reload; Accum $/mo displays `0` for new rows; Spouse Japan Misc Income zero no longer flags red; Invesco expense-ratio parser anchored to structured JSON field; auto-fetch log noise reduced. |
@@ -1215,7 +1218,7 @@ Load two distinct JSON scenario files and run them side-by-side:
    - Side-by-side grid: Simulation Years, Final Year, Ending Taxable Portfolio, Roth IRA, DC Plan, FX Rate, Ending Wealth (USD), Total NHI Paid, Solvency Warnings
    - *(V8.3)* Extended metrics: retirement verdict (succeeds / has shortfalls with first shortfall year), average dividend coverage of expenses (×), worst single-year drawdown (USD), cumulative US federal+state tax (USD) and Japan resident tax+NHI (JPY), years-of-expense headroom at end of horizon, expandable solvency warning list per scenario. Better/worse values are color-coded against the baseline.
 
-   ⚠ Note: Deficit years and Gap Warnings indicate months when native JPY income and cash buffers were insufficient to cover base expenses, triggering automated spending cuts or stock sales. This can occur even in highly successful scenarios if growth is concentrated in low-yield assets.
+   ⚠ Note: Deficit years and Gap Warnings flag quarters when native JPY income fell short of base expenses. A Gap Warning is a cash-flow *timing* marker — it is raised even when ample surplus or buffer balances absorb the shortfall, so it does **not** by itself lower the retirement verdict. Only an actual buffer draw (war chest, bridge fund, forced sale) or belt-tightening affects the tier. This can occur even in highly successful scenarios if growth is concentrated in low-yield assets.
 
 The Comparison scenario is executed from a separate JSON file (no shared state with baseline). To compare two scenarios that differ only in one parameter, save a copy of the baseline JSON, modify that parameter, and load the copy as the Comparison.
 
@@ -1928,6 +1931,15 @@ Adequate / Strained / Unsustainable) where only a fully exhausted portfolio is r
 and plans with absorbed shortfalls receive proportionate Adequate or Strained ratings with retained
 "Why" and "Recommendations" detail, and corrects stale V8.3-era tooltips and the
 `manage_monthly_cashflow_defensive` doc-comment to match the implemented V8.4 Step order.
+V8.6 refines the five-tier verdict so it keys on *actual buffer consumption* rather than the raw
+count of quarterly gap warnings (superseding the V8.5 "absorbed shortfalls" rule above). A quarter
+that runs income-below-expenses but is absorbed by surplus — leaving the war chest untouched, the
+bridge fund intact, and no forced sale — is recorded as an informational cash-timing note and no
+longer demotes the plan. A plan is rated Adequate only when a buffer is genuinely drawn (war chest
+used, bridge fund exhausted, or shares force-sold), belt-tightening occurs, or ≥20% of years run a
+deficit; otherwise it is rated Strong or Excellent on dividend coverage. The Overview
+"Why/Recommendations" bullets are updated to report these real drivers instead of the raw quarterly
+warning count.
 
 ### Fix 1 — PFIC Ordinary Income Routing (§1296) *(V7.5)*
 Assets flagged with `pfic_regime: Mtm` correctly route Mark-to-Market gains to the Ordinary Income

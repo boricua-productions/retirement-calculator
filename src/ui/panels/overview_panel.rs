@@ -591,7 +591,6 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
     let tier = rv.tier;
 
     let total_years = res.annual_summary.len();
-    let warnings = res.gap_warnings.len();
     let unpaid_rsu = res.annual_summary.last()
         .map(|s| s.unpaid_rsu_tax_liability_usd)
         .unwrap_or(0.0);
@@ -599,6 +598,17 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
     let bridge_exhausted_years = res.annual_summary.iter()
         .filter(|s| s.bridge_exhausted)
         .count();
+    // V8.6 — Actual buffer-consumption signals (mirror retirement_verdict). These
+    // drive the "why" bullets so we never claim buffers were used on a quarter
+    // that was really just a cash-flow timing blip covered by surplus.
+    let war_chest_used_years = res.annual_summary.iter()
+        .filter(|s| s.war_chest_used_jpy > 0.0)
+        .count();
+    let forced_liquidation_years = res.annual_summary.iter()
+        .filter(|s| s.forced_liquidations_usd > 0.0)
+        .count();
+    let belt_tighten_months: u32 =
+        res.annual_summary.iter().map(|s| s.months_at_min_target).sum();
     let deficit_years = res.annual_summary.iter().filter(|s| s.gap_jpy < 0.0).count();
     let deficit_ratio = if total_years > 0 { deficit_years as f64 / total_years as f64 } else { 0.0 };
 
@@ -642,16 +652,27 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
             reasons.push(format!(
                 "ℹ Final portfolio (USD-equiv): ${:.0} — positive at end of horizon.",
                 final_value_usd));
-            if warnings > 0 {
+            if war_chest_used_years > 0 {
                 reasons.push(format!(
-                    "ℹ {} quarter(s) ran income-below-expenses — absorbed by buffers.", warnings));
-                recs.push("Consider increasing the bridge fund or war-chest target to absorb lean quarters more comfortably.".into());
+                    "ℹ War chest was drawn down in {} year(s) to cover lean periods.",
+                    war_chest_used_years));
+                recs.push("Consider raising the war-chest target to absorb lean quarters more comfortably.".into());
             }
             if bridge_exhausted_years > 0 {
                 reasons.push(format!(
                     "ℹ Bridge fund was exhausted in {} year(s) — portfolio sales covered the gap.",
                     bridge_exhausted_years));
                 recs.push("Raise the bridge fund cap to avoid forced portfolio sales in lean years.".into());
+            }
+            if forced_liquidation_years > 0 {
+                reasons.push(format!(
+                    "ℹ Shares were force-sold in {} year(s) to cover a shortfall.",
+                    forced_liquidation_years));
+            }
+            if belt_tighten_months > 0 {
+                reasons.push(format!(
+                    "ℹ Spending dropped to the minimum target for {} month(s).",
+                    belt_tighten_months));
             }
             if deficit_ratio >= 0.20 {
                 reasons.push(format!(
@@ -664,12 +685,16 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
             reasons.push(format!(
                 "⚠ Final portfolio (USD-equiv): ${:.0} — survives but under stress.",
                 final_value_usd));
-            if warnings > 0 {
+            if belt_tighten_months > 0 {
                 reasons.push(format!(
-                    "⚠ {} quarter(s) ran income-below-expenses — required belt-tightening or sales.",
-                    warnings));
+                    "⚠ Spending was forced to the minimum target for {} month(s).",
+                    belt_tighten_months));
                 recs.push("Increase the bridge fund and war-chest targets before retirement.".into());
                 recs.push("Delay retirement by 1–2 years to accumulate more buffer capital.".into());
+            }
+            if war_chest_used_years > 0 {
+                reasons.push(format!(
+                    "⚠ War chest was drawn down in {} year(s).", war_chest_used_years));
             }
             if bridge_exhausted_years > 0 {
                 reasons.push(format!(
