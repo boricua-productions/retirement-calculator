@@ -201,6 +201,15 @@ pub struct AnnualSnapshot {
     /// Net DC distribution delivered to floor income this year (JPY).
     #[serde(default)]
     pub dc_payout_net_jpy: f64,
+
+    // ── V8.7 — US tax gross / FTC visibility ─────────────────────────────────
+    /// US federal tax computed before FTC credit is applied this year (USD).
+    /// Shows the gross US liability before Japan taxes zero it out via §904 FTC.
+    #[serde(default)]
+    pub us_tax_pre_ftc_usd: f64,
+    /// Foreign Tax Credit applied against US liability this year (USD).
+    #[serde(default)]
+    pub ftc_applied_usd: f64,
 }
 
 /// Stage 07 — End-of-life wealth-transfer tax summary.
@@ -253,6 +262,15 @@ pub struct SolvencyWarning {
     pub bridge_fund_left_usd: f64,
     pub absorbed_by: String,
     pub notes: String,
+}
+
+impl SolvencyWarning {
+    /// True only for genuine quarterly cash shortfalls (negative gap).
+    /// Excludes informational notices like DcCapExceeded / RothMfsPhaseOutExceeded
+    /// which carry gap_jpy == 0.0.
+    pub fn is_cash_gap(&self) -> bool {
+        self.gap_jpy < 0.0
+    }
 }
 
 /// Details of a single buy transaction during the retirement rebalance event.
@@ -533,11 +551,12 @@ impl SimResults {
         // gap_warning even when ample annual surplus covers it and no buffer is
         // touched, so gap_warnings.len() must NOT drive the tier. Use the audit
         // signals that mean a safety net was genuinely drawn down instead.
+        // V8.7 — Use meaningful epsilon thresholds to ignore sub-unit float dust.
         let war_chest_used_count = self.annual_summary.iter()
-            .filter(|s| s.war_chest_used_jpy > 0.0)
+            .filter(|s| s.war_chest_used_jpy > 1.0)
             .count();
         let forced_liquidation_count = self.annual_summary.iter()
-            .filter(|s| s.forced_liquidations_usd > 0.0)
+            .filter(|s| s.forced_liquidations_usd > 0.01)
             .count();
         let total_years = self.annual_summary.len();
         let deficit_years = self.annual_summary.iter().filter(|s| s.gap_jpy < 0.0).count();
@@ -583,7 +602,11 @@ impl SimResults {
 
         let works = tier != PlanTier::Unsustainable;
 
-        let first_gap_year = self.gap_warnings.first()
+        // V8.7 — Only real cash shortfalls (gap_jpy < 0) determine first_gap_year.
+        // DcCapExceeded / RothMfsPhaseOutExceeded notices have gap_jpy == 0 and
+        // must not be mistaken for solvency events.
+        let first_gap_year = self.gap_warnings.iter()
+            .find(|w| w.is_cash_gap())
             .and_then(|w| w.date.splitn(2, '-').next()?.parse::<i32>().ok());
 
         let summary = match tier {

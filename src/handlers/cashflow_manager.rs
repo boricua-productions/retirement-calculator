@@ -23,6 +23,11 @@ pub const DEFAULT_FX_SPREAD_PENALTY: f64 = 0.005;
 pub const MODE_B_LOOKAHEAD_MONTHS: u32 = 4;
 pub const MODE_B_PREEMPT_FLOOR:    f64 = 0.50;
 
+/// V8.7 — Minimum meaningful gap in JPY. Sub-yen residuals after floating-point
+/// subtraction are treated as dust rather than real shortfalls, preventing
+/// phantom war-chest draws and inflated tier verdicts.
+pub const GAP_EPSILON_JPY: f64 = 1.0;
+
 /// Infer the effective jurisdiction for spouse Nenkin income based on `spouse_profile`.
 ///
 /// Per-source `spouse_nenkin_jurisdiction` overrides take precedence when explicitly set
@@ -278,12 +283,13 @@ fn manage_monthly_cashflow_defensive(
 
     // ── Step 4: JPY War Chest ────────────────────────────────────────────────────
     // V8.4: War Chest drawn after Bridge Fund.
-    if gap > 0.0 && cfg.war_chest_enabled {
+    // V8.7: Guard against sub-yen float dust accumulating in year_wc_used.
+    if gap > GAP_EPSILON_JPY && cfg.war_chest_enabled {
         let draw = state.war_chest_jpy.min(gap);
-        state.war_chest_jpy -= draw;
-        gap -= draw;
-        state.stats.year_wc_used += draw;
-        if draw > 0.0 {
+        if draw > GAP_EPSILON_JPY {
+            state.war_chest_jpy -= draw;
+            gap -= draw;
+            state.stats.year_wc_used += draw;
             info!("   [T3-WC] Drew ¥{:.0} from War Chest (remaining ¥{:.0})", draw, state.war_chest_jpy);
         }
     }

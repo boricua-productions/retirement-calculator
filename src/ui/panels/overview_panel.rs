@@ -117,7 +117,9 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
             );
             ui.end_row();
 
-            let gap_warnings = res.gap_warnings.len();
+            // V8.7 — Count only real cash gaps; exclude DcCapExceeded / notices.
+            let gap_warnings = res.gap_warnings.iter().filter(|w| w.is_cash_gap()).count();
+            let config_notices = res.gap_warnings.len() - gap_warnings;
             ui.label(RichText::new("Solvency Warnings:").strong());
             if gap_warnings == 0 {
                 ui.label(RichText::new("✅ None — fully solvent").color(Color32::GREEN));
@@ -128,6 +130,14 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
                 );
             }
             ui.end_row();
+            if config_notices > 0 {
+                ui.label(RichText::new("Config Notices:").strong());
+                ui.label(
+                    RichText::new(format!("ℹ {} (e.g. DC cap exceeded) — see Annual Table", config_notices))
+                        .color(Color32::GRAY),
+                );
+                ui.end_row();
+            }
 
             // V7.7.2 — RSU margin-call banner.
             let unpaid_rsu = res.annual_summary.last()
@@ -601,11 +611,12 @@ fn evaluate_scenario(res: &SimResults) -> ScenarioVerdict {
     // V8.6 — Actual buffer-consumption signals (mirror retirement_verdict). These
     // drive the "why" bullets so we never claim buffers were used on a quarter
     // that was really just a cash-flow timing blip covered by surplus.
+    // V8.7 — Use epsilon thresholds to ignore sub-unit float dust (mirrors snapshot.rs).
     let war_chest_used_years = res.annual_summary.iter()
-        .filter(|s| s.war_chest_used_jpy > 0.0)
+        .filter(|s| s.war_chest_used_jpy > 1.0)
         .count();
     let forced_liquidation_years = res.annual_summary.iter()
-        .filter(|s| s.forced_liquidations_usd > 0.0)
+        .filter(|s| s.forced_liquidations_usd > 0.01)
         .count();
     let belt_tighten_months: u32 =
         res.annual_summary.iter().map(|s| s.months_at_min_target).sum();

@@ -1097,6 +1097,9 @@ impl SimulationController {
         // Record the full US federal+state tax for dual-field reporting.
         // NOTE: liability.total_tax already IS the full annual bill; do not add already_paid.
         self.state.stats.year_us_fed_tax_usd = liability.total_tax;
+        // V8.7 — Pre-FTC gross and credit applied (surfaces the FTC offset in reports).
+        self.state.stats.year_us_fed_tax_pre_ftc_usd = liability.total_tax + liability.ftc_applied;
+        self.state.stats.year_ftc_applied_usd = liability.ftc_applied;
 
         if tax_due.abs() > 500.0 {
             info!(
@@ -1285,6 +1288,10 @@ impl SimulationController {
             dc_payout_gross_jpy: s.year_dc_payout_gross_jpy,
             dc_payout_tax_jpy:   s.year_dc_payout_tax_jpy,
             dc_payout_net_jpy:   (s.year_dc_payout_gross_jpy - s.year_dc_payout_tax_jpy).max(0.0),
+
+            // V8.7 — US tax visibility: gross before FTC and credit applied.
+            us_tax_pre_ftc_usd: s.year_us_fed_tax_pre_ftc_usd,
+            ftc_applied_usd:    s.year_ftc_applied_usd,
         });
 
         // V8.2 — capture per-account snapshot for the final simulated year.

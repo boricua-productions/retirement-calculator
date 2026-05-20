@@ -135,6 +135,12 @@ pub struct AnnualStats {
     /// Stage 12 — Total USD diverted to buffer accumulation this year (pre-retirement ramp).
     pub year_buffer_accumulation_usd: f64,
 
+    // ── V8.7 — US tax gross / FTC visibility ────────────────────────────────
+    /// US federal tax computed before FTC credit is applied this year (USD).
+    pub year_us_fed_tax_pre_ftc_usd: f64,
+    /// Foreign Tax Credit applied against the US liability this year (USD).
+    pub year_ftc_applied_usd: f64,
+
     // ── DC Distribution (Workstreams B/C/H/E) ───────────────────────────────
     /// Gross DC/iDeCo distribution before Japan tax this year (JPY).
     pub year_dc_payout_gross_jpy: f64,

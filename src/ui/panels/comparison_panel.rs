@@ -337,23 +337,25 @@ fn show_inner(
     // ── Solvency warnings expandable lists (outside the grid) ─────────────────
     ui.add_space(12.0);
     let show_warnings = |ui: &mut Ui, label: &str, res: &SimResults, color: Color32| {
-        if res.gap_warnings.is_empty() { return; }
+        // V8.7 — Show only real cash shortfalls; exclude DcCapExceeded / notices.
+        let cash_gaps: Vec<_> = res.gap_warnings.iter().filter(|w| w.is_cash_gap()).collect();
+        if cash_gaps.is_empty() { return; }
         egui::CollapsingHeader::new(
-            RichText::new(format!("{} ⚠ {} solvency warning(s)", label, res.gap_warnings.len()))
+            RichText::new(format!("{} ⚠ {} solvency warning(s)", label, cash_gaps.len()))
                 .color(color)
         )
         .id_salt(format!("cmp_warn_{}", label))
         .show(ui, |ui| {
-            for (i, w) in res.gap_warnings.iter().enumerate().take(10) {
+            for (i, w) in cash_gaps.iter().enumerate().take(10) {
                 ui.label(RichText::new(format!(
                     "{}. {} — gap ¥{:.0} (absorbed by: {})",
                     i + 1, w.date, w.gap_jpy.abs(), w.absorbed_by
                 )).small().color(Color32::from_rgb(255, 200, 80)));
             }
-            if res.gap_warnings.len() > 10 {
+            if cash_gaps.len() > 10 {
                 ui.label(RichText::new(format!(
                     "… and {} more (see Annual Table for full detail)",
-                    res.gap_warnings.len() - 10
+                    cash_gaps.len() - 10
                 )).small().color(Color32::GRAY));
             }
         });
