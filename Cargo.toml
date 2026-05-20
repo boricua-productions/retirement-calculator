@@ -2,7 +2,7 @@
 name = "retirement-calculator"
 version = "8.6.0"
 edition = "2024"
-authors = ["Old-Coder <13148627+ITNextLevel@users.noreply.github.com>"]
+authors = ["super-boricua <13148627+super-boricua@users.noreply.github.com>"]
 
 [profile.release]
 opt-level     = 3
