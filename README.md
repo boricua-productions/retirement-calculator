@@ -1,10 +1,10 @@
-# Retirement Calculator — V8.6: Buffer-Aware Retirement Verdict
+# Retirement Calculator — V8.7: DC/iDeCo Decumulation, Tax Visibility & Verdict Accuracy
 
 A desktop tool for modeling the financial future of **US expats and retirees living in Japan**.
 It is designed for non-SOFA residents under standard Japanese immigration status, such as work,
 spouse, long-term resident, or permanent resident visas.
 
-> **Conservative Default Waterfall.** The V8.6 engine covers monthly expenses in this order:
+> **Conservative Default Waterfall.** The V8.7 engine covers monthly expenses in this order:
 > **(1) floor income** — all guaranteed income first: Nenkin, DC payouts, FERS, VA, SS, SSDI, and
 > rental income; **(2) Bridge Fund** (USD → JPY with FX penalty); **(3) War Chest** (JPY, no FX
 > cost); **(4) belt-tightening** — drop to minimum spend; **(5) HELOC draw**; **(6) stock
@@ -32,7 +32,7 @@ Foreign Tax Credit (FTC) to reduce US federal tax on the same income where the t
 rules allow it. In plain terms, the goal is to show how the two tax systems interact without
 double-counting the same income.
 
-> **Version:** Cargo package 8.6.0 (Internal Logic: V8.6 — Buffer-Aware Retirement Verdict)
+> **Version:** Cargo package 8.7.1 (Internal Logic: V8.7 — DC/iDeCo Decumulation, Tax Visibility & Verdict Accuracy)
 ---
 
 ## Beginner Quick Start
@@ -252,8 +252,11 @@ Both channels are off by default and only emit JSON when the corresponding switc
 | **✨ Auto-Fetch** *(per fund, V7.11: non-blocking)* | Calls Yahoo's chart API in a background thread. For `.T` mutual-fund symbols, Yahoo returns 基準価額 in JPY per 10,000 units, so the value drops straight into Price (¥/万口). Total Return % is filled from the 10-year price CAGR. Shows a live timer (⏳ 2s) while fetching; timeouts after 25 seconds. |
 | **Allocation %** | Allocation weight for the DC fund row. |
 | **Total Return %** *(previously labelled "Custom Growth %")* | DC fund-specific annual total-return assumption (capital appreciation + reinvested distributions combined). DC accounts are tax-deferred and always reinvest internally, so this single CAGR drives all growth regardless of the DRIP toggle elsewhere. The DC plan also exposes a **Fallback Total Return %** for funds with no per-row value set. |
-| **DC Payout Method** | `LUMP_SUM` applies 退職所得控除 (Retirement Income Deduction) as 分離課税; net proceeds go to Taxable. `ANNUITY_20YR` pays monthly over 20 years under 公的年金等控除 (Public Pension Deduction), aggregated with Nenkin. |
+| **Plan Type** *(V8.7.1)* | `Corporate DC (企業型)` (default) or `iDeCo (個人型)`. When Corporate DC is selected and a transfer-grace window is configured, the engine models a gap phase where DC earns 0% growth while funds move to iDeCo. |
+| **Transfer Grace Months** *(V8.7.1)* | Months after retirement before iDeCo growth resumes (default 6). Only shown when Plan Type = Corporate DC. During this window the DC account is frozen at 0% growth. |
+| **DC Payout Method** *(V8.7.1)* | Four options: `LUMP_SUM` — applies 退職所得控除 (分離課税), net proceeds go to Taxable; `ANNUITY_10YR` — 120 monthly draws; `ANNUITY_20YR` — 240 monthly draws; `LIFE_ANNUITY` — monthly draws to age 90. Annuity paths apply 公的年金等控除 and aggregate with Nenkin for Japan tax. All paths feed Article 17/Saving Clause US ordinary-income and §904 FTC. |
 | **DC Payout Start Age** | Age when DC payout begins (minimum 60, must complete by 75; requires ≥ 10 participation years). |
+| **PFIC Treatment** *(V8.7.1)* | `Treaty-Exempt (default)` — DC/iDeCo funds treated as treaty-exempt; no §1296 MTM advisory. `§1296 MTM Advisory` — emits an advisory notice when the DC account holds PFIC-flagged assets; full MTM engine integration deferred to V8.8. |
 | **DC Employment Category** | Determines the NTA statutory monthly contribution cap: Self-employed ¥68k; Company/no DB/no corp DC ¥23k (default); Company/corp DC ¥55k; Company/DB or public servant ¥12k; Dependent spouse ¥23k. Contributions exceeding the cap are silently clamped and flagged with a `DcCapExceeded` warning. |
 | **DC Participation Start Date** | Date DC/iDeCo participation began (YYYY-MM-DD). Used to compute N (years of participation) for 退職所得控除 deduction. |
 | **DC Years Participation at Start** | Prior participation years already accrued before the simulation `start_date`. Fallback when the exact participation date is unknown. |
@@ -465,6 +468,8 @@ identically.
 
 | Version | Highlights |
 | :--- | :--- |
+| **V8.7.1** | DC/iDeCo Decumulation — four payout methods (Lump Sum / 10-yr / 20-yr / Life Annuity); corporate DC → iDeCo transfer gap phase (0% growth for configurable grace months, default 6); PFIC advisory toggle (`dc_ideco_pfic_exempt`); `dc_is_corporate` plan-type flag; all 5 new DC fields in Input Config; `dc_advisories` surface gap-phase and PFIC notices on Overview and in the text report. 130 unit tests + 10 integration tests passing. |
+| **V8.7.0** | Issues 1–4 & 6 bug fixes — (1) `SolvencyWarning.is_cash_gap()` separates real shortfalls from `DcCapExceeded` config notices so `first_gap_year` is no longer polluted by contribution-cap warnings; (2) `GAP_EPSILON_JPY = 1.0` eliminates sub-yen float-dust war-chest micro-draws with hardened thresholds; (3) DC Balance and DC Payout columns added to the annual results table and CSV; (4) `us_tax_pre_ftc_usd` and `ftc_applied_usd` flow through stats→snapshot→controller→table/CSV/report, Japan CGT column surfaced, FTC tooltips added; (6) text report gains a full verdict block, buffer-usage summary, dual-jurisdiction tax section with FTC detail, and a per-year DC payout table. |
 | **V8.6.0** | Buffer-Aware Retirement Verdict: the five-tier health rating now keys on *actual buffer consumption* rather than the raw count of quarterly gap warnings. A quarter that runs income-below-expenses but is covered by surplus (no war-chest draw, no bridge exhaustion, no forced sale, no belt-tightening) is recorded as an informational cash-timing note and no longer demotes the plan. A plan is rated **Adequate** only when a buffer is genuinely tapped (war chest drawn, bridge fund exhausted, or shares force-sold), belt-tightening occurs, or ≥20% of years run a deficit; otherwise it is rated Strong or Excellent on dividend coverage. Overview "Why/Recommendations" bullets now report the real drivers (war-chest draws, forced liquidations, belt-tighten months) instead of raw quarterly warning counts. |
 | **V8.5.0** | War-Chest Cap Policy & 5-Level Retirement Verdict: five war-chest cap modes (Fixed / GrowByInflation / GrowByPercent / ShrinkByPercent / EmptyOnDate) govern how the war-chest limit evolves year-over-year post-retirement; war-chest overfill bug fixed — surplus that exceeds the effective cap is now reinvested in the Taxable portfolio instead of accumulating silently; five-tier plan health rating (Excellent / Strong / Adequate / Strained / Unsustainable) replaces the binary works/doesn't-work verdict — only a portfolio exhausted before the horizon end is Unsustainable; verdict banner shows tier-matched color and icon; Adequate/Strained plans emit informational warnings rather than failure markers while still showing "Why" and "Recommendations"; V8.4 waterfall tooltip and doc-comment corrected to match implemented Step order. |
 | **V8.4.0** | Conservative-Default Cashflow Waterfall: new expense-coverage order — floor income (JPY then USD) → Bridge Fund → War Chest → belt-tighten → HELOC → liquidation. Dividends (JPY and USD) no longer cover expenses directly; all dividend receipts flow to buffer deposit helpers with cross-currency overflow (USD surplus → bridge → overflow converts to JPY for war chest; JPY surplus → war chest → overflow converts to USD for bridge). The legacy "cash buffers at zero" early belt-tighten trigger removed; belt-tighten now fires only when a real spending gap remains. New `prefer_liquidation_over_belt_tightening` flag (default false): when true, skips belt-tightening if the Taxable portfolio can sustain minimum spending through end of simulation (coarse no-growth projection). UI checkbox added in Financial Buffers section. |
@@ -516,7 +521,7 @@ identically.
 13. [Universal Japan NHI Support & Overrides](#13-universal-japan-nhi-support--overrides)
 14. [Troubleshooting & UI Architecture](#14-troubleshooting--ui-architecture)
 15. [Dependencies](#15-dependencies)
-16. [Hardening & Compliance (V7.5 → V8.6)](#16-hardening--compliance-v75--v86)
+16. [Hardening & Compliance (V7.5 → V8.7)](#16-hardening--compliance-v75--v87)
 
 ---
 
@@ -1437,7 +1442,10 @@ values.
 | `war_chest_empty_date` *(V8.5)* | Empty Date | `YYYY-MM-DD` | *(absent)* | Date on which the war chest is liquidated into the Taxable portfolio when `war_chest_cap_policy = "empty_on_date"`. Omit the key to leave unset. |
 | `pre_funded_japan_tax_jpy` | — | `f64` | `0` | Pre-reserved Japan tax cash at simulation start |
 | `pre_funded_us_tax_usd` | — | `f64` | `0` | Pre-reserved US tax cash at simulation start |
-| `dc_payout_method` | — | string | `ANNUITY_20YR` | `LUMP_SUM` — applies 退職所得控除 (分離課税) and delivers net proceeds to Taxable. `ANNUITY_20YR` — 240 monthly draws via 公的年金等控除 aggregated with Nenkin. Both paths feed the Article 17 / Saving Clause US ordinary-income stack and the §904 general-basket FTC credit. |
+| `dc_payout_method` | — | string | `LUMP_SUM` | `LUMP_SUM` — applies 退職所得控除 (分離課税) and delivers net proceeds to Taxable. `ANNUITY_10YR` — 120 monthly draws. `ANNUITY_20YR` — 240 monthly draws. `LIFE_ANNUITY` — monthly draws to age 90. Annuity paths use 公的年金等控除 aggregated with Nenkin. All paths feed Article 17 / Saving Clause US ordinary-income and §904 general-basket FTC. *(V8.7.1: 10-yr and Life Annuity terms added)* |
+| `dc_is_corporate` | — | `bool` | `true` | *(V8.7.1)* `true` = Corporate DC (企業型); triggers transfer-grace gap phase. `false` = iDeCo only; no gap phase. |
+| `dc_transfer_grace_months` | — | `u32` | `6` | *(V8.7.1)* Months after retirement before iDeCo growth resumes. DC account earns 0% during this window. Only active when `dc_is_corporate = true`. |
+| `dc_ideco_pfic_exempt` | — | `bool` | `true` | *(V8.7.1)* `true` = DC/iDeCo funds treated as treaty-exempt (no §1296 advisory). `false` = §1296 MTM advisory notice emitted when DC holds PFIC-flagged assets. |
 | `dc_payout_start_age` | — | `u32` | `60` | Age at which DC payout begins. Must be ≥ 60 with ≥ 10 participation years; payout must complete by age 75. |
 | `dc_participation_start_date` | — | `YYYY-MM-DD` | *(absent)* | Date DC/iDeCo participation began. Drives N (participation years, rounded up) for 退職所得控除. When absent, N is derived from `start_date` minus `dc_years_participation_at_start`. |
 | `dc_years_participation_at_start` | — | `f64` | `0.0` | Fallback prior participation years already accrued before `start_date`. Used when `dc_participation_start_date` is unknown. |
@@ -1887,7 +1895,7 @@ longer compile times. The resulting binary is ~8.1 MB with all debug symbols str
 
 ---
 
-## 16. Hardening & Compliance (V7.5 → V8.6)
+## 16. Hardening & Compliance (V7.5 → V8.7)
 
 V7.5 resolved the mathematical and legal fragilities identified in the 2026 Strategic Audit; V7.6
 extends that work with a component-aware return model that lets each tax-aware sub-stream be routed
