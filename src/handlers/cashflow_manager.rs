@@ -896,7 +896,9 @@ fn compute_dc_payout_jpy(state: &mut SimState, cfg: &Config, current_date: Naive
         }
     }
 
-    if state.dc_payout_active && cfg.dc_payout_method == "ANNUITY_20YR" && state.dc_months_remaining > 0 {
+    let is_annuity = matches!(cfg.dc_payout_method.as_str(),
+        "ANNUITY_10YR" | "ANNUITY_20YR" | "LIFE_ANNUITY");
+    if state.dc_payout_active && is_annuity && state.dc_months_remaining > 0 {
         let dc_balance_jpy = state.accounts.get("DC")
             .map(|a| a.total_value(state.current_fx))
             .unwrap_or(0.0);
@@ -904,18 +906,12 @@ fn compute_dc_payout_jpy(state: &mut SimState, cfg: &Config, current_date: Naive
             let monthly_payout_jpy = dc_balance_jpy / state.dc_months_remaining as f64;
             if let Some(dc_acc) = state.accounts.get_mut("DC") {
                 let gain = dc_acc.sell_value("TAWARA", monthly_payout_jpy, current_date);
-                // qtr_inc_jpy is updated by the caller via monthly_earned_jpy (t0_jpy);
-                // do not add here to avoid double-counting.
                 state.dc_months_remaining -= 1;
                 let gross_jpy = gain.proceeds;
-                // Workstream C: add to gross_pension basis for 公的年金等控除 in controller
-                state.stats.year_dc_annuity_jpy    += gross_jpy;
-                // Workstream E: record gross for reporting (annuity tax settles via resident tax)
+                state.stats.year_dc_annuity_jpy      += gross_jpy;
                 state.stats.year_dc_payout_gross_jpy += gross_jpy;
-                // Workstream H: US Saving Clause — gross USD distribution for general_ord
-                // Annuity Japan tax settles via resident tax path (credited like Nenkin)
                 state.stats.year_dc_distribution_usd += gross_jpy / state.current_fx;
-                return gross_jpy;  // JPY proceeds from JPY-denominated DC account
+                return gross_jpy;
             }
         }
     }
@@ -955,7 +951,9 @@ fn compute_dc_payout_usd(state: &mut SimState, cfg: &Config, current_date: Naive
         }
     }
 
-    if state.dc_payout_active && cfg.dc_payout_method == "ANNUITY_20YR" && state.dc_months_remaining > 0 {
+    let is_annuity = matches!(cfg.dc_payout_method.as_str(),
+        "ANNUITY_10YR" | "ANNUITY_20YR" | "LIFE_ANNUITY");
+    if state.dc_payout_active && is_annuity && state.dc_months_remaining > 0 {
         let dc_balance_jpy = state.accounts.get("DC")
             .map(|a| a.total_value(state.current_fx))
             .unwrap_or(0.0);
@@ -963,15 +961,10 @@ fn compute_dc_payout_usd(state: &mut SimState, cfg: &Config, current_date: Naive
             let monthly_payout_jpy = dc_balance_jpy / state.dc_months_remaining as f64;
             if let Some(dc_acc) = state.accounts.get_mut("DC") {
                 let gain = dc_acc.sell_value("TAWARA", monthly_payout_jpy, current_date);
-                // qtr_inc_jpy is updated by the caller via total_new_money_jpy;
-                // do not add here to avoid double-counting.
                 state.dc_months_remaining -= 1;
                 let gross_jpy = gain.proceeds;
-                // Workstream C: add to gross_pension basis for 公的年金等控除 in controller
                 state.stats.year_dc_annuity_jpy      += gross_jpy;
-                // Workstream E: record gross for reporting (annuity tax settles via resident tax)
                 state.stats.year_dc_payout_gross_jpy += gross_jpy;
-                // Workstream H: US Saving Clause — gross USD distribution for general_ord
                 state.stats.year_dc_distribution_usd += gross_jpy / state.current_fx;
                 return gross_jpy / state.current_fx;
             }

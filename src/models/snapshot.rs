@@ -477,6 +477,8 @@ pub struct SimResults {
     pub estate_summary: Option<EstateSummary>,
     /// V8.2 — Per-account snapshots at Retirement, each Rebalance, and FinalYear.
     pub account_snapshots: Vec<AccountSnapshotRow>,
+    /// V8.7 — DC/iDeCo advisories (PFIC, gap phase events). Displayed in Overview and text report.
+    pub dc_advisories: Vec<String>,
 }
 
 /// V8.5 — Five-level plan health rating.

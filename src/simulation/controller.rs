@@ -68,6 +68,18 @@ impl SimulationController {
 
         let mut state = SimState::new(start_date, start_fx, ira_limit, accounts);
 
+        // Initialize annuity months from payout method.
+        state.dc_months_remaining = match cfg.dc_payout_method.as_str() {
+            "ANNUITY_10YR"  => 120,
+            "ANNUITY_20YR"  => 240,
+            "LIFE_ANNUITY"  => {
+                // Payout runs from dc_payout_start_age to age 90 (simple life-expectancy proxy).
+                let remaining = 90u32.saturating_sub(cfg.dc_payout_start_age);
+                remaining * 12
+            }
+            _ => 0, // LUMP_SUM — months unused
+        };
+
         // Prime the FERS history for year 0 so NHI calculations have a basis.
         let annual_fers = cf_engine.calc_annual_fers_projection(start_date.year());
         state.stats.acc_ord_inc = annual_fers;
@@ -125,6 +137,31 @@ impl SimulationController {
             .last()
             .and_then(|s| s.estate_summary.clone());
 
+        // Assemble DC/iDeCo advisories for the results.
+        let dc_advisories = {
+            let mut ads = Vec::new();
+            if self.cfg.dc_is_corporate {
+                ads.push(format!(
+                    "企業型DC gap phase: DC earned 0% for {} months after retirement ({:?}) before iDeCo transfer.",
+                    self.cfg.dc_transfer_grace_months,
+                    self.cfg.retirement_date
+                ));
+            }
+            if self.cfg.dc_ideco_pfic_exempt {
+                ads.push(
+                    "PFIC Advisory: iDeCo Japanese mutual-fund holdings are treated as treaty-exempt. \
+                     Consult a US tax advisor (Japan-US treaty Art. 25 / PFIC §1291/§1296) to confirm \
+                     your position before filing.".to_string()
+                );
+            } else {
+                ads.push(
+                    "PFIC §1296 MTM elected for iDeCo: Japanese mutual-fund gains are marked-to-market \
+                     annually as US ordinary income. Reflected in pre-FTC US tax column.".to_string()
+                );
+            }
+            ads
+        };
+
         SimResults {
             annual_summary: self.state.annual_summary,
             gap_warnings: self.state.gap_warnings,
@@ -138,6 +175,7 @@ impl SimulationController {
             pfic_basis_drift_warnings: self.state.pfic_basis_drift_warnings,
             estate_summary: final_estate_summary,
             account_snapshots: self.state.account_snapshots,
+            dc_advisories,
         }
     }
 
@@ -213,8 +251,39 @@ impl SimulationController {
             }
         }
 
+        // ── 企業型DC gap phase — enter on retirement, freeze DC growth for grace period ──
+        if self.cfg.dc_is_corporate && !self.state.dc_payout_active {
+            let payout_eligible = {
+                let age = self.cfg.dc_payout_start_age as i32;
+                let y = self.cfg.birth_date.year() + age;
+                chrono::NaiveDate::from_ymd_opt(y, self.cfg.birth_date.month(), self.cfg.birth_date.day())
+                    .unwrap_or(self.cfg.birth_date)
+            };
+            let cur = self.state.date;
+            if cur >= self.cfg.retirement_date && cur < payout_eligible {
+                if !self.state.dc_in_gap_phase && self.state.dc_gap_phase_end_date.is_none() {
+                    // Enter gap phase on the first month at or after retirement.
+                    use chrono::Months;
+                    let end = self.cfg.retirement_date
+                        .checked_add_months(Months::new(self.cfg.dc_transfer_grace_months))
+                        .unwrap_or(self.cfg.retirement_date);
+                    self.state.dc_in_gap_phase = true;
+                    self.state.dc_gap_phase_end_date = Some(end);
+                    info!("   [DC] Entered gap phase (0% growth) until {:?} ({} months grace)",
+                        end, self.cfg.dc_transfer_grace_months);
+                } else if let Some(end_date) = self.state.dc_gap_phase_end_date {
+                    if cur >= end_date && self.state.dc_in_gap_phase {
+                        self.state.dc_in_gap_phase = false;
+                        info!("   [DC] Gap phase ended — iDeCo growth resumes at {:?}", cur);
+                    }
+                }
+            }
+        }
+
         // ── Portfolio growth ──────────────────────────────────────────────────
-        for acc in self.state.accounts.values_mut() {
+        for (name, acc) in self.state.accounts.iter_mut() {
+            // Freeze DC growth during the 企業型DC → iDeCo transfer gap phase.
+            if name == "DC" && self.state.dc_in_gap_phase { continue; }
             acc.grow();
         }
 

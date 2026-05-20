@@ -76,8 +76,12 @@ pub struct SimState {
 
     // ── DC Payout ────────────────────────────────────────────────────────────────
     pub dc_payout_active: bool,
-    /// Months remaining in 20-year annuity payout (240 at start).
+    /// Months remaining in annuity payout (120 = 10yr, 240 = 20yr, life-based for終身).
     pub dc_months_remaining: u32,
+    /// True during the 企業型DC → iDeCo transfer grace window (0% growth on DC).
+    pub dc_in_gap_phase: bool,
+    /// Month when the gap phase ends and normal iDeCo growth resumes.
+    pub dc_gap_phase_end_date: Option<chrono::NaiveDate>,
 
     // ── Flags ────────────────────────────────────────────────────────────────────
     pub roth_rebalance_executed: bool,
@@ -215,6 +219,8 @@ impl SimState {
             bridge_fund_accumulating_usd: 0.0,
             dc_payout_active: false,
             dc_months_remaining: 240,
+            dc_in_gap_phase: false,
+            dc_gap_phase_end_date: None,
             roth_rebalance_executed: false,
             bridge_exhausted_logged: false,
             ftc_carryover_usd: 0.0,

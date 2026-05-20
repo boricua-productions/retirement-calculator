@@ -437,6 +437,15 @@ pub struct InputPanelState {
     pub annual_gift_jpy_per_recipient: String,
     pub gift_recipient_count: String,
     pub us_gift_exclusion_usd: String,
+    // ── DC Decumulation (Issue 5 / V8.7) ─────────────────────────────────────
+    /// "LUMP_SUM" | "ANNUITY_10YR" | "ANNUITY_20YR" | "LIFE_ANNUITY"
+    pub dc_payout_method: String,
+    pub dc_payout_start_age: String,
+    /// true = 企業型DC (corporate, subject to 6-month transfer gap)
+    pub dc_is_corporate: bool,
+    pub dc_transfer_grace_months: String,
+    /// true = iDeCo Japanese funds treated as treaty-exempt (default); false = PFIC §1296 MTM
+    pub dc_ideco_pfic_exempt: bool,
     // ── Stage 05 — PFIC Basis Drift Monitor ──────────────────────────────────
     pub track_pfic_basis_drift: bool,
     // ── Stage 07 — Estate Planning ───────────────────────────────────────────
@@ -607,6 +616,11 @@ impl Default for InputPanelState {
             annual_gift_jpy_per_recipient: "1100000".into(),
             gift_recipient_count:          "0".into(),
             us_gift_exclusion_usd:         "19000".into(),
+            dc_payout_method:        "LUMP_SUM".into(),
+            dc_payout_start_age:     "60".into(),
+            dc_is_corporate:         true,
+            dc_transfer_grace_months: "6".into(),
+            dc_ideco_pfic_exempt:    true,
             track_pfic_basis_drift:        true,
             enable_estate_planning:        false,
             death_date:                    String::new(),
@@ -1248,6 +1262,11 @@ impl InputPanelState {
             annual_gift_jpy_per_recipient: num_str("annual_gift_jpy_per_recipient", "1100000"),
             gift_recipient_count:          num_str("gift_recipient_count",          "0"),
             us_gift_exclusion_usd:         num_str("us_gift_exclusion_usd",         "19000"),
+            dc_payout_method:        str_val("dc_payout_method", "LUMP_SUM"),
+            dc_payout_start_age:     num_str("dc_payout_start_age", "60"),
+            dc_is_corporate:         sets["dc_is_corporate"].as_bool().unwrap_or(true),
+            dc_transfer_grace_months: num_str("dc_transfer_grace_months", "6"),
+            dc_ideco_pfic_exempt:    sets["dc_ideco_pfic_exempt"].as_bool().unwrap_or(true),
             track_pfic_basis_drift: sets["track_pfic_basis_drift"].as_bool().unwrap_or(true),
             enable_estate_planning: sets["enable_estate_planning"].as_bool().unwrap_or(false),
             death_date:             str_val("death_date", ""),
@@ -1806,6 +1825,16 @@ impl InputPanelState {
                     }).collect();
                     settings.insert("dc_funds".into(), Value::Array(funds_arr));
                 }
+                // DC decumulation settings
+                settings.insert("dc_payout_method".into(), Value::String(self.dc_payout_method.clone()));
+                if let Ok(age) = self.dc_payout_start_age.trim().parse::<u64>() {
+                    settings.insert("dc_payout_start_age".into(), Value::Number(age.into()));
+                }
+                settings.insert("dc_is_corporate".into(), Value::Bool(self.dc_is_corporate));
+                if let Ok(g) = self.dc_transfer_grace_months.trim().parse::<u64>() {
+                    settings.insert("dc_transfer_grace_months".into(), Value::Number(g.into()));
+                }
+                settings.insert("dc_ideco_pfic_exempt".into(), Value::Bool(self.dc_ideco_pfic_exempt));
             }
 
             // NHI model
@@ -3212,6 +3241,95 @@ pub fn show(ui: &mut Ui, state: &mut InputPanelState) {
                             });
                         if ui.small_button("+ Add Fund").clicked() {
                             state.accounts[acct_idx].dc_funds.push(DcFundRow::default());
+                        }
+
+                        // ── DC Decumulation Configuration ─────────────────────
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.label(RichText::new("DC Decumulation Settings").strong().size(12.0));
+                        ui.add_space(4.0);
+
+                        egui::Grid::new(egui::Id::new("g_dc_decum").with(acct_idx))
+                            .num_columns(2)
+                            .spacing([24.0, 4.0])
+                            .show(ui, |ui| {
+                                // Plan type
+                                ui.label(RichText::new("Plan Type:").strong())
+                                    .on_hover_text("企業型DC requires a 6-month transfer to iDeCo on separation before payout begins. During this gap, DC earns 0% (cash/MMF).");
+                                egui::ComboBox::from_id_salt(egui::Id::new("dc_corp").with(acct_idx))
+                                    .selected_text(if state.dc_is_corporate { "Corporate 企業型DC" } else { "Personal iDeCo" })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut state.dc_is_corporate, true,  "Corporate 企業型DC");
+                                        ui.selectable_value(&mut state.dc_is_corporate, false, "Personal iDeCo");
+                                    });
+                                ui.end_row();
+
+                                // Transfer grace period (only relevant for corporate)
+                                if state.dc_is_corporate {
+                                    ui.label(RichText::new("Transfer Grace (months):").strong())
+                                        .on_hover_text("Months from retirement to iDeCo transfer completion. Default 6. DC earns 0% during this window. If transfer is missed, 自動移換 to JIS&T occurs.");
+                                    ui.add(egui::TextEdit::singleline(&mut state.dc_transfer_grace_months)
+                                        .hint_text("6").desired_width(60.0));
+                                    ui.end_row();
+                                }
+
+                                // Payout method
+                                ui.label(RichText::new("Payout Method:").strong())
+                                    .on_hover_text("Lump sum uses 退職所得控除 (large deduction, favors large balances). Annuity uses 公的年金等控除 (spread over term). Life annuity runs to age 90.");
+                                egui::ComboBox::from_id_salt(egui::Id::new("dc_method").with(acct_idx))
+                                    .selected_text(match state.dc_payout_method.as_str() {
+                                        "LUMP_SUM"     => "Lump Sum (退職所得控除)",
+                                        "ANNUITY_10YR" => "10-Year Annuity (確定年金10年)",
+                                        "ANNUITY_20YR" => "20-Year Annuity (確定年金20年)",
+                                        "LIFE_ANNUITY" => "Life Annuity to 90 (終身年金)",
+                                        other          => other,
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut state.dc_payout_method, "LUMP_SUM".into(),     "Lump Sum (退職所得控除)");
+                                        ui.selectable_value(&mut state.dc_payout_method, "ANNUITY_10YR".into(), "10-Year Annuity (確定年金10年)");
+                                        ui.selectable_value(&mut state.dc_payout_method, "ANNUITY_20YR".into(), "20-Year Annuity (確定年金20年)");
+                                        ui.selectable_value(&mut state.dc_payout_method, "LIFE_ANNUITY".into(), "Life Annuity to 90 (終身年金)");
+                                    });
+                                ui.end_row();
+
+                                // Payout start age
+                                ui.label(RichText::new("Payout Start Age:").strong())
+                                    .on_hover_text("Age at which DC/iDeCo begins paying out. Minimum 60 in Japan; most plans allow 60–75. For corporate DC, payout begins after the iDeCo transfer gap.");
+                                ui.add(egui::TextEdit::singleline(&mut state.dc_payout_start_age)
+                                    .hint_text("60").desired_width(60.0));
+                                ui.end_row();
+
+                                // PFIC treatment
+                                ui.label(RichText::new("iDeCo PFIC Treatment:").strong())
+                                    .on_hover_text(
+                                        "US persons holding Japanese mutual funds (e.g. TAWARA/eMAXIS) inside iDeCo \
+                                         may face PFIC classification. 'Treaty-Exempt' relies on Japan-US treaty \
+                                         Art. 25 relief — consult a US tax advisor. '§1296 MTM' marks-to-market \
+                                         annually and adds income to US general basket."
+                                    );
+                                egui::ComboBox::from_id_salt(egui::Id::new("dc_pfic").with(acct_idx))
+                                    .selected_text(if state.dc_ideco_pfic_exempt { "Treaty-Exempt (default)" } else { "§1296 MTM" })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut state.dc_ideco_pfic_exempt, true,  "Treaty-Exempt (default)");
+                                        ui.selectable_value(&mut state.dc_ideco_pfic_exempt, false, "§1296 MTM");
+                                    });
+                                ui.end_row();
+                            });
+
+                        // PFIC advisory note
+                        if !state.dc_ideco_pfic_exempt {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(
+                                "⚠ §1296 MTM: iDeCo Japanese mutual-fund gains will be taxed as US \
+                                 ordinary income annually. This increases tax friction in the pre-payout \
+                                 accumulation phase. Consult a US tax attorney before electing this treatment."
+                            ).small().color(Color32::from_rgb(255, 180, 60)));
+                        } else {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(
+                                "ℹ Treaty-Exempt assumption: this simulator does not apply PFIC §1291/§1296 \
+                                 to iDeCo holdings. Consult a US tax advisor to confirm your treaty position."
+                            ).small().color(Color32::GRAY));
                         }
                     }
                     if acct_type != "DC Plan" {

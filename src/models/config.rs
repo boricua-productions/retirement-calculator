@@ -791,8 +791,16 @@ pub struct Config {
 
     // ── DC Payout ─────────────────────────────────────────────────────────────────
     pub dc_payout_start_age: u32,
-    /// "LUMP_SUM" or "ANNUITY_20YR"
+    /// "LUMP_SUM" | "ANNUITY_10YR" | "ANNUITY_20YR" | "LIFE_ANNUITY"
     pub dc_payout_method: String,
+    /// When true, models 企業型DC → iDeCo transfer gap on retirement:
+    /// DC earns 0% during the grace period before iDeCo transfer completes.
+    pub dc_is_corporate: bool,
+    /// Months to hold DC at 0% growth after retirement before iDeCo growth resumes.
+    pub dc_transfer_grace_months: u32,
+    /// When true (default), treats iDeCo Japanese-fund holdings as treaty-exempt from
+    /// US PFIC rules. When false, applies §1296 MTM to iDeCo mutual-fund positions.
+    pub dc_ideco_pfic_exempt: bool,
     /// Date when DC/iDeCo participation began (for 退職所得控除 N calculation).
     /// When None, falls back to start_date − dc_years_participation_at_start.
     pub dc_participation_start_date: Option<chrono::NaiveDate>,

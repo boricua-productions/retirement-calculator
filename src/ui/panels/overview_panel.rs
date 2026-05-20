@@ -178,6 +178,14 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
                 ui.end_row();
             }
 
+            // V8.7 — DC/iDeCo advisories.
+            if !res.dc_advisories.is_empty() {
+                ui.label(RichText::new("DC/iDeCo Advisories:").strong());
+                ui.label(RichText::new(format!("{} notice(s) — see below", res.dc_advisories.len()))
+                    .color(Color32::from_rgb(120, 200, 255)));
+                ui.end_row();
+            }
+
             // Stage 04 — Show pre/post shock net-worth rows for any shock year.
             let shock_years: Vec<_> = res.annual_summary.iter()
                 .filter(|s| s.pre_shock_net_worth_jpy.is_some())
@@ -408,6 +416,21 @@ pub fn show(ui: &mut Ui, results: &Option<SimResults>, rsu_engine: &Option<RsuEn
                     ui.add_space(4.0);
                 }
             });
+    }
+
+    // ── V8.7 — DC/iDeCo Advisories ───────────────────────────────────────────
+    if !res.dc_advisories.is_empty() {
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(6.0);
+        ui.label(RichText::new("DC / iDeCo Advisories").strong().size(14.0));
+        ui.add_space(4.0);
+        for advisory in &res.dc_advisories {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("ℹ").color(Color32::from_rgb(120, 200, 255)));
+                ui.label(RichText::new(advisory).small().color(Color32::from_rgb(180, 220, 255)));
+            });
+        }
     }
 
     // ── Stage 07 — Wealth Transferred to Heirs ───────────────────────────────

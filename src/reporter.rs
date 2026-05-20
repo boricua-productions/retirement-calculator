@@ -208,6 +208,13 @@ pub fn format_text_report(results: &SimResults, rsu_engine: &RsuEngine) -> Strin
         out.push_str("\n  US Saving Clause note: DC distributions are US-taxable ordinary\n");
         out.push_str("  income (Article 1(4)); Japan tax credited via FTC (Form 1116).\n");
         out.push_str("  When 退職所得控除 ≈ zeroes Japan tax, the US taxes the full lump sum.\n");
+        // DC/iDeCo advisories
+        if !results.dc_advisories.is_empty() {
+            out.push_str("\n  DC/iDeCo Advisories:\n");
+            for adv in &results.dc_advisories {
+                out.push_str(&format!("    ℹ {}\n", adv));
+            }
+        }
         // Per-year payout detail
         let payout_years: Vec<_> = results.annual_summary.iter()
             .filter(|s| s.dc_payout_gross_jpy > 0.0).collect();

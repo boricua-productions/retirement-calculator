@@ -615,8 +615,11 @@ pub fn load_scenario(path: &str) -> Result<LoadedScenario, LoadError> {
         spouse_birth_date,
         child_birth_date,
         va_child_cutoff_date: va_child_cutoff,
-        dc_payout_start_age:  get_u32("dc_payout_start_age",  60),
-        dc_payout_method:     get_str("dc_payout_method", "LUMP_SUM"),
+        dc_payout_start_age:       get_u32("dc_payout_start_age",       60),
+        dc_payout_method:          get_str("dc_payout_method",          "LUMP_SUM"),
+        dc_is_corporate:           get_bool("dc_is_corporate",          true),
+        dc_transfer_grace_months:  get_u32("dc_transfer_grace_months",  6),
+        dc_ideco_pfic_exempt:      get_bool("dc_ideco_pfic_exempt",     true),
         dc_participation_start_date: sets["dc_participation_start_date"]
             .as_str()
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
